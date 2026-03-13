@@ -1,10 +1,7 @@
 use std::path::Path;
 
-use crate::mkosi::config::MkosiConfig;
 use crate::igvm::invoke::IgvmBuildArgs;
-use crate::manifest::{
-    self, BuildConfig, BuildManifest, FileEntry, ManifestInputs, ManifestOutputs, Measurement,
-};
+use crate::mkosi::config::MkosiConfig;
 use crate::{tools, CloudInitArgs, ImageFormat};
 
 fn validate_inputs(args: &CloudInitArgs) -> anyhow::Result<()> {
