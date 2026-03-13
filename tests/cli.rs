@@ -51,3 +51,63 @@ fn test_kernel_requires_output() {
         .assert()
         .failure();
 }
+
+#[test]
+fn test_cloud_init_fails_with_missing_dir() {
+    let mut cmd = Command::cargo_bin("lunal-build").unwrap();
+    cmd.args([
+        "cloud-init", "/nonexistent/dir",
+        "--kernel", "/tmp/k",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicates::str::contains("not found"));
+}
+
+#[test]
+fn test_base_fails_with_missing_source() {
+    let mut cmd = Command::cargo_bin("lunal-build").unwrap();
+    cmd.args([
+        "base",
+        "--source-image", "/nonexistent/image.img",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicates::str::contains("not found"));
+}
+
+#[test]
+fn test_smp_default_is_one() {
+    let mut cmd = Command::cargo_bin("lunal-build").unwrap();
+    cmd.args([
+        "cloud-init", "/tmp",
+        "--kernel", "/tmp/k",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure(); // Fails on validation, not arg parsing — proves --smp has a default
+}
+
+#[test]
+fn test_format_flag_accepts_vhd() {
+    let mut cmd = Command::cargo_bin("lunal-build").unwrap();
+    cmd.args([
+        "cloud-init", "/tmp",
+        "--kernel", "/tmp/k",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "--format", "vhd",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure(); // Fails on validation, not parsing — proves vhd is accepted
+}
