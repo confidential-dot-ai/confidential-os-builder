@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+which = "7"
+anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 clap-verbosity-flag = "3"
 tracing = "0.1"

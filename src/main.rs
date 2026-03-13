@@ -1,3 +1,11 @@
+mod commands;
+mod compose;
+mod igvm;
+mod manifest;
+mod mkosi;
+mod tools;
+mod uki;
+
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -126,7 +134,32 @@ pub enum ImageFormat {
     Raw,
 }
 
-fn main() {
-    let _cli = Cli::parse();
-    println!("lunal-build");
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    let filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(
+            match cli.verbose.log_level_filter() {
+                clap_verbosity_flag::log::LevelFilter::Off => tracing_subscriber::filter::LevelFilter::OFF,
+                clap_verbosity_flag::log::LevelFilter::Error => tracing_subscriber::filter::LevelFilter::ERROR,
+                clap_verbosity_flag::log::LevelFilter::Warn => tracing_subscriber::filter::LevelFilter::WARN,
+                clap_verbosity_flag::log::LevelFilter::Info => tracing_subscriber::filter::LevelFilter::INFO,
+                clap_verbosity_flag::log::LevelFilter::Debug => tracing_subscriber::filter::LevelFilter::DEBUG,
+                clap_verbosity_flag::log::LevelFilter::Trace => tracing_subscriber::filter::LevelFilter::TRACE,
+            }
+            .into(),
+        )
+        .from_env_lossy();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .init();
+
+    match &cli.command {
+        Commands::Kernel(args) => commands::kernel::run(args),
+        Commands::Base(args) => commands::base::run(args),
+        Commands::CloudInit(args) => commands::cloud_init::run(args),
+        Commands::Container(args) => commands::container::run(args),
+    }
 }
