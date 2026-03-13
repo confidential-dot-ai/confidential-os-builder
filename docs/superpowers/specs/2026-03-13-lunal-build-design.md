@@ -14,10 +14,12 @@ Binary name: `lunal-build`
 
 #### `lunal-build kernel`
 
-Builds the security-hardened custom kernel from source/config.
+Builds the security-hardened custom kernel. The kernel build details (source location, hardening config, patches) are out of scope for the initial implementation — this subcommand provides the entry point and will be fleshed out as the kernel hardening requirements are finalized. Initially, it may wrap an existing kernel build script or Makefile.
 
 ```
 lunal-build kernel
+    --source <PATH>        # path to kernel source tree
+    --config <PATH>        # path to kernel .config (hardening config)
     -o, --output <DIR>     # where to write kernel + initrd
 ```
 
@@ -45,9 +47,10 @@ Builds a project-specific partition from a cloud-init configuration directory, c
 ```
 lunal-build cloud-init <DIR>
     --kernel <PATH>        # path to hardened kernel
-    --initrd <PATH>        # path to initrd
+    --initrd <PATH>        # path to base initrd (input to UKI build, not passed to igvm-tools)
     --firmware <PATH>      # path to OVMF binary
     --base-image <PATH>    # path to base image (from `lunal-build base`)
+    --smp <N>              # number of vCPUs (default: 1; affects SNP launch digest)
     --format <FORMAT>      # output format: qcow2, vhd, raw (default: qcow2)
     -o, --output <DIR>     # output directory for artifacts
 ```
@@ -56,14 +59,15 @@ lunal-build cloud-init <DIR>
 
 #### `lunal-build container <URL>`
 
-Builds a project-specific partition for a container workload. Generates a standard cloud-init configuration that pulls and runs the specified container image.
+Builds a project-specific partition for a container workload. Generates a standard cloud-init configuration that pulls and runs the specified container image. The container subcommand is defined in the CLI from the start but its implementation details (container runtime, cloud-init modules, systemd units) will be designed when the container runtime work begins (see Future Work).
 
 ```
 lunal-build container <URL>
     --kernel <PATH>        # path to hardened kernel
-    --initrd <PATH>        # path to initrd
+    --initrd <PATH>        # path to base initrd (input to UKI build, not passed to igvm-tools)
     --firmware <PATH>      # path to OVMF binary
     --base-image <PATH>    # path to base image (from `lunal-build base`)
+    --smp <N>              # number of vCPUs (default: 1; affects SNP launch digest)
     --format <FORMAT>      # output format: qcow2, vhd, raw (default: qcow2)
     -o, --output <DIR>     # output directory for artifacts
 ```
@@ -111,30 +115,46 @@ This separation means:
 ┌─────────────────────────────────────────┐
 │ GPT partition table                     │
 ├─────────────────────────────────────────┤
-│ ESP (EFI System Partition) — if needed  │
-├─────────────────────────────────────────┤
 │ Base partition (root fs, read-only)     │
 ├─────────────────────────────────────────┤
-│ Project partition (read-only)           │
+│ Project partition (read-only + overlay) │
 ├─────────────────────────────────────────┤
 │ (Later) dm-verity hash partitions       │
 └─────────────────────────────────────────┘
 ```
 
+Note: No ESP is included. The UKI is injected into the IGVM via igvm-tools' HOB mechanism, not loaded from disk. The OVMF firmware discovers the kernel via HOB, not via an EFI System Partition.
+
+The project partition is mounted read-only with an overlay (tmpfs or ephemeral) for runtime writes.
+
+Disk composition is performed by `sfdisk` (for GPT creation) + `dd` (to write partition data at the correct offsets), implemented in `src/compose/disk.rs`.
+
 ### UKI and IGVM
 
-The UKI (Unified Kernel Image) bundles the hardened kernel + initramfs. In a later phase, a second initrd containing the dm-verity root hashes for both partitions will be added to the UKI.
+The UKI (Unified Kernel Image) bundles the hardened kernel + initramfs into a single PE/COFF EFI binary. The UKI is built using `systemd-ukify` (or mkosi's built-in UKI support if mkosi is managing the build). In a later phase, a second initrd containing the dm-verity root hashes for both partitions will be added to the UKI.
+
+**Data flow:** `(kernel + initrd) → ukify → UKI.efi → igvm-tools --kernel UKI.efi`
+
+Note: The `--initrd` CLI flag is an input to the UKI build step. It is NOT passed directly to igvm-tools. igvm-tools receives only the final UKI EFI binary via its `--kernel` flag.
 
 The build order enforces this dependency:
 1. Finalize disk image (both partitions composed)
 2. (Later) Calculate dm-verity root hashes
-3. Build UKI: kernel + base initrd (+ verity initrd later)
+3. Build UKI: kernel + base initrd (+ verity initrd later) → `UKI.efi`
 4. Invoke igvm-tools: OVMF + UKI → IGVM file + SNP launch digest
 
 igvm-tools is invoked as:
 ```
-igvm-tools build --firmware <OVMF> --kernel <UKI> --manifest <manifest.json> -o <output.igvm>
+igvm-tools build \
+    --firmware <OVMF> \
+    --kernel <UKI.efi> \
+    --smp <N> \
+    --platform snp \
+    --manifest <igvm-manifest.json> \
+    -o <output.igvm>
 ```
+
+The `--smp` flag is critical: the SNP launch digest includes one VMSA per vCPU, so the digest changes with vCPU count. The `--platform snp` is explicit (though it is the igvm-tools default).
 
 ### Output Artifacts
 
@@ -145,10 +165,37 @@ output/
 └── manifest.json            # hashes, measurements, build metadata
 ```
 
-The manifest includes:
-- SNP launch digest (from igvm-tools)
-- SHA-256 hashes of all inputs (kernel, initrd, firmware, base image, project partition)
-- Build configuration and timestamps
+lunal-build produces its own manifest that is a superset of the igvm-tools manifest. It calls igvm-tools with `--manifest`, parses the result, and embeds the measurement data into its richer manifest.
+
+```json
+{
+  "version": 1,
+  "build": {
+    "timestamp": "2026-03-13T12:00:00Z",
+    "smp": 4,
+    "format": "qcow2",
+    "platform": "snp"
+  },
+  "inputs": {
+    "kernel": { "path": "vmlinuz", "sha256": "..." },
+    "initrd": { "path": "initrd.img", "sha256": "..." },
+    "firmware": { "path": "OVMF.fd", "sha256": "..." },
+    "base_image": { "path": "base.raw", "sha256": "..." },
+    "project_partition": { "path": "project.raw", "sha256": "..." }
+  },
+  "outputs": {
+    "disk_image": { "path": "disk.qcow2", "sha256": "..." },
+    "igvm": { "path": "guest.igvm", "sha256": "..." },
+    "uki": { "path": "uki.efi", "sha256": "..." }
+  },
+  "measurement": {
+    "snp_launch_digest": "...",
+    "algorithm": "sha384",
+    "page_count": 5598,
+    "vmsa_count": 4
+  }
+}
+```
 
 ### Image Formats
 
@@ -162,9 +209,11 @@ Conversion uses `qemu-img convert`.
 ## External Dependencies
 
 Build-time tools that must be available on the host:
-- **mkosi** — image building, UKI creation, (later) dm-verity
-- **igvm-tools** — IGVM generation from OVMF + UKI
-- **qemu-img** — disk image format conversion
+- **mkosi** — base image and project partition building. Used by `lunal-build base` to apply hardening to the Ubuntu cloud image, and by `cloud-init`/`container` to build the project partition with cloud-init configs applied.
+- **systemd-ukify** — UKI construction (kernel + initrd → PE/COFF EFI binary). Used by `cloud-init`/`container` after disk composition.
+- **igvm-tools** — IGVM generation from OVMF + UKI. Used as the final step of `cloud-init`/`container`.
+- **qemu-img** — disk image format conversion (raw → qcow2/vhd)
+- **sfdisk** — GPT partition table creation during disk composition
 
 User-supplied inputs:
 - Custom hardened kernel + initrd (paths)
