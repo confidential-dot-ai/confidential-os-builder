@@ -127,8 +127,6 @@ Note: No ESP is included. The UKI is injected into the IGVM via igvm-tools' HOB 
 
 The project partition is mounted read-only with an overlay (tmpfs or ephemeral) for runtime writes.
 
-Disk composition is performed by `sfdisk` (for GPT creation) + `dd` (to write partition data at the correct offsets), implemented in `src/compose/disk.rs`.
-
 ### UKI and IGVM
 
 The UKI (Unified Kernel Image) bundles the hardened kernel + initramfs into a single PE/COFF EFI binary. The UKI is built using `systemd-ukify` (or mkosi's built-in UKI support if mkosi is managing the build). In a later phase, a second initrd containing the dm-verity root hashes for both partitions will be added to the UKI.
@@ -213,7 +211,6 @@ Build-time tools that must be available on the host:
 - **systemd-ukify** — UKI construction (kernel + initrd → PE/COFF EFI binary). Used by `cloud-init`/`container` after disk composition.
 - **igvm-tools** — IGVM generation from OVMF + UKI. Used as the final step of `cloud-init`/`container`.
 - **qemu-img** — disk image format conversion (raw → qcow2/vhd)
-- **sfdisk** — GPT partition table creation during disk composition
 
 User-supplied inputs:
 - Custom hardened kernel + initrd (paths)
