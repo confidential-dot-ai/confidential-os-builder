@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use lunal_build::mkosi::config::{MkosiConfig, MkosiProfile};
+use steep::mkosi::config::{MkosiConfig, MkosiProfile};
 
 #[test]
 fn test_base_config_generates_valid_ini() {

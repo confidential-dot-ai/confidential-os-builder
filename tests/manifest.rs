@@ -1,4 +1,4 @@
-use lunal_build::manifest::{
+use steep::manifest::{
     BuildManifest, BuildConfig, FileEntry, ManifestInputs, ManifestOutputs, Measurement,
 };
 
@@ -65,6 +65,6 @@ fn test_sha256_file_hash() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.bin");
     fs_err::write(&path, b"hello world").unwrap();
-    let hash = lunal_build::manifest::sha256_file(&path).unwrap();
+    let hash = steep::manifest::sha256_file(&path).unwrap();
     assert_eq!(hash, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
 }
