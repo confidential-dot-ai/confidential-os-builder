@@ -1,4 +1,4 @@
-use lunal_build::tools;
+use steep::tools;
 
 #[test]
 fn test_require_finds_existing_tool() {

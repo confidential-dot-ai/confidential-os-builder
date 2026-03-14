@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use lunal_build::uki::build::UkifyBuildArgs;
+use steep::uki::build::UkifyBuildArgs;
 
 #[test]
 fn test_ukify_args_basic() {

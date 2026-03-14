@@ -50,7 +50,7 @@ pub struct CloudInitArgs {
     #[arg(long)]
     pub firmware: PathBuf,
 
-    /// Path to base image (from `lunal-build base`)
+    /// Path to base image (from `steep base`)
     #[arg(long)]
     pub base_image: PathBuf,
 
@@ -84,7 +84,7 @@ pub struct ContainerArgs {
     #[arg(long)]
     pub firmware: PathBuf,
 
-    /// Path to base image (from `lunal-build base`)
+    /// Path to base image (from `steep base`)
     #[arg(long)]
     pub base_image: PathBuf,
 
