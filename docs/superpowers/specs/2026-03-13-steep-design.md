@@ -1,23 +1,23 @@
-# lunal-build: Confidential VM Image Builder
+# steep: Confidential VM Image Builder
 
 ## Overview
 
-`lunal-build` is a Rust CLI tool that orchestrates [mkosi](https://github.com/systemd/mkosi) and [igvm-tools](https://github.com/lunal-dev/igvm-tools) to produce confidential virtual machine images for AMD SEV-SNP (with Intel TDX support planned).
+`steep` is a Rust CLI tool that orchestrates [mkosi](https://github.com/systemd/mkosi) and [igvm-tools](https://github.com/lunal-dev/igvm-tools) to produce confidential virtual machine images for AMD SEV-SNP (with Intel TDX support planned).
 
 The tool takes a security-hardened base image, layers a project-specific partition on top, builds a Unified Kernel Image (UKI), and invokes igvm-tools to produce an IGVM file with a deterministic SNP launch digest.
 
 ## CLI Interface
 
-Binary name: `lunal-build`
+Binary name: `steep`
 
 ### Subcommands
 
-#### `lunal-build kernel`
+#### `steep kernel`
 
 Builds the security-hardened custom kernel. The kernel build details (source location, hardening config, patches) are out of scope for the initial implementation — this subcommand provides the entry point and will be fleshed out as the kernel hardening requirements are finalized. Initially, it may wrap an existing kernel build script or Makefile.
 
 ```
-lunal-build kernel
+steep kernel
     --source <PATH>        # path to kernel source tree
     --config <PATH>        # path to kernel .config (hardening config)
     -o, --output <DIR>     # where to write kernel + initrd
@@ -25,12 +25,12 @@ lunal-build kernel
 
 **Outputs:** `vmlinuz` (kernel binary) + `initrd.img` (base initramfs)
 
-#### `lunal-build base`
+#### `steep base`
 
 Builds the security-hardened base partition from an Ubuntu cloud image.
 
 ```
-lunal-build base
+steep base
     --source-image <PATH>  # Ubuntu cloud image to start from
     -o, --output <DIR>     # where to write the base partition image
 ```
@@ -40,16 +40,16 @@ lunal-build base
 
 **Outputs:** `base.raw` (base partition image)
 
-#### `lunal-build cloud-init <DIR>`
+#### `steep cloud-init <DIR>`
 
 Builds a project-specific partition from a cloud-init configuration directory, composes the final disk image, and produces an IGVM file.
 
 ```
-lunal-build cloud-init <DIR>
+steep cloud-init <DIR>
     --kernel <PATH>        # path to hardened kernel
     --initrd <PATH>        # path to base initrd (input to UKI build, not passed to igvm-tools)
     --firmware <PATH>      # path to OVMF binary
-    --base-image <PATH>    # path to base image (from `lunal-build base`)
+    --base-image <PATH>    # path to base image (from `steep base`)
     --smp <N>              # number of vCPUs (default: 1; affects SNP launch digest)
     --format <FORMAT>      # output format: qcow2, vhd, raw (default: qcow2)
     -o, --output <DIR>     # output directory for artifacts
@@ -57,16 +57,16 @@ lunal-build cloud-init <DIR>
 
 `DIR` is a standard cloud-init layout containing `user-data`, `meta-data`, and optionally `vendor-data`, `network-config`.
 
-#### `lunal-build container <URL>`
+#### `steep container <URL>`
 
 Builds a project-specific partition for a container workload. Generates a standard cloud-init configuration that pulls and runs the specified container image. The container subcommand is defined in the CLI from the start but its implementation details (container runtime, cloud-init modules, systemd units) will be designed when the container runtime work begins (see Future Work).
 
 ```
-lunal-build container <URL>
+steep container <URL>
     --kernel <PATH>        # path to hardened kernel
     --initrd <PATH>        # path to base initrd (input to UKI build, not passed to igvm-tools)
     --firmware <PATH>      # path to OVMF binary
-    --base-image <PATH>    # path to base image (from `lunal-build base`)
+    --base-image <PATH>    # path to base image (from `steep base`)
     --smp <N>              # number of vCPUs (default: 1; affects SNP launch digest)
     --format <FORMAT>      # output format: qcow2, vhd, raw (default: qcow2)
     -o, --output <DIR>     # output directory for artifacts
@@ -84,10 +84,10 @@ All subcommands support:
 ### Pipeline
 
 ```
-lunal-build kernel  → hardened kernel + initrd
-lunal-build base    → base partition image (Ubuntu + hardening)
+steep kernel  → hardened kernel + initrd
+steep base    → base partition image (Ubuntu + hardening)
 
-lunal-build cloud-init/container:
+steep cloud-init/container:
     1. Build project-specific partition (cloud-init config or container setup)
     2. Compose final disk image: base partition + project partition + GPT table
     3. (Later) Calculate dm-verity hashes for both partitions, embed in initrd
@@ -100,7 +100,7 @@ lunal-build cloud-init/container:
 
 The disk image is composed of two independently-built partitions:
 
-- **Base partition** — Ubuntu OS + security hardening. Built rarely via `lunal-build base`.
+- **Base partition** — Ubuntu OS + security hardening. Built rarely via `steep base`.
 - **Project partition** — project-specific configuration. Built per-deploy via `cloud-init` or `container` subcommands.
 
 This separation means:
@@ -163,7 +163,7 @@ output/
 └── manifest.json            # hashes, measurements, build metadata
 ```
 
-lunal-build produces its own manifest that is a superset of the igvm-tools manifest. It calls igvm-tools with `--manifest`, parses the result, and embeds the measurement data into its richer manifest.
+steep produces its own manifest that is a superset of the igvm-tools manifest. It calls igvm-tools with `--manifest`, parses the result, and embeds the measurement data into its richer manifest.
 
 ```json
 {
@@ -207,7 +207,7 @@ Conversion uses `qemu-img convert`.
 ## External Dependencies
 
 Build-time tools that must be available on the host:
-- **mkosi** — base image and project partition building. Used by `lunal-build base` to apply hardening to the Ubuntu cloud image, and by `cloud-init`/`container` to build the project partition with cloud-init configs applied.
+- **mkosi** — base image and project partition building. Used by `steep base` to apply hardening to the Ubuntu cloud image, and by `cloud-init`/`container` to build the project partition with cloud-init configs applied.
 - **systemd-ukify** — UKI construction (kernel + initrd → PE/COFF EFI binary). Used by `cloud-init`/`container` after disk composition.
 - **igvm-tools** — IGVM generation from OVMF + UKI. Used as the final step of `cloud-init`/`container`.
 - **qemu-img** — disk image format conversion (raw → qcow2/vhd)
@@ -215,7 +215,7 @@ Build-time tools that must be available on the host:
 User-supplied inputs:
 - Custom hardened kernel + initrd (paths)
 - OVMF firmware binary (path, patched edk2 with IGVM support)
-- Ubuntu cloud image (for `lunal-build base`)
+- Ubuntu cloud image (for `steep base`)
 
 ## Error Handling
 

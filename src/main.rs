@@ -1,11 +1,11 @@
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
-use lunal_build::{
+use steep::{
     commands, BaseArgs, CloudInitArgs, ContainerArgs, KernelArgs,
 };
 
 #[derive(Parser)]
-#[command(name = "lunal-build", about = "Confidential VM image builder")]
+#[command(name = "steep", about = "Confidential VM image builder")]
 struct Cli {
     #[command(flatten)]
     verbose: Verbosity,

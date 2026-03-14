@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use lunal_build::igvm::invoke::IgvmBuildArgs;
+use steep::igvm::invoke::IgvmBuildArgs;
 
 #[test]
 fn test_igvm_build_args_to_command() {
