@@ -16,6 +16,7 @@ pub struct BuildManifest {
 pub struct BuildConfig {
     pub timestamp: String,
     pub smp: u32,
+    pub memory: String,
     pub format: String,
     pub platform: String,
 }

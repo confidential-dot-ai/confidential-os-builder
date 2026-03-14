@@ -12,6 +12,7 @@ fn sample_manifest() -> BuildManifest {
         build: BuildConfig {
             timestamp: "2026-03-13T12:00:00Z".to_string(),
             smp: 4,
+            memory: "2G".to_string(),
             format: "qcow2".to_string(),
             platform: "snp".to_string(),
         },

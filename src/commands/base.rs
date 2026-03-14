@@ -1,11 +1,12 @@
 use crate::{tools, BaseArgs};
+use std::path::Path;
 
 pub fn run(args: &BaseArgs) -> anyhow::Result<()> {
-    tracing::info!(source_image = %args.source_image.display(), "building base image");
+    tracing::info!(source_image = %args.source_image, "building base image");
 
-    // Validate inputs
-    if !args.source_image.exists() {
-        anyhow::bail!("source image not found: {}", args.source_image.display());
+    let source_path = Path::new(&args.source_image);
+    if !source_path.exists() {
+        anyhow::bail!("source image not found: {}", args.source_image);
     }
 
     // Check required tools
