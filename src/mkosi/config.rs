@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub enum MkosiProfile {
     Base,
     CloudInit,
+    Repart,
 }
 
 /// Represents a mkosi configuration to be written as an INI file.
@@ -12,6 +13,7 @@ pub struct MkosiConfig {
     pub profile: MkosiProfile,
     pub source_image: Option<PathBuf>,
     pub cloud_init_dir: Option<PathBuf>,
+    pub postinst_scripts: Vec<String>,
     sections: Vec<(String, Vec<(String, String)>)>,
 }
 
@@ -22,6 +24,7 @@ impl MkosiConfig {
             profile: MkosiProfile::Base,
             source_image: Some(source_image),
             cloud_init_dir: None,
+            postinst_scripts: Vec::new(),
             sections: Vec::new(),
         };
         config.sections.push((
@@ -41,6 +44,7 @@ impl MkosiConfig {
             profile: MkosiProfile::CloudInit,
             source_image: None,
             cloud_init_dir: Some(cloud_init_dir),
+            postinst_scripts: Vec::new(),
             sections: Vec::new(),
         };
         config.sections.push((
@@ -56,6 +60,38 @@ impl MkosiConfig {
             vec![("Format".to_string(), "disk".to_string())],
         ));
         config
+    }
+
+    /// Create a mkosi config for disk composition via repart.
+    pub fn repart(definitions_dir: PathBuf, output: PathBuf) -> Self {
+        let mut config = Self {
+            profile: MkosiProfile::Repart,
+            source_image: None,
+            cloud_init_dir: None,
+            postinst_scripts: Vec::new(),
+            sections: Vec::new(),
+        };
+        config.sections.push((
+            "Distribution".to_string(),
+            vec![("Distribution".to_string(), "ubuntu".to_string())],
+        ));
+        config.sections.push((
+            "Content".to_string(),
+            vec![("RepartDirectories".to_string(), definitions_dir.display().to_string())],
+        ));
+        config.sections.push((
+            "Output".to_string(),
+            vec![
+                ("Format".to_string(), "disk".to_string()),
+                ("Output".to_string(), output.display().to_string()),
+            ],
+        ));
+        config
+    }
+
+    /// Add a postinst script to be written into the mkosi build tree.
+    pub fn add_postinst_script(&mut self, content: &str) {
+        self.postinst_scripts.push(content.to_string());
     }
 
     /// Serialize to mkosi INI format.
@@ -74,6 +110,48 @@ impl MkosiConfig {
     /// Write the config to a file.
     pub fn write_to(&self, path: &std::path::Path) -> anyhow::Result<()> {
         fs_err::write(path, self.to_ini())?;
+        Ok(())
+    }
+
+    /// Build the mkosi command-line arguments.
+    /// The work_dir is passed as --directory so mkosi finds its config and scripts.
+    pub fn to_mkosi_args(&self, work_dir: &std::path::Path) -> Vec<String> {
+        vec![
+            "--directory".to_string(),
+            work_dir.display().to_string(),
+            "build".to_string(),
+        ]
+    }
+
+    /// Write postinst scripts to the mkosi build tree directory.
+    /// Creates mkosi.postinst.d/ with numbered scripts.
+    pub fn write_postinst_scripts(&self, build_dir: &std::path::Path) -> anyhow::Result<()> {
+        if self.postinst_scripts.is_empty() {
+            return Ok(());
+        }
+        let postinst_dir = build_dir.join("mkosi.postinst.d");
+        fs_err::create_dir_all(&postinst_dir)?;
+        for (i, script) in self.postinst_scripts.iter().enumerate() {
+            let script_path = postinst_dir.join(format!("{:02}-script.sh", i));
+            fs_err::write(&script_path, script)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Invoke mkosi with the generated config.
+    pub fn invoke(&self, work_dir: &std::path::Path) -> anyhow::Result<()> {
+        let config_path = work_dir.join("mkosi.conf");
+        self.write_to(&config_path)?;
+        self.write_postinst_scripts(work_dir)?;
+        crate::tools::require("mkosi")?;
+        let args = self.to_mkosi_args(work_dir);
+        tracing::info!(config = %config_path.display(), "invoking mkosi");
+        crate::tools::run_command_streaming("mkosi", &args)?;
         Ok(())
     }
 }
