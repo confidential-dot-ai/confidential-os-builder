@@ -1,7 +1,7 @@
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
 use steep::{
-    commands, BaseArgs, CloudInitArgs, ContainerArgs, KernelArgs,
+    commands, BaseArgs, CloudInitArgs, ContainerArgs, KernelArgs, RunArgs,
 };
 
 #[derive(Parser)]
@@ -24,6 +24,8 @@ enum Commands {
     CloudInit(CloudInitArgs),
     /// Build a CVM image running a container
     Container(ContainerArgs),
+    /// Launch a confidential VM from build artifacts
+    Run(RunArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -65,5 +67,6 @@ fn main() -> anyhow::Result<()> {
         Commands::Base(args) => commands::base::run(args),
         Commands::CloudInit(args) => commands::cloud_init::run(args),
         Commands::Container(args) => commands::container::run(args),
+        Commands::Run(args) => commands::run::run(args),
     }
 }

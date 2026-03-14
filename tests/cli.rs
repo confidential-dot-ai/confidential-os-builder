@@ -61,6 +61,7 @@ fn test_cloud_init_fails_with_missing_dir() {
         "--initrd", "/tmp/i",
         "--firmware", "/tmp/f",
         "--base-image", "/tmp/b",
+        "--service-port", "443",
         "-o", "/tmp/o",
     ])
     .assert()
@@ -90,6 +91,7 @@ fn test_smp_default_is_one() {
         "--initrd", "/tmp/i",
         "--firmware", "/tmp/f",
         "--base-image", "/tmp/b",
+        "--service-port", "443",
         "-o", "/tmp/o",
     ])
     .assert()
@@ -105,9 +107,95 @@ fn test_format_flag_accepts_vhd() {
         "--initrd", "/tmp/i",
         "--firmware", "/tmp/f",
         "--base-image", "/tmp/b",
+        "--service-port", "443",
         "--format", "vhd",
         "-o", "/tmp/o",
     ])
     .assert()
     .failure(); // Fails on validation, not parsing — proves vhd is accepted
+}
+
+#[test]
+fn test_cloud_init_requires_service_port() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args([
+        "cloud-init", "/tmp",
+        "--kernel", "/tmp/k",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicates::str::contains("--service-port"));
+}
+
+#[test]
+fn test_cloud_init_accepts_service_port() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args([
+        "cloud-init", "/tmp",
+        "--kernel", "/tmp/k",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "--service-port", "8080",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure();
+}
+
+#[test]
+fn test_cloud_init_memory_default() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args([
+        "cloud-init", "/tmp",
+        "--kernel", "/tmp/k",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "--service-port", "443",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure();
+}
+
+#[test]
+fn test_run_requires_dir() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["run"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_run_accepts_dir() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["run", "/tmp/nonexistent"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_base_accepts_url_as_source_image() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args([
+        "base",
+        "--source-image", "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure();
+}
+
+#[test]
+fn test_help_shows_run_subcommand() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("run"));
 }

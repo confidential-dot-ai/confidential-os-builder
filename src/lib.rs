@@ -1,7 +1,11 @@
 pub mod compose;
+pub mod convert;
 pub mod igvm;
 pub mod manifest;
 pub mod mkosi;
+pub mod nftables;
+pub mod qemu;
+pub mod source;
 pub mod tools;
 pub mod uki;
 
@@ -24,9 +28,9 @@ pub struct KernelArgs {
 
 #[derive(clap::Args)]
 pub struct BaseArgs {
-    /// Ubuntu cloud image to start from
+    /// Ubuntu cloud image (local path or URL)
     #[arg(long)]
-    pub source_image: PathBuf,
+    pub source_image: String,
 
     /// Output directory for the base partition image
     #[arg(short, long)]
@@ -54,6 +58,14 @@ pub struct CloudInitArgs {
     #[arg(long)]
     pub base_image: PathBuf,
 
+    /// Single TCP port to allow through firewall
+    #[arg(long)]
+    pub service_port: u16,
+
+    /// RAM for VM (QEMU-style suffix, e.g. "2G")
+    #[arg(long, default_value = "2G")]
+    pub memory: String,
+
     /// Number of vCPUs (affects SNP launch digest)
     #[arg(long, default_value = "1")]
     pub smp: u32,
@@ -65,6 +77,12 @@ pub struct CloudInitArgs {
     /// Output directory for artifacts
     #[arg(short, long)]
     pub output: PathBuf,
+}
+
+#[derive(clap::Args)]
+pub struct RunArgs {
+    /// Output directory from steep cloud-init
+    pub dir: PathBuf,
 }
 
 #[derive(clap::Args)]
@@ -113,4 +131,5 @@ pub mod commands {
     pub mod cloud_init;
     pub mod container;
     pub mod kernel;
+    pub mod run;
 }
