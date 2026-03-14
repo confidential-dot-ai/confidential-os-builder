@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use tempfile;
 
 #[test]
 fn test_help_shows_subcommands() {
@@ -198,4 +199,14 @@ fn test_help_shows_run_subcommand() {
         .assert()
         .success()
         .stdout(predicates::str::contains("run"));
+}
+
+#[test]
+fn test_run_fails_with_missing_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["run", dir.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("manifest.json not found"));
 }
