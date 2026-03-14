@@ -44,17 +44,24 @@ Two paths, preferring the local checkout:
 
 ## steep base
 
-### CLI (unchanged)
+### CLI (updated)
 
 ```
 steep base
-    --source-image <PATH>  # Ubuntu cloud image
-    -o, --output <DIR>     # output directory
+    --source-image <PATH|URL>  # Ubuntu cloud image (local path or URL)
+    -o, --output <DIR>         # output directory
 ```
+
+### Source image resolution
+
+`--source-image` accepts either a local file path or a URL:
+
+- **Local path:** Use the file directly.
+- **URL:** Download to `~/.local/share/steep/base-inputs/` and use the cached copy. If the file already exists in the cache (matched by filename), skip the download. This avoids re-downloading large cloud images on repeated builds.
 
 ### Behavior
 
-1. Validate `--source-image` exists
+1. Resolve `--source-image` — download and cache if URL, validate exists if local path
 2. Generate mkosi config for base image (existing `MkosiConfig::base()`)
 3. Write nftables hardening postinst script into the mkosi build tree — **blocks all new incoming and outgoing connections; only loopback and already-established connections are permitted**
 4. Invoke `mkosi` to build the base partition
