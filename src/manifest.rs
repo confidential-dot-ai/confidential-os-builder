@@ -67,3 +67,16 @@ pub fn write_manifest(manifest: &BuildManifest, path: &Path) -> anyhow::Result<(
     fs_err::write(path, json)?;
     Ok(())
 }
+
+/// Parse the igvm-tools manifest JSON to extract measurement data.
+pub fn parse_igvm_manifest(json: &str) -> anyhow::Result<Measurement> {
+    let measurement: Measurement = serde_json::from_str(json)?;
+    Ok(measurement)
+}
+
+/// Read a manifest from a JSON file.
+pub fn read_manifest(path: &Path) -> anyhow::Result<BuildManifest> {
+    let content = fs_err::read_to_string(path)?;
+    let manifest: BuildManifest = serde_json::from_str(&content)?;
+    Ok(manifest)
+}
