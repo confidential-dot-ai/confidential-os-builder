@@ -1,9 +1,11 @@
 pub mod compose;
+pub mod container;
 pub mod convert;
 pub mod igvm;
 pub mod manifest;
 pub mod mkosi;
 pub mod nftables;
+pub mod pipeline;
 pub mod qemu;
 pub mod source;
 pub mod tools;
@@ -105,6 +107,14 @@ pub struct ContainerArgs {
     /// Path to base image (from `steep base`)
     #[arg(long)]
     pub base_image: PathBuf,
+
+    /// Single TCP port to allow through firewall
+    #[arg(long)]
+    pub service_port: u16,
+
+    /// RAM for VM (QEMU-style suffix, e.g. "2G")
+    #[arg(long, default_value = "2G")]
+    pub memory: String,
 
     /// Number of vCPUs (affects SNP launch digest)
     #[arg(long, default_value = "1")]

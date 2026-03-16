@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub enum MkosiProfile {
     Base,
     CloudInit,
+    Container,
     Repart,
 }
 
@@ -14,6 +15,7 @@ pub struct MkosiConfig {
     pub source_image: Option<PathBuf>,
     pub cloud_init_dir: Option<PathBuf>,
     pub postinst_scripts: Vec<String>,
+    pub extra_files: Vec<(PathBuf, Vec<u8>)>,
     sections: Vec<(String, Vec<(String, String)>)>,
 }
 
@@ -25,6 +27,7 @@ impl MkosiConfig {
             source_image: Some(source_image),
             cloud_init_dir: None,
             postinst_scripts: Vec::new(),
+            extra_files: Vec::new(),
             sections: Vec::new(),
         };
         config.sections.push((
@@ -45,6 +48,7 @@ impl MkosiConfig {
             source_image: None,
             cloud_init_dir: Some(cloud_init_dir),
             postinst_scripts: Vec::new(),
+            extra_files: Vec::new(),
             sections: Vec::new(),
         };
         config.sections.push((
@@ -62,6 +66,31 @@ impl MkosiConfig {
         config
     }
 
+    /// Create a mkosi config for building a container project partition.
+    pub fn container() -> Self {
+        let mut config = Self {
+            profile: MkosiProfile::Container,
+            source_image: None,
+            cloud_init_dir: None,
+            postinst_scripts: Vec::new(),
+            extra_files: Vec::new(),
+            sections: Vec::new(),
+        };
+        config.sections.push((
+            "Distribution".to_string(),
+            vec![("Distribution".to_string(), "ubuntu".to_string())],
+        ));
+        config.sections.push((
+            "Content".to_string(),
+            vec![("Packages".to_string(), "podman".to_string())],
+        ));
+        config.sections.push((
+            "Output".to_string(),
+            vec![("Format".to_string(), "disk".to_string())],
+        ));
+        config
+    }
+
     /// Create a mkosi config for disk composition via repart.
     pub fn repart(definitions_dir: PathBuf, output: PathBuf) -> Self {
         let mut config = Self {
@@ -69,6 +98,7 @@ impl MkosiConfig {
             source_image: None,
             cloud_init_dir: None,
             postinst_scripts: Vec::new(),
+            extra_files: Vec::new(),
             sections: Vec::new(),
         };
         config.sections.push((
@@ -92,6 +122,28 @@ impl MkosiConfig {
     /// Add a postinst script to be written into the mkosi build tree.
     pub fn add_postinst_script(&mut self, content: &str) {
         self.postinst_scripts.push(content.to_string());
+    }
+
+    /// Add a file to be written into the mkosi.extra/ tree.
+    /// The path is relative to the image root (e.g., "etc/containers/systemd/app.container").
+    pub fn add_extra_file(&mut self, relative_path: PathBuf, content: Vec<u8>) {
+        self.extra_files.push((relative_path, content));
+    }
+
+    /// Write extra files to the mkosi.extra/ directory in the build tree.
+    pub fn write_extra_files(&self, build_dir: &std::path::Path) -> anyhow::Result<()> {
+        if self.extra_files.is_empty() {
+            return Ok(());
+        }
+        let extra_dir = build_dir.join("mkosi.extra");
+        for (relative_path, content) in &self.extra_files {
+            let dest = extra_dir.join(relative_path);
+            if let Some(parent) = dest.parent() {
+                fs_err::create_dir_all(parent)?;
+            }
+            fs_err::write(&dest, content)?;
+        }
+        Ok(())
     }
 
     /// Serialize to mkosi INI format.
@@ -148,6 +200,7 @@ impl MkosiConfig {
         let config_path = work_dir.join("mkosi.conf");
         self.write_to(&config_path)?;
         self.write_postinst_scripts(work_dir)?;
+        self.write_extra_files(work_dir)?;
         crate::tools::require("mkosi")?;
         let args = self.to_mkosi_args(work_dir);
         tracing::info!(config = %config_path.display(), "invoking mkosi");
