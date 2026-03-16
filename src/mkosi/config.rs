@@ -175,10 +175,12 @@ impl MkosiConfig {
     }
 
     /// Build the mkosi command-line arguments.
-    /// The work_dir is passed as --directory so mkosi finds its config and scripts.
+    /// The work_dir is both the config directory and the output directory.
     pub fn to_mkosi_args(&self, work_dir: &std::path::Path) -> Vec<String> {
         vec![
             "--directory".to_string(),
+            work_dir.display().to_string(),
+            "--output-dir".to_string(),
             work_dir.display().to_string(),
             "build".to_string(),
         ]
