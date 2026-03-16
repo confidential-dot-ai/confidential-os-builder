@@ -24,6 +24,12 @@ pub fn run(args: &BaseArgs) -> anyhow::Result<()> {
     // Step 6: Invoke mkosi
     config.invoke(work_dir.path())?;
 
+    // Step 7: Copy mkosi output to args.output/base.raw
+    let mkosi_output = work_dir.path().join("image.raw");
+    let dest = args.output.join("base.raw");
+    fs_err::copy(&mkosi_output, &dest)?;
+    tracing::info!(dest = %dest.display(), "base image written");
+
     tracing::info!(output = %args.output.display(), "base image build complete");
     Ok(())
 }
