@@ -19,7 +19,9 @@ SOURCE_IMAGE="https://cloud-images.ubuntu.com/resolute/current/resolute-server-c
 PORT=8080
 
 # Build steep if not already built
-(cd "$REPO_ROOT" && cargo build --release --quiet)
+if [[ ! -x "$STEEP" ]]; then
+    (cd "$REPO_ROOT" && cargo build --release --quiet)
+fi
 
 # Remove output dir if --force
 if [[ $FORCE -eq 1 ]]; then

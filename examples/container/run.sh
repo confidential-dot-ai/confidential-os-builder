@@ -20,7 +20,9 @@ IMAGE="steep-demo-container:latest"
 PORT=8081
 
 # Build steep if not already built
-(cd "$REPO_ROOT" && cargo build --release --quiet)
+if [[ ! -x "$STEEP" ]]; then
+    (cd "$REPO_ROOT" && cargo build --release --quiet)
+fi
 
 # Remove output dir if --force
 if [[ $FORCE -eq 1 ]]; then
@@ -39,8 +41,19 @@ fi
 echo "==> Building local container image..."
 podman build -t "$IMAGE" "$SCRIPT_DIR"
 
-# Build container CVM image if not present
+# Check if CVM is stale (missing or built from a different container image)
+NEW_IMAGE_ID="$(podman image inspect --format '{{.Id}}' "$IMAGE")"
+IMAGE_ID_FILE="$OUTPUT/.container-image-id"
+CVM_STALE=0
 if [[ ! -f "$OUTPUT/manifest.json" ]]; then
+    CVM_STALE=1
+elif [[ ! -f "$IMAGE_ID_FILE" ]] || [[ "$(cat "$IMAGE_ID_FILE")" != "$NEW_IMAGE_ID" ]]; then
+    echo "==> Container image changed; rebuilding CVM..."
+    rm -rf "$OUTPUT"
+    CVM_STALE=1
+fi
+
+if [[ $CVM_STALE -eq 1 ]]; then
     echo "==> Building container CVM image..."
     "$STEEP" container "$IMAGE" \
         --kernel "$KERNEL" \
@@ -49,6 +62,7 @@ if [[ ! -f "$OUTPUT/manifest.json" ]]; then
         --base-image "$BASE_IMAGE" \
         --service-port 80 \
         -o "$OUTPUT"
+    echo "$NEW_IMAGE_ID" > "$IMAGE_ID_FILE"
 fi
 
 echo ""
