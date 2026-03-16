@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+FORCE=0
+FORCE_FLAG=""
+for arg in "$@"; do
+    if [[ "$arg" == "--force" ]]; then
+        FORCE=1
+        FORCE_FLAG="--force"
+    fi
+done
+
+STEEP="$REPO_ROOT/target/release/steep"
+SOURCE_IMAGE="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img"
+BASE_OUTPUT="$REPO_ROOT/output/demo/base"
+BASE_IMAGE="$BASE_OUTPUT/base.raw"
+
+# Check dependencies
+if ! command -v tmux &>/dev/null; then
+    echo "error: tmux is required but not found. Install with: apt-get install tmux" >&2
+    exit 1
+fi
+
+# Build steep if not already built
+(cd "$REPO_ROOT" && cargo build --release --quiet)
+
+# Kill existing session if present (re-running always starts clean)
+tmux kill-session -t steep-demo 2>/dev/null || true
+
+# Build base image sequentially (before tmux split, to avoid parallel race)
+if [[ $FORCE -eq 1 ]]; then
+    rm -rf "$BASE_OUTPUT"
+fi
+if [[ ! -f "$BASE_IMAGE" ]]; then
+    echo "==> Building base image..."
+    "$STEEP" base \
+        --source-image "$SOURCE_IMAGE" \
+        -o "$BASE_OUTPUT"
+fi
+
+# Launch tmux session with two panes
+tmux new-session -d -s steep-demo -x 220 -y 50
+
+# Left pane (pane 0): cloud-init example — send before splitting
+tmux send-keys -t steep-demo:0.0 "$REPO_ROOT/examples/cloud-init/run.sh $FORCE_FLAG" Enter
+
+# Create right pane (pane 1) and run container example there
+tmux split-window -h -t steep-demo
+tmux send-keys -t steep-demo:0.1 "$REPO_ROOT/examples/container/run.sh $FORCE_FLAG" Enter
+
+# Attach
+tmux attach-session -t steep-demo
