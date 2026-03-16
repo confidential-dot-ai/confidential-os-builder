@@ -8,7 +8,9 @@ use crate::{tools, ContainerArgs};
 
 fn validate_inputs(args: &ContainerArgs) -> anyhow::Result<()> {
     ensure_file_exists(&args.kernel, "kernel")?;
-    ensure_file_exists(&args.initrd, "initrd")?;
+    if let Some(initrd) = &args.initrd {
+        ensure_file_exists(initrd, "initrd")?;
+    }
     ensure_file_exists(&args.firmware, "firmware")?;
     ensure_file_exists(&args.base_image, "base image")?;
     Ok(())
@@ -32,7 +34,9 @@ pub fn run(args: &ContainerArgs) -> anyhow::Result<()> {
 
     // Stage 2: Check required tools
     tools::require("mkosi")?;
-    tools::require("ukify")?;
+    if args.initrd.is_some() {
+        tools::require("ukify")?;
+    }
     tools::require("igvm-tools")?;
     tools::require("qemu-img")?;
     tools::require("podman")?;
@@ -77,7 +81,7 @@ pub fn run(args: &ContainerArgs) -> anyhow::Result<()> {
     pipeline::run(&PipelineArgs {
         project_partition,
         kernel: args.kernel.clone(),
-        initrd: args.initrd.clone(),
+        initrd: args.initrd.clone(),  // None → kernel is prebuilt UKI
         firmware: args.firmware.clone(),
         base_image: args.base_image.clone(),
         memory: args.memory.clone(),

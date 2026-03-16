@@ -10,9 +10,9 @@ for arg in "$@"; do
 done
 
 STEEP="$REPO_ROOT/target/release/steep"
-KERNEL="/boot/vmlinuz-$(uname -r)"
-INITRD="/boot/initrd.img-$(uname -r)"
-FIRMWARE="$HOME/.local/share/steep/OVMF.fd"
+IGVM_PREBUILT="$(cd "$REPO_ROOT/../igvm-tools/examples/prebuilt" && pwd)"
+KERNEL="$IGVM_PREBUILT/uki.efi"
+FIRMWARE="$IGVM_PREBUILT/OVMF.fd"
 BASE_IMAGE="$REPO_ROOT/output/demo/base/base.raw"
 OUTPUT="$REPO_ROOT/output/demo/container"
 SOURCE_IMAGE="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img"
@@ -57,7 +57,6 @@ if [[ $CVM_STALE -eq 1 ]]; then
     echo "==> Building container CVM image..."
     "$STEEP" container "$IMAGE" \
         --kernel "$KERNEL" \
-        --initrd "$INITRD" \
         --firmware "$FIRMWARE" \
         --base-image "$BASE_IMAGE" \
         --service-port 80 \

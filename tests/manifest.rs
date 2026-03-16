@@ -18,7 +18,7 @@ fn sample_manifest() -> BuildManifest {
         },
         inputs: ManifestInputs {
             kernel: sample_entry("vmlinuz"),
-            initrd: sample_entry("initrd.img"),
+            initrd: Some(sample_entry("initrd.img")),
             firmware: sample_entry("OVMF.fd"),
             base_image: sample_entry("base.raw"),
             project_partition: sample_entry("project.raw"),

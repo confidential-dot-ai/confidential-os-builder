@@ -30,7 +30,8 @@ pub struct FileEntry {
 #[derive(Serialize, Deserialize)]
 pub struct ManifestInputs {
     pub kernel: FileEntry,
-    pub initrd: FileEntry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initrd: Option<FileEntry>,
     pub firmware: FileEntry,
     pub base_image: FileEntry,
     pub project_partition: FileEntry,

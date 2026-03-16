@@ -44,13 +44,13 @@ pub struct CloudInitArgs {
     /// Path to cloud-init configuration directory
     pub dir: PathBuf,
 
-    /// Path to hardened kernel
+    /// Path to kernel (or prebuilt UKI EFI when --initrd is omitted)
     #[arg(long)]
     pub kernel: PathBuf,
 
-    /// Path to base initrd (input to UKI build)
+    /// Path to initrd. When omitted, --kernel is treated as a prebuilt UKI (ukify step is skipped).
     #[arg(long)]
-    pub initrd: PathBuf,
+    pub initrd: Option<PathBuf>,
 
     /// Path to OVMF firmware binary
     #[arg(long)]
@@ -96,13 +96,13 @@ pub struct ContainerArgs {
     /// OCI container image URL
     pub url: String,
 
-    /// Path to hardened kernel
+    /// Path to kernel (or prebuilt UKI EFI when --initrd is omitted)
     #[arg(long)]
     pub kernel: PathBuf,
 
-    /// Path to base initrd (input to UKI build)
+    /// Path to initrd. When omitted, --kernel is treated as a prebuilt UKI (ukify step is skipped).
     #[arg(long)]
-    pub initrd: PathBuf,
+    pub initrd: Option<PathBuf>,
 
     /// Path to OVMF firmware binary
     #[arg(long)]

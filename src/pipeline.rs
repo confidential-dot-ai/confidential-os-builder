@@ -12,7 +12,9 @@ use crate::ImageFormat;
 pub struct PipelineArgs {
     pub project_partition: std::path::PathBuf,
     pub kernel: std::path::PathBuf,
-    pub initrd: std::path::PathBuf,
+    /// When Some, ukify is invoked to build a UKI from kernel+initrd.
+    /// When None, kernel is used directly as a prebuilt UKI (ukify step skipped).
+    pub initrd: Option<std::path::PathBuf>,
     pub firmware: std::path::PathBuf,
     pub base_image: std::path::PathBuf,
     pub memory: String,
@@ -35,15 +37,20 @@ pub fn run(args: &PipelineArgs) -> anyhow::Result<()> {
     compose::disk::compose(&args.base_image, &args.project_partition, &raw_disk)?;
     tracing::info!("disk image composed");
 
-    // Stage 6: Build UKI via ukify
+    // Stage 6: Produce UKI — build from kernel+initrd, or copy prebuilt
     let uki_path = args.output.join("uki.efi");
-    let uki_args = UkifyBuildArgs {
-        kernel: args.kernel.clone(),
-        initrds: vec![args.initrd.clone()],
-        output: uki_path.clone(),
-    };
-    crate::uki::build::build(&uki_args)?;
-    tracing::info!("UKI built");
+    if let Some(initrd) = &args.initrd {
+        let uki_args = UkifyBuildArgs {
+            kernel: args.kernel.clone(),
+            initrds: vec![initrd.clone()],
+            output: uki_path.clone(),
+        };
+        crate::uki::build::build(&uki_args)?;
+        tracing::info!("UKI built via ukify");
+    } else {
+        fs_err::copy(&args.kernel, &uki_path)?;
+        tracing::info!(src = %args.kernel.display(), "using prebuilt UKI");
+    }
 
     // Stage 7: Build IGVM via igvm-tools
     let igvm_work_dir = tempfile::tempdir()?;
@@ -83,7 +90,7 @@ pub fn run(args: &PipelineArgs) -> anyhow::Result<()> {
         },
         inputs: ManifestInputs {
             kernel: hash_entry(&args.kernel)?,
-            initrd: hash_entry(&args.initrd)?,
+            initrd: args.initrd.as_ref().map(|p| hash_entry(p)).transpose()?,
             firmware: hash_entry(&args.firmware)?,
             base_image: hash_entry(&args.base_image)?,
             project_partition: hash_entry(&args.project_partition)?,
