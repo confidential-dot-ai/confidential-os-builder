@@ -64,7 +64,10 @@ impl MkosiConfig {
         ));
         config.sections.push((
             "Output".to_string(),
-            vec![("Format".to_string(), "disk".to_string())],
+            vec![
+                ("Format".to_string(), "disk".to_string()),
+                ("Output".to_string(), "project.raw".to_string()),
+            ],
         ));
         config
     }
@@ -89,7 +92,10 @@ impl MkosiConfig {
         ));
         config.sections.push((
             "Output".to_string(),
-            vec![("Format".to_string(), "disk".to_string())],
+            vec![
+                ("Format".to_string(), "disk".to_string()),
+                ("Output".to_string(), "project.raw".to_string()),
+            ],
         ));
         config
     }
