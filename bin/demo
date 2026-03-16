@@ -25,7 +25,9 @@ if ! command -v tmux &>/dev/null; then
 fi
 
 # Build steep if not already built
-(cd "$REPO_ROOT" && cargo build --release --quiet)
+if [[ ! -x "$STEEP" ]]; then
+    (cd "$REPO_ROOT" && cargo build --release --quiet)
+fi
 
 # Kill existing session if present (re-running always starts clean)
 tmux kill-session -t steep-demo 2>/dev/null || true
@@ -47,12 +49,14 @@ tmux new-session -d -s steep-demo -x 220 -y 50
 # Properly quote REPO_ROOT so paths with spaces survive tmux send-keys interpolation
 QUOTED_REPO="$(printf '%q' "$REPO_ROOT")"
 
-# Left pane (pane 0): cloud-init example — send before splitting
-tmux send-keys -t steep-demo:0.0 "$QUOTED_REPO/examples/cloud-init/run.sh $FORCE_FLAG" Enter
+# Left pane (active after new-session): cloud-init example
+tmux send-keys -t steep-demo "$QUOTED_REPO/examples/cloud-init/run.sh $FORCE_FLAG" Enter
 
-# Create right pane (pane 1) and run container example there
+# Split horizontally — new pane becomes active
 tmux split-window -h -t steep-demo
-tmux send-keys -t steep-demo:0.1 "$QUOTED_REPO/examples/container/run.sh $FORCE_FLAG" Enter
+
+# Right pane (now active after split): container example
+tmux send-keys -t steep-demo "$QUOTED_REPO/examples/container/run.sh $FORCE_FLAG" Enter
 
 # Attach
 tmux attach-session -t steep-demo
