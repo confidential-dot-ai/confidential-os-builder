@@ -16,7 +16,7 @@ This installs mkosi, systemd-ukify, qemu-utils, qemu-system-x86 via apt, igvm-to
 
 ```bash
 steep base \
-    --source-image https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img \
+    --source-image https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img \
     -o output/base
 ```
 
