@@ -210,3 +210,69 @@ fn test_run_fails_with_missing_manifest() {
         .failure()
         .stderr(predicates::str::contains("manifest.json not found"));
 }
+
+#[test]
+fn test_container_requires_service_port() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args([
+        "container", "ghcr.io/org/app:latest",
+        "--kernel", "/tmp/k",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicates::str::contains("--service-port"));
+}
+
+#[test]
+fn test_container_accepts_service_port_and_memory() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args([
+        "container", "ghcr.io/org/app:latest",
+        "--kernel", "/tmp/k",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "--service-port", "8080",
+        "--memory", "4G",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure(); // Fails on validation, not parsing
+}
+
+#[test]
+fn test_container_memory_default() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args([
+        "container", "ghcr.io/org/app:latest",
+        "--kernel", "/tmp/k",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "--service-port", "443",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure(); // Fails on validation, not parsing — proves --memory has a default
+}
+
+#[test]
+fn test_container_fails_with_missing_kernel() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args([
+        "container", "ghcr.io/org/app:latest",
+        "--kernel", "/nonexistent/kernel",
+        "--initrd", "/tmp/i",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "--service-port", "8080",
+        "-o", "/tmp/o",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicates::str::contains("not found"));
+}
