@@ -44,12 +44,15 @@ fi
 # Launch tmux session with two panes
 tmux new-session -d -s steep-demo -x 220 -y 50
 
+# Properly quote REPO_ROOT so paths with spaces survive tmux send-keys interpolation
+QUOTED_REPO="$(printf '%q' "$REPO_ROOT")"
+
 # Left pane (pane 0): cloud-init example — send before splitting
-tmux send-keys -t steep-demo:0.0 "$REPO_ROOT/examples/cloud-init/run.sh $FORCE_FLAG" Enter
+tmux send-keys -t steep-demo:0.0 "$QUOTED_REPO/examples/cloud-init/run.sh $FORCE_FLAG" Enter
 
 # Create right pane (pane 1) and run container example there
 tmux split-window -h -t steep-demo
-tmux send-keys -t steep-demo:0.1 "$REPO_ROOT/examples/container/run.sh $FORCE_FLAG" Enter
+tmux send-keys -t steep-demo:0.1 "$QUOTED_REPO/examples/container/run.sh $FORCE_FLAG" Enter
 
 # Attach
 tmux attach-session -t steep-demo
