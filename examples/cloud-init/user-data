@@ -1,0 +1,29 @@
+#cloud-config
+packages:
+  - debian-keyring
+  - debian-archive-keyring
+  - apt-transport-https
+  - curl
+
+write_files:
+  - path: /var/www/html/index.html
+    content: |
+      <!DOCTYPE html>
+      <html><head><title>steep demo</title></head>
+      <body><h1>steep demo</h1>
+      <p>Served by caddy inside a confidential VM built with steep (cloud-init).</p>
+      </body></html>
+
+runcmd:
+  - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+  - apt-get update
+  - apt-get install -y caddy
+  - |
+    cat > /etc/caddy/Caddyfile << 'EOF'
+    :80 {
+        root * /var/www/html
+        file_server
+    }
+    EOF
+  - systemctl enable --now caddy
