@@ -9,12 +9,13 @@ pub struct QemuArgs {
     pub disk_format: String,
     pub smp: u32,
     pub memory: String,
+    pub port_forwards: Vec<(u16, u16)>,
 }
 
 impl QemuArgs {
     /// Build the QEMU command-line arguments.
     pub fn to_args(&self) -> Vec<String> {
-        vec![
+        let mut args = vec![
             "-machine".to_string(),
             "q35,confidential-guest-support=sev0,igvm-cfg=igvm0".to_string(),
             "-object".to_string(),
@@ -28,7 +29,21 @@ impl QemuArgs {
             "-m".to_string(),
             self.memory.clone(),
             "-nographic".to_string(),
-        ]
+        ];
+
+        if !self.port_forwards.is_empty() {
+            let hostfwds: String = self.port_forwards
+                .iter()
+                .map(|(h, g)| format!("hostfwd=tcp::{}-:{}", h, g))
+                .collect::<Vec<_>>()
+                .join(",");
+            args.push("-netdev".to_string());
+            args.push(format!("user,id=net0,{}", hostfwds));
+            args.push("-device".to_string());
+            args.push("virtio-net-pci,netdev=net0".to_string());
+        }
+
+        args
     }
 }
 
