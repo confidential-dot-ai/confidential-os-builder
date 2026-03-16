@@ -43,14 +43,27 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     };
     let qemu_format = convert::qemu_img_format(&format_enum);
 
-    // Step 6: Launch QEMU
+    // Step 6: Parse port forwards
+    let port_forwards = args.port_forward.iter()
+        .map(|s| {
+            let (host_str, guest_str) = s.split_once(':')
+                .ok_or_else(|| anyhow::anyhow!("invalid --port-forward format, expected HOST:GUEST: {s}"))?;
+            let host = host_str.parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("invalid host port in --port-forward: {host_str}"))?;
+            let guest = guest_str.parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("invalid guest port in --port-forward: {guest_str}"))?;
+            Ok((host, guest))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    // Step 7: Launch QEMU
     let qemu_args = QemuArgs {
         igvm: igvm_path,
         disk: disk_path,
         disk_format: qemu_format.to_string(),
         smp: manifest.build.smp,
         memory: manifest.build.memory,
-        port_forwards: vec![],
+        port_forwards,
     };
     crate::qemu::launch(&qemu_args)?;
 

@@ -83,8 +83,12 @@ pub struct CloudInitArgs {
 
 #[derive(clap::Args)]
 pub struct RunArgs {
-    /// Output directory from steep cloud-init
+    /// Output directory from steep cloud-init or steep container
     pub dir: PathBuf,
+
+    /// Forward a host port to a guest port (HOST:GUEST, e.g. 8080:80). Repeatable.
+    #[arg(long, value_name = "HOST:GUEST")]
+    pub port_forward: Vec<String>,
 }
 
 #[derive(clap::Args)]
