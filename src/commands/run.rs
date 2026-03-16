@@ -50,6 +50,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         disk_format: qemu_format.to_string(),
         smp: manifest.build.smp,
         memory: manifest.build.memory,
+        port_forwards: vec![],
     };
     crate::qemu::launch(&qemu_args)?;
 
