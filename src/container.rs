@@ -3,7 +3,17 @@ use std::path::Path;
 use crate::tools;
 
 /// Pull an OCI container image using podman.
+/// If the image already exists in the local store, the pull is skipped.
 pub fn pull(url: &str) -> anyhow::Result<()> {
+    let exists = std::process::Command::new("podman")
+        .args(["image", "exists", url])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if exists {
+        tracing::info!(url = url, "container image already present locally, skipping pull");
+        return Ok(());
+    }
     tracing::info!(url = url, "pulling container image");
     tools::run_command_streaming("podman", &["pull", url])?;
     Ok(())
