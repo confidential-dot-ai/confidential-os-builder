@@ -19,7 +19,7 @@ impl QemuArgs {
             "-machine".to_string(),
             "q35,confidential-guest-support=sev0,igvm-cfg=igvm0".to_string(),
             "-object".to_string(),
-            "sev-snp-guest,id=sev0".to_string(),
+            "sev-snp-guest,id=sev0,reduced-phys-bits=1".to_string(),
             "-object".to_string(),
             format!("igvm-cfg,id=igvm0,file={}", self.igvm.display()),
             "-drive".to_string(),
