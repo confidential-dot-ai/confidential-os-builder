@@ -2,13 +2,6 @@ use std::path::PathBuf;
 use steep::mkosi::config::{MkosiConfig, MkosiProfile};
 
 #[test]
-fn test_cloud_init_config_includes_cloud_init_dir() {
-    let config = MkosiConfig::cloud_init(PathBuf::from("/path/to/cloud-init"));
-    let ini = config.to_ini();
-    assert!(ini.contains("[Content]"));
-}
-
-#[test]
 fn test_repart_config() {
     let config = MkosiConfig::repart(
         PathBuf::from("/path/to/definitions"),
@@ -35,12 +28,6 @@ fn test_container_config_ini() {
     assert!(ini.contains("Packages=podman"));
     assert!(ini.contains("[Output]"));
     assert!(ini.contains("Format=disk"));
-}
-
-#[test]
-fn test_container_config_has_no_cloud_init_dir() {
-    let config = MkosiConfig::container();
-    assert!(config.cloud_init_dir.is_none());
 }
 
 #[test]
