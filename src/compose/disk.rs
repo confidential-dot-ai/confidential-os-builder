@@ -20,10 +20,10 @@ pub fn project_partition_conf(project_partition: &Path) -> String {
     format!(
         "[Partition]\n\
          Type=generic\n\
-         Format=ext4\n\
+         Format=vfat\n\
          CopyBlocks={}\n\
          ReadOnly=yes\n\
-         SizeMinBytes=512M\n",
+         SizeMinBytes=8M\n",
         project_partition.display()
     )
 }
