@@ -3,7 +3,6 @@ use std::path::PathBuf;
 /// mkosi build profile.
 #[derive(Debug, PartialEq)]
 pub enum MkosiProfile {
-    Base,
     CloudInit,
     Container,
     Repart,
@@ -19,29 +18,6 @@ pub struct MkosiConfig {
 }
 
 impl MkosiConfig {
-    /// Create a mkosi config for building the base partition.
-    pub fn base() -> Self {
-        let mut config = Self {
-            profile: MkosiProfile::Base,
-            cloud_init_dir: None,
-            postinst_scripts: Vec::new(),
-            extra_files: Vec::new(),
-            sections: Vec::new(),
-        };
-        config.sections.push((
-            "Distribution".to_string(),
-            vec![("Distribution".to_string(), "ubuntu".to_string())],
-        ));
-        config.sections.push((
-            "Output".to_string(),
-            vec![
-                ("Format".to_string(), "disk".to_string()),
-                ("Output".to_string(), "image.raw".to_string()),
-            ],
-        ));
-        config
-    }
-
     /// Create a mkosi config for building a project partition with cloud-init.
     pub fn cloud_init(cloud_init_dir: PathBuf) -> Self {
         let mut config = Self {
