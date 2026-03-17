@@ -20,7 +20,7 @@ enum Commands {
     Kernel(KernelArgs),
     /// Build the security-hardened base image
     Base(BaseArgs),
-    /// Build a CVM image with cloud-init configuration
+    /// Build a CVM image with cloud-init configuration. The cloud-init user-data must configure any required firewall rules (e.g. opening a service port with nftables).
     CloudInit(CloudInitArgs),
     /// Build a CVM image running a container
     Container(ContainerArgs),
