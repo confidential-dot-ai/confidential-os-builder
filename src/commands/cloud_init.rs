@@ -60,7 +60,7 @@ pub fn run(args: &CloudInitArgs) -> anyhow::Result<()> {
     let mut mkosi_config = MkosiConfig::cloud_init(args.dir.clone());
     mkosi_config.add_postinst_script(&nftables::service_rules(args.service_port));
     mkosi_config.invoke(work_dir.path())?;
-    let project_partition = work_dir.path().join("project.raw");
+    let project_partition = work_dir.path().join("image.raw");
     tracing::info!("project partition built");
 
     // Stages 5-9: Shared pipeline

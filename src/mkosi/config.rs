@@ -66,7 +66,7 @@ impl MkosiConfig {
             "Output".to_string(),
             vec![
                 ("Format".to_string(), "disk".to_string()),
-                ("Output".to_string(), "project.raw".to_string()),
+                ("Output".to_string(), "image.raw".to_string()),
             ],
         ));
         config
@@ -94,7 +94,7 @@ impl MkosiConfig {
             "Output".to_string(),
             vec![
                 ("Format".to_string(), "disk".to_string()),
-                ("Output".to_string(), "project.raw".to_string()),
+                ("Output".to_string(), "image.raw".to_string()),
             ],
         ));
         config
