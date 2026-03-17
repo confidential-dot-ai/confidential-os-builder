@@ -64,5 +64,11 @@ pub fn compose(
     let config = MkosiConfig::repart(definitions_dir, output.to_path_buf());
     config.invoke(work_dir.path())?;
 
+    // mkosi v12 ignores Output= and always writes image.raw in --output-dir
+    let mkosi_output = work_dir.path().join("image.raw");
+    if mkosi_output.exists() && !output.exists() {
+        fs_err::copy(&mkosi_output, output)?;
+    }
+
     Ok(())
 }
