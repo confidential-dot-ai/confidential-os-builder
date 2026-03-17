@@ -1,5 +1,4 @@
 use assert_cmd::Command;
-use tempfile;
 
 #[test]
 fn test_help_shows_subcommands() {
@@ -16,33 +15,38 @@ fn test_help_shows_subcommands() {
 #[test]
 fn test_cloud_init_requires_dir() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args(["cloud-init"])
-        .assert()
-        .failure();
+    cmd.args(["cloud-init"]).assert().failure();
 }
 
 #[test]
 fn test_cloud_init_requires_kernel_flag() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args(["cloud-init", "/tmp/fake-dir", "--initrd", "/tmp/i", "--firmware", "/tmp/f", "--base-image", "/tmp/b", "-o", "/tmp/o"])
-        .assert()
-        .failure();
+    cmd.args([
+        "cloud-init",
+        "/tmp/fake-dir",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "-o",
+        "/tmp/o",
+    ])
+    .assert()
+    .failure();
 }
 
 #[test]
 fn test_container_requires_url() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args(["container"])
-        .assert()
-        .failure();
+    cmd.args(["container"]).assert().failure();
 }
 
 #[test]
-fn test_base_requires_source_image() {
+fn test_base_requires_output() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args(["base", "-o", "/tmp/o"])
-        .assert()
-        .failure();
+    cmd.args(["base"]).assert().failure();
 }
 
 #[test]
@@ -57,43 +61,45 @@ fn test_kernel_requires_output() {
 fn test_cloud_init_fails_with_missing_dir() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "cloud-init", "/nonexistent/dir",
-        "--kernel", "/tmp/k",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "--service-port", "443",
-        "-o", "/tmp/o",
+        "cloud-init",
+        "/nonexistent/dir",
+        "--kernel",
+        "/tmp/k",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "--service-port",
+        "443",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure()
     .stderr(predicates::str::contains("not found"));
 }
 
-#[test]
-fn test_base_fails_with_missing_source() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args([
-        "base",
-        "--source-image", "/nonexistent/image.img",
-        "-o", "/tmp/o",
-    ])
-    .assert()
-    .failure()
-    .stderr(predicates::str::contains("not found"));
-}
 
 #[test]
 fn test_smp_default_is_one() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "cloud-init", "/tmp",
-        "--kernel", "/tmp/k",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "--service-port", "443",
-        "-o", "/tmp/o",
+        "cloud-init",
+        "/tmp",
+        "--kernel",
+        "/tmp/k",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "--service-port",
+        "443",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure(); // Fails on validation, not arg parsing — proves --smp has a default
@@ -103,14 +109,22 @@ fn test_smp_default_is_one() {
 fn test_format_flag_accepts_vhd() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "cloud-init", "/tmp",
-        "--kernel", "/tmp/k",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "--service-port", "443",
-        "--format", "vhd",
-        "-o", "/tmp/o",
+        "cloud-init",
+        "/tmp",
+        "--kernel",
+        "/tmp/k",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "--service-port",
+        "443",
+        "--format",
+        "vhd",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure(); // Fails on validation, not parsing — proves vhd is accepted
@@ -120,12 +134,18 @@ fn test_format_flag_accepts_vhd() {
 fn test_cloud_init_requires_service_port() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "cloud-init", "/tmp",
-        "--kernel", "/tmp/k",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "-o", "/tmp/o",
+        "cloud-init",
+        "/tmp",
+        "--kernel",
+        "/tmp/k",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure()
@@ -136,13 +156,20 @@ fn test_cloud_init_requires_service_port() {
 fn test_cloud_init_accepts_service_port() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "cloud-init", "/tmp",
-        "--kernel", "/tmp/k",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "--service-port", "8080",
-        "-o", "/tmp/o",
+        "cloud-init",
+        "/tmp",
+        "--kernel",
+        "/tmp/k",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "--service-port",
+        "8080",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure();
@@ -152,13 +179,20 @@ fn test_cloud_init_accepts_service_port() {
 fn test_cloud_init_memory_default() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "cloud-init", "/tmp",
-        "--kernel", "/tmp/k",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "--service-port", "443",
-        "-o", "/tmp/o",
+        "cloud-init",
+        "/tmp",
+        "--kernel",
+        "/tmp/k",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "--service-port",
+        "443",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure();
@@ -167,30 +201,15 @@ fn test_cloud_init_memory_default() {
 #[test]
 fn test_run_requires_dir() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args(["run"])
-        .assert()
-        .failure();
+    cmd.args(["run"]).assert().failure();
 }
 
 #[test]
 fn test_run_accepts_dir() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args(["run", "/tmp/nonexistent"])
-        .assert()
-        .failure();
+    cmd.args(["run", "/tmp/nonexistent"]).assert().failure();
 }
 
-#[test]
-fn test_base_accepts_url_as_source_image() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args([
-        "base",
-        "--source-image", "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-        "-o", "/tmp/o",
-    ])
-    .assert()
-    .failure();
-}
 
 #[test]
 fn test_help_shows_run_subcommand() {
@@ -215,12 +234,18 @@ fn test_run_fails_with_missing_manifest() {
 fn test_container_requires_service_port() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "container", "ghcr.io/org/app:latest",
-        "--kernel", "/tmp/k",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "-o", "/tmp/o",
+        "container",
+        "ghcr.io/org/app:latest",
+        "--kernel",
+        "/tmp/k",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure()
@@ -231,14 +256,22 @@ fn test_container_requires_service_port() {
 fn test_container_accepts_service_port_and_memory() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "container", "ghcr.io/org/app:latest",
-        "--kernel", "/tmp/k",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "--service-port", "8080",
-        "--memory", "4G",
-        "-o", "/tmp/o",
+        "container",
+        "ghcr.io/org/app:latest",
+        "--kernel",
+        "/tmp/k",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "--service-port",
+        "8080",
+        "--memory",
+        "4G",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure(); // Fails on validation, not parsing
@@ -248,13 +281,20 @@ fn test_container_accepts_service_port_and_memory() {
 fn test_container_memory_default() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "container", "ghcr.io/org/app:latest",
-        "--kernel", "/tmp/k",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "--service-port", "443",
-        "-o", "/tmp/o",
+        "container",
+        "ghcr.io/org/app:latest",
+        "--kernel",
+        "/tmp/k",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "--service-port",
+        "443",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure(); // Fails on validation, not parsing — proves --memory has a default
@@ -264,13 +304,20 @@ fn test_container_memory_default() {
 fn test_container_fails_with_missing_kernel() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
-        "container", "ghcr.io/org/app:latest",
-        "--kernel", "/nonexistent/kernel",
-        "--initrd", "/tmp/i",
-        "--firmware", "/tmp/f",
-        "--base-image", "/tmp/b",
-        "--service-port", "8080",
-        "-o", "/tmp/o",
+        "container",
+        "ghcr.io/org/app:latest",
+        "--kernel",
+        "/nonexistent/kernel",
+        "--initrd",
+        "/tmp/i",
+        "--firmware",
+        "/tmp/f",
+        "--base-image",
+        "/tmp/b",
+        "--service-port",
+        "8080",
+        "-o",
+        "/tmp/o",
     ])
     .assert()
     .failure()

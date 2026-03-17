@@ -7,7 +7,7 @@ pub mod mkosi;
 pub mod nftables;
 pub mod pipeline;
 pub mod qemu;
-pub mod source;
+
 pub mod tools;
 pub mod uki;
 
@@ -30,10 +30,6 @@ pub struct KernelArgs {
 
 #[derive(clap::Args)]
 pub struct BaseArgs {
-    /// Ubuntu cloud image (local path or URL)
-    #[arg(long)]
-    pub source_image: String,
-
     /// Output directory for the base partition image
     #[arg(short, long)]
     pub output: PathBuf,

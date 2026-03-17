@@ -15,7 +15,6 @@ KERNEL="$IGVM_PREBUILT/uki.efi"
 FIRMWARE="$IGVM_PREBUILT/OVMF.fd"
 BASE_IMAGE="$REPO_ROOT/output/demo/base/base.raw"
 OUTPUT="$REPO_ROOT/output/demo/container"
-SOURCE_IMAGE="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img"
 IMAGE="steep-demo-container:latest"
 PORT=8081
 
@@ -33,7 +32,6 @@ fi
 if [[ ! -f "$BASE_IMAGE" ]]; then
     echo "==> Building base image..."
     "$STEEP" base \
-        --source-image "$SOURCE_IMAGE" \
         -o "$REPO_ROOT/output/demo/base"
 fi
 

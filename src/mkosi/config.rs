@@ -12,7 +12,6 @@ pub enum MkosiProfile {
 /// Represents a mkosi configuration to be written as an INI file.
 pub struct MkosiConfig {
     pub profile: MkosiProfile,
-    pub source_image: Option<PathBuf>,
     pub cloud_init_dir: Option<PathBuf>,
     pub postinst_scripts: Vec<String>,
     pub extra_files: Vec<(PathBuf, Vec<u8>)>,
@@ -21,10 +20,9 @@ pub struct MkosiConfig {
 
 impl MkosiConfig {
     /// Create a mkosi config for building the base partition.
-    pub fn base(source_image: PathBuf) -> Self {
+    pub fn base() -> Self {
         let mut config = Self {
             profile: MkosiProfile::Base,
-            source_image: Some(source_image),
             cloud_init_dir: None,
             postinst_scripts: Vec::new(),
             extra_files: Vec::new(),
@@ -48,7 +46,6 @@ impl MkosiConfig {
     pub fn cloud_init(cloud_init_dir: PathBuf) -> Self {
         let mut config = Self {
             profile: MkosiProfile::CloudInit,
-            source_image: None,
             cloud_init_dir: Some(cloud_init_dir),
             postinst_scripts: Vec::new(),
             extra_files: Vec::new(),
@@ -76,7 +73,6 @@ impl MkosiConfig {
     pub fn container() -> Self {
         let mut config = Self {
             profile: MkosiProfile::Container,
-            source_image: None,
             cloud_init_dir: None,
             postinst_scripts: Vec::new(),
             extra_files: Vec::new(),
@@ -104,7 +100,6 @@ impl MkosiConfig {
     pub fn repart(definitions_dir: PathBuf, output: PathBuf) -> Self {
         let mut config = Self {
             profile: MkosiProfile::Repart,
-            source_image: None,
             cloud_init_dir: None,
             postinst_scripts: Vec::new(),
             extra_files: Vec::new(),

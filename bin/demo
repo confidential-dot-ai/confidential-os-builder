@@ -14,7 +14,6 @@ for arg in "$@"; do
 done
 
 STEEP="$REPO_ROOT/target/release/steep"
-SOURCE_IMAGE="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img"
 BASE_OUTPUT="$REPO_ROOT/output/demo/base"
 BASE_IMAGE="$BASE_OUTPUT/base.raw"
 
@@ -39,7 +38,6 @@ fi
 if [[ ! -f "$BASE_IMAGE" ]]; then
     echo "==> Building base image..."
     "$STEEP" base \
-        --source-image "$SOURCE_IMAGE" \
         -o "$BASE_OUTPUT"
 fi
 

@@ -15,12 +15,10 @@ This installs mkosi, systemd-ukify, qemu-utils, qemu-system-x86 via apt, igvm-to
 ### 1. Build the base image
 
 ```bash
-steep base \
-    --source-image https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img \
-    -o output/base
+steep base -o output/base
 ```
 
-The Ubuntu cloud image is downloaded and cached in `~/.local/share/steep/base-inputs/`. You can also pass a local file path instead of a URL.
+mkosi builds the base partition from scratch (no source image required).
 
 The base image includes nftables rules that block all incoming and outgoing traffic (except loopback and established connections). The cloud-init step opens a single service port.
 
@@ -108,7 +106,6 @@ cargo run -- cloud-init --help
 cargo run -- run --help
 
 # Verify validation catches missing inputs
-cargo run -- base --source-image /nonexistent -o /tmp/o
 cargo run -- run /tmp
 ```
 

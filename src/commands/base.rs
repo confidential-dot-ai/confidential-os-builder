@@ -1,22 +1,18 @@
-use crate::{nftables, source, tools, BaseArgs};
+use crate::{nftables, tools, BaseArgs};
 use crate::mkosi::config::MkosiConfig;
 
 pub fn run(args: &BaseArgs) -> anyhow::Result<()> {
-    tracing::info!(source_image = %args.source_image, "building base image");
+    tracing::info!("building base image");
 
-    // Step 1: Resolve source image (download + cache if URL)
-    let source_path = source::resolve(&args.source_image)?;
-    tracing::info!(resolved = %source_path.display(), "source image resolved");
-
-    // Step 2: Check required tools
+    // Step 1: Check required tools
     tools::require("mkosi")?;
 
-    // Step 3: Create output directory
+    // Step 2: Create output directory
     fs_err::create_dir_all(&args.output)?;
 
-    // Step 4: Generate mkosi config
+    // Step 3: Generate mkosi config
     let work_dir = tempfile::tempdir()?;
-    let mut config = MkosiConfig::base(source_path);
+    let mut config = MkosiConfig::base();
 
     // Step 5: Add nftables hardening (block all traffic)
     config.add_postinst_script(&nftables::base_rules());
