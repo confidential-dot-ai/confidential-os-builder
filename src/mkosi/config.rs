@@ -3,7 +3,6 @@ use std::path::PathBuf;
 /// mkosi build profile.
 #[derive(Debug, PartialEq)]
 pub enum MkosiProfile {
-    CloudInit,
     Container,
     Repart,
 }
@@ -11,45 +10,16 @@ pub enum MkosiProfile {
 /// Represents a mkosi configuration to be written as an INI file.
 pub struct MkosiConfig {
     pub profile: MkosiProfile,
-    pub cloud_init_dir: Option<PathBuf>,
     pub postinst_scripts: Vec<String>,
     pub extra_files: Vec<(PathBuf, Vec<u8>)>,
     sections: Vec<(String, Vec<(String, String)>)>,
 }
 
 impl MkosiConfig {
-    /// Create a mkosi config for building a project partition with cloud-init.
-    pub fn cloud_init(cloud_init_dir: PathBuf) -> Self {
-        let mut config = Self {
-            profile: MkosiProfile::CloudInit,
-            cloud_init_dir: Some(cloud_init_dir),
-            postinst_scripts: Vec::new(),
-            extra_files: Vec::new(),
-            sections: Vec::new(),
-        };
-        config.sections.push((
-            "Distribution".to_string(),
-            vec![("Distribution".to_string(), "ubuntu".to_string())],
-        ));
-        config.sections.push((
-            "Content".to_string(),
-            vec![],
-        ));
-        config.sections.push((
-            "Output".to_string(),
-            vec![
-                ("Format".to_string(), "disk".to_string()),
-                ("Output".to_string(), "image.raw".to_string()),
-            ],
-        ));
-        config
-    }
-
     /// Create a mkosi config for building a container project partition.
     pub fn container() -> Self {
         let mut config = Self {
             profile: MkosiProfile::Container,
-            cloud_init_dir: None,
             postinst_scripts: Vec::new(),
             extra_files: Vec::new(),
             sections: Vec::new(),
@@ -76,7 +46,6 @@ impl MkosiConfig {
     pub fn repart(definitions_dir: PathBuf, output: PathBuf) -> Self {
         let mut config = Self {
             profile: MkosiProfile::Repart,
-            cloud_init_dir: None,
             postinst_scripts: Vec::new(),
             extra_files: Vec::new(),
             sections: Vec::new(),
