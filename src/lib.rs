@@ -56,10 +56,6 @@ pub struct CloudInitArgs {
     #[arg(long)]
     pub base_image: PathBuf,
 
-    /// Single TCP port to allow through firewall
-    #[arg(long)]
-    pub service_port: u16,
-
     /// RAM for VM (QEMU-style suffix, e.g. "2G")
     #[arg(long, default_value = "2G")]
     pub memory: String,
