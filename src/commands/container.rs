@@ -74,7 +74,7 @@ pub fn run(args: &ContainerArgs) -> anyhow::Result<()> {
     fs_err::copy(&oci_archive, extra_oci_dir.join("container.oci"))?;
 
     mkosi_config.invoke(work_dir.path())?;
-    let project_partition = work_dir.path().join("project.raw");
+    let project_partition = work_dir.path().join("image.raw");
     tracing::info!("project partition built");
 
     // Stages 5-9: Shared pipeline
