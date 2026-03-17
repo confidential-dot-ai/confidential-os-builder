@@ -71,8 +71,6 @@ fn test_cloud_init_fails_with_missing_dir() {
         "/tmp/f",
         "--base-image",
         "/tmp/b",
-        "--service-port",
-        "443",
         "-o",
         "/tmp/o",
     ])
@@ -96,8 +94,6 @@ fn test_smp_default_is_one() {
         "/tmp/f",
         "--base-image",
         "/tmp/b",
-        "--service-port",
-        "443",
         "-o",
         "/tmp/o",
     ])
@@ -119,8 +115,6 @@ fn test_format_flag_accepts_vhd() {
         "/tmp/f",
         "--base-image",
         "/tmp/b",
-        "--service-port",
-        "443",
         "--format",
         "vhd",
         "-o",
@@ -131,48 +125,20 @@ fn test_format_flag_accepts_vhd() {
 }
 
 #[test]
-fn test_cloud_init_requires_service_port() {
+fn test_cloud_init_rejects_service_port() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args([
         "cloud-init",
         "/tmp",
-        "--kernel",
-        "/tmp/k",
-        "--initrd",
-        "/tmp/i",
-        "--firmware",
-        "/tmp/f",
-        "--base-image",
-        "/tmp/b",
-        "-o",
-        "/tmp/o",
+        "--kernel", "/tmp/k",
+        "--firmware", "/tmp/f",
+        "--base-image", "/tmp/b",
+        "--service-port", "443",
+        "-o", "/tmp/o",
     ])
     .assert()
     .failure()
-    .stderr(predicates::str::contains("--service-port"));
-}
-
-#[test]
-fn test_cloud_init_accepts_service_port() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args([
-        "cloud-init",
-        "/tmp",
-        "--kernel",
-        "/tmp/k",
-        "--initrd",
-        "/tmp/i",
-        "--firmware",
-        "/tmp/f",
-        "--base-image",
-        "/tmp/b",
-        "--service-port",
-        "8080",
-        "-o",
-        "/tmp/o",
-    ])
-    .assert()
-    .failure();
+    .stderr(predicates::str::contains("service-port"));
 }
 
 #[test]
@@ -189,8 +155,6 @@ fn test_cloud_init_memory_default() {
         "/tmp/f",
         "--base-image",
         "/tmp/b",
-        "--service-port",
-        "443",
         "-o",
         "/tmp/o",
     ])
