@@ -1,10 +1,13 @@
 use std::path::PathBuf;
-use steep::qemu::QemuArgs;
+use steep::qemu::{select_tier, QemuArgs, QemuTier};
 
 #[test]
 fn test_qemu_args_basic() {
     let args = QemuArgs {
-        igvm: PathBuf::from("/output/guest.igvm"),
+        tier: QemuTier::SevSnp,
+        igvm: Some(PathBuf::from("/output/guest.igvm")),
+        uki: None,
+        firmware: None,
         disk: PathBuf::from("/output/disk.qcow2"),
         disk_format: "qcow2".to_string(),
         smp: 2,
@@ -22,7 +25,10 @@ fn test_qemu_args_basic() {
 #[test]
 fn test_qemu_args_contains_sev_snp() {
     let args = QemuArgs {
-        igvm: PathBuf::from("/output/guest.igvm"),
+        tier: QemuTier::SevSnp,
+        igvm: Some(PathBuf::from("/output/guest.igvm")),
+        uki: None,
+        firmware: None,
         disk: PathBuf::from("/output/disk.qcow2"),
         disk_format: "qcow2".to_string(),
         smp: 1,
@@ -39,7 +45,10 @@ fn test_qemu_args_contains_sev_snp() {
 #[test]
 fn test_qemu_args_disk_format() {
     let args = QemuArgs {
-        igvm: PathBuf::from("/output/guest.igvm"),
+        tier: QemuTier::SevSnp,
+        igvm: Some(PathBuf::from("/output/guest.igvm")),
+        uki: None,
+        firmware: None,
         disk: PathBuf::from("/output/disk.vhd"),
         disk_format: "vpc".to_string(),
         smp: 1,
@@ -54,7 +63,10 @@ fn test_qemu_args_disk_format() {
 #[test]
 fn test_qemu_args_no_port_forwards_has_no_netdev() {
     let args = QemuArgs {
-        igvm: PathBuf::from("/output/guest.igvm"),
+        tier: QemuTier::SevSnp,
+        igvm: Some(PathBuf::from("/output/guest.igvm")),
+        uki: None,
+        firmware: None,
         disk: PathBuf::from("/output/disk.qcow2"),
         disk_format: "qcow2".to_string(),
         smp: 1,
@@ -69,7 +81,10 @@ fn test_qemu_args_no_port_forwards_has_no_netdev() {
 #[test]
 fn test_qemu_args_single_port_forward() {
     let args = QemuArgs {
-        igvm: PathBuf::from("/output/guest.igvm"),
+        tier: QemuTier::SevSnp,
+        igvm: Some(PathBuf::from("/output/guest.igvm")),
+        uki: None,
+        firmware: None,
         disk: PathBuf::from("/output/disk.qcow2"),
         disk_format: "qcow2".to_string(),
         smp: 1,
@@ -85,7 +100,10 @@ fn test_qemu_args_single_port_forward() {
 #[test]
 fn test_qemu_args_multiple_port_forwards() {
     let args = QemuArgs {
-        igvm: PathBuf::from("/output/guest.igvm"),
+        tier: QemuTier::SevSnp,
+        igvm: Some(PathBuf::from("/output/guest.igvm")),
+        uki: None,
+        firmware: None,
         disk: PathBuf::from("/output/disk.qcow2"),
         disk_format: "qcow2".to_string(),
         smp: 1,
@@ -98,4 +116,80 @@ fn test_qemu_args_multiple_port_forwards() {
     assert!(joined.contains("hostfwd=tcp::8443-:443"));
     let netdev_count = cmd.iter().filter(|s| *s == "-netdev").count();
     assert_eq!(netdev_count, 1);
+}
+
+// --- KVM tier tests ---
+
+#[test]
+fn test_qemu_args_kvm_tier() {
+    let args = QemuArgs {
+        tier: QemuTier::Kvm,
+        igvm: None,
+        uki: Some(PathBuf::from("/output/uki.efi")),
+        firmware: Some(PathBuf::from("/usr/share/OVMF/OVMF.fd")),
+        disk: PathBuf::from("/output/disk.qcow2"),
+        disk_format: "qcow2".to_string(),
+        smp: 2,
+        memory: "2G".to_string(),
+        port_forwards: vec![],
+    };
+    let cmd = args.to_args();
+    let joined = cmd.join(" ");
+    assert!(joined.contains("-enable-kvm"));
+    assert!(joined.contains("-kernel /output/uki.efi"));
+    assert!(joined.contains("if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF.fd"));
+    assert!(!joined.contains("sev-snp-guest"));
+    assert!(!joined.contains("igvm-cfg"));
+    assert!(!joined.contains("confidential-guest-support"));
+}
+
+// --- Emulated tier tests ---
+
+#[test]
+fn test_qemu_args_emulated_tier() {
+    let args = QemuArgs {
+        tier: QemuTier::Emulated,
+        igvm: None,
+        uki: Some(PathBuf::from("/output/uki.efi")),
+        firmware: Some(PathBuf::from("/usr/share/OVMF/OVMF.fd")),
+        disk: PathBuf::from("/output/disk.qcow2"),
+        disk_format: "qcow2".to_string(),
+        smp: 1,
+        memory: "2G".to_string(),
+        port_forwards: vec![],
+    };
+    let cmd = args.to_args();
+    let joined = cmd.join(" ");
+    assert!(!joined.contains("-enable-kvm"));
+    assert!(joined.contains("-kernel /output/uki.efi"));
+    assert!(joined.contains("if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF.fd"));
+    assert!(!joined.contains("sev-snp-guest"));
+    assert!(!joined.contains("igvm-cfg"));
+    assert!(!joined.contains("confidential-guest-support"));
+}
+
+// --- select_tier tests ---
+
+#[test]
+fn test_select_tier_sevsnp() {
+    let output = "List of user creatable objects:\nsev-snp-guest\nigvm-cfg\nmemory-backend-file\n";
+    assert_eq!(select_tier(output, true), QemuTier::SevSnp);
+}
+
+#[test]
+fn test_select_tier_kvm() {
+    let output = "List of user creatable objects:\nmemory-backend-file\n";
+    assert_eq!(select_tier(output, true), QemuTier::Kvm);
+}
+
+#[test]
+fn test_select_tier_emulated() {
+    let output = "List of user creatable objects:\nmemory-backend-file\n";
+    assert_eq!(select_tier(output, false), QemuTier::Emulated);
+}
+
+#[test]
+fn test_select_tier_snp_objects_no_kvm() {
+    let output = "List of user creatable objects:\nsev-snp-guest\nigvm-cfg\n";
+    assert_eq!(select_tier(output, false), QemuTier::Emulated);
 }
