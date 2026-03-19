@@ -1,34 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+set -x
 
 echo "==> Installing system packages..."
 sudo apt-get update -qq
-sudo apt-get install -y -qq mkosi systemd-ukify qemu-utils qemu-system-x86
+sudo apt-get install -y -qq qemu-utils qemu-system-x86
+
+echo "==> Installing uv..."
+which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+
+echo "==> Installing mkosi..."
+which mkosi || uv tool install git+https://github.com/systemd/mkosi.git
 
 echo "==> Installing igvm-tools..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IGVM_LOCAL="${SCRIPT_DIR}/../../igvm-tools"
+TOOLS_DIR="$DIR/../../igvm-tools"
+which igvm-tools || cargo install --path "$TOOLS_DIR"
 
-if [ -d "$IGVM_LOCAL" ]; then
-    echo "    Found local igvm-tools at $IGVM_LOCAL"
-    cargo install --path "$IGVM_LOCAL"
-else
-    echo "    Installing igvm-tools from GitHub..."
-    cargo install --git https://github.com/lunal-dev/igvm-tools
-fi
+SHARE_DIR="$HOME/.local/share/steep"
+mkdir -p "$SHARE_DIR"
 
 echo "==> Installing OVMF firmware..."
-OVMF_DIR="$HOME/.local/share/steep"
-mkdir -p "$OVMF_DIR"
+test -e "$SHARE_DIR/OVMF.fd" || cp "$TOOLS_DIR/examples/prebuilt/OVMF.fd" "$SHARE_DIR/OVMF.fd"
 
-if [ -d "$IGVM_LOCAL" ] && [ -f "$IGVM_LOCAL/examples/prebuilt/OVMF.fd" ]; then
-    echo "    Copying OVMF from local igvm-tools..."
-    cp "$IGVM_LOCAL/examples/prebuilt/OVMF.fd" "$OVMF_DIR/OVMF.fd"
-else
-    echo "    Downloading OVMF from GitHub..."
-    curl -fsSL -o "$OVMF_DIR/OVMF.fd" \
-        "https://raw.githubusercontent.com/lunal-dev/igvm-tools/main/examples/prebuilt/OVMF.fd"
-fi
+echo "==> Installing UKI..."
+test -e "$SHARE_DIR/uki.efi" || cp "$TOOLS_DIR/examples/prebuilt/uki.efi" "$SHARE_DIR/uki.efi"
 
 echo "==> Setup complete."
-echo "    OVMF installed at: $OVMF_DIR/OVMF.fd"

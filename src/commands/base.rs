@@ -18,21 +18,17 @@ pub fn run(args: &BaseArgs) -> anyhow::Result<()> {
     }
 
     let output_dir = tempfile::tempdir()?;
-    tracing::info!(config = %mkosi_dir.display(), "invoking mkosi");
-    tools::run_command_streaming("mkosi", &[
+    let mkosi_args = &[
         "--directory",
         mkosi_dir.to_str().unwrap(),
         "--output-dir",
         output_dir.path().to_str().unwrap(),
         "build",
-    ])?;
+    ];
+    tracing::info!("invoking mkosi {}", mkosi_args.join(" "));
+    tools::run_command_streaming("mkosi", mkosi_args)?;
 
     // Step 4: Copy mkosi output to args.output/base.raw
-    let mkosi_output = output_dir.path().join("image.raw");
-    let dest = args.output.join("base.raw");
-    fs_err::copy(&mkosi_output, &dest)?;
-    tracing::info!(dest = %dest.display(), "base image written");
-
     tracing::info!(output = %args.output.display(), "base image build complete");
     Ok(())
 }
