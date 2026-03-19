@@ -28,7 +28,7 @@ pub fn user_data(url: &str, service_port: u16) -> String {
     s.push_str("packages:\n");
     s.push_str("  - podman\n");
     s.push_str("  - nftables\n");
-    s.push_str("\n");
+    s.push('\n');
     s.push_str("write_files:\n");
     s.push_str("  - path: /etc/nftables.conf\n");
     s.push_str("    content: |\n");
@@ -40,7 +40,7 @@ pub fn user_data(url: &str, service_port: u16) -> String {
     for line in quadlet_content.lines() {
         s.push_str(&format!("      {line}\n"));
     }
-    s.push_str("\n");
+    s.push('\n');
     s.push_str("runcmd:\n");
     s.push_str("  - nft -f /etc/nftables.conf\n");
     s.push_str(&format!("  - podman pull {url}\n"));

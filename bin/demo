@@ -5,17 +5,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 FORCE=0
-FORCE_FLAG=""
 for arg in "$@"; do
-    if [[ "$arg" == "--force" ]]; then
-        FORCE=1
-        FORCE_FLAG="--force"
-    fi
+    [[ "$arg" == "--force" ]] && FORCE=1
 done
 
 STEEP="$REPO_ROOT/target/release/steep"
+IGVM_PREBUILT="$(cd "$REPO_ROOT/../igvm-tools/examples/prebuilt" && pwd)"
+PREBUILT_UKI="$IGVM_PREBUILT/uki.efi"
+FIRMWARE="$IGVM_PREBUILT/OVMF.fd"
+
 BASE_OUTPUT="$REPO_ROOT/output/demo/base"
 BASE_IMAGE="$BASE_OUTPUT/base.raw"
+CI_OUTPUT="$REPO_ROOT/output/demo/cloud-init"
+CT_OUTPUT="$REPO_ROOT/output/demo/container"
+CT_IMAGE="docker.io/library/caddy:latest"
+CI_PORT=8080
+CT_PORT=8081
+
+# Initrd build artifacts
+INITRD_OUTPUT="$REPO_ROOT/output/demo/initrd"
+KERNEL="$INITRD_OUTPUT/vmlinuz"
+INITRD="$INITRD_OUTPUT/initrd.img"
 
 # Check dependencies
 if ! command -v tmux &>/dev/null; then
@@ -23,38 +33,85 @@ if ! command -v tmux &>/dev/null; then
     exit 1
 fi
 
-# Build steep if not already built
-if [[ ! -x "$STEEP" ]]; then
-    (cd "$REPO_ROOT" && cargo build --release --quiet)
+# Always rebuild steep to pick up code changes
+echo "==> Building steep..."
+(cd "$REPO_ROOT" && cargo build --release --quiet)
+
+# Clean outputs if --force
+if [[ $FORCE -eq 1 ]]; then
+    sudo rm -rf "$BASE_OUTPUT" "$CI_OUTPUT" "$CT_OUTPUT" "$INITRD_OUTPUT"
 fi
+
+# Build custom initrd from prebuilt UKI + our init script
+if [[ ! -f "$INITRD" ]]; then
+    echo "==> Building initrd with root-mount support..."
+    mkdir -p "$INITRD_OUTPUT"
+
+    # Extract kernel from prebuilt UKI
+    objcopy --dump-section .linux="$KERNEL" "$PREBUILT_UKI"
+
+    # Extract base initrd, replace init script, repack
+    WORK_DIR=$(mktemp -d)
+    trap "rm -rf $WORK_DIR" EXIT
+    (cd "$WORK_DIR" && zcat <(objcopy --dump-section .initrd=/dev/stdout "$PREBUILT_UKI") | cpio -idm 2>/dev/null)
+    cp "$REPO_ROOT/initrd/init" "$WORK_DIR/init"
+    chmod +x "$WORK_DIR/init"
+    (cd "$WORK_DIR" && find . | cpio -o -H newc 2>/dev/null | gzip > "$INITRD")
+    rm -rf "$WORK_DIR"
+    trap - EXIT
+fi
+
+# Build base image (shared by both examples)
+if [[ ! -f "$BASE_IMAGE" ]]; then
+    echo "==> Building base image..."
+    sudo "$STEEP" base -o "$BASE_OUTPUT"
+fi
+
+# Build cloud-init image
+if [[ ! -f "$CI_OUTPUT/manifest.json" ]]; then
+    echo "==> Building cloud-init CVM image..."
+    sudo "$STEEP" cloud-init "$REPO_ROOT/examples/cloud-init" \
+        --kernel "$KERNEL" \
+        --initrd "$INITRD" \
+        --firmware "$FIRMWARE" \
+        --base-image "$BASE_IMAGE" \
+        -o "$CI_OUTPUT"
+fi
+
+# Build container image
+if [[ ! -f "$CT_OUTPUT/manifest.json" ]]; then
+    echo "==> Building container CVM image..."
+    sudo "$STEEP" container "$CT_IMAGE" \
+        --kernel "$KERNEL" \
+        --initrd "$INITRD" \
+        --firmware "$FIRMWARE" \
+        --base-image "$BASE_IMAGE" \
+        --service-port 80 \
+        -o "$CT_OUTPUT"
+fi
+
+echo ""
+echo "==> Both images built successfully."
+echo "    Cloud-init: http://localhost:$CI_PORT"
+echo "    Container:  http://localhost:$CT_PORT"
+echo ""
 
 # Kill existing session if present (re-running always starts clean)
 tmux kill-session -t steep-demo 2>/dev/null || true
 
-# Build base image sequentially (before tmux split, to avoid parallel race)
-if [[ $FORCE -eq 1 ]]; then
-    rm -rf "$BASE_OUTPUT"
-fi
-if [[ ! -f "$BASE_IMAGE" ]]; then
-    echo "==> Building base image..."
-    "$STEEP" base \
-        -o "$BASE_OUTPUT"
-fi
-
-# Launch tmux session with two panes
+# Launch tmux session with two panes running steep run
 tmux new-session -d -s steep-demo -x 220 -y 50
 
-# Properly quote REPO_ROOT so paths with spaces survive tmux send-keys interpolation
-QUOTED_REPO="$(printf '%q' "$REPO_ROOT")"
+QUOTED_STEEP="$(printf '%q' "$STEEP")"
+QUOTED_CI="$(printf '%q' "$CI_OUTPUT")"
+QUOTED_CT="$(printf '%q' "$CT_OUTPUT")"
 
-# Left pane (active after new-session): cloud-init example
-tmux send-keys -t steep-demo "$QUOTED_REPO/examples/cloud-init/run.sh $FORCE_FLAG" Enter
+# Left pane: cloud-init VM
+tmux send-keys -t steep-demo "sudo $QUOTED_STEEP run --port-forward ${CI_PORT}:80 $QUOTED_CI" Enter
 
-# Split horizontally — new pane becomes active
+# Split horizontally — right pane: container VM
 tmux split-window -h -t steep-demo
-
-# Right pane (now active after split): container example
-tmux send-keys -t steep-demo "$QUOTED_REPO/examples/container/run.sh $FORCE_FLAG" Enter
+tmux send-keys -t steep-demo "sudo $QUOTED_STEEP run --port-forward ${CT_PORT}:80 $QUOTED_CT" Enter
 
 # Attach
 tmux attach-session -t steep-demo

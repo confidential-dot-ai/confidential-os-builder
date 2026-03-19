@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::{tools, CloudInitArgs};
 use crate::pipeline::{self, PipelineArgs};
@@ -16,7 +16,7 @@ pub fn run(args: &CloudInitArgs) -> anyhow::Result<()> {
     ensure_file_exists(&args.base_image, "base image")?;
 
     // Stage 2: Check required tools
-    tools::require("mkosi")?;
+    tools::require("mkfs.vfat")?;
     if args.initrd.is_some() {
         tools::require("ukify")?;
     }
@@ -28,25 +28,10 @@ pub fn run(args: &CloudInitArgs) -> anyhow::Result<()> {
 
     tracing::info!("all inputs validated and tools found");
 
-    // Stage 4: Build cidata partition via mkosi
-    let mkosi_dir = PathBuf::from("mkosi/cidata");
-    if !mkosi_dir.exists() {
-        anyhow::bail!("mkosi config dir not found: {}", mkosi_dir.display());
-    }
-
+    // Stage 4: Build cidata partition (vfat with cloud-init files)
     let work_dir = tempfile::tempdir()?;
-    tracing::info!(config = %mkosi_dir.display(), "invoking mkosi for cidata partition");
-    tools::run_command_streaming("mkosi", &[
-        "--directory",
-        mkosi_dir.to_str().unwrap(),
-        "--output-dir",
-        work_dir.path().to_str().unwrap(),
-        "--extra-trees",
-        args.dir.to_str().unwrap(),
-        "build",
-    ])?;
-
     let project_partition = work_dir.path().join("image.raw");
+    build_cidata_partition(&args.dir, &project_partition)?;
     tracing::info!("cidata partition built");
 
     // Stages 5-9: Shared pipeline
@@ -61,6 +46,69 @@ pub fn run(args: &CloudInitArgs) -> anyhow::Result<()> {
         format: args.format.clone(),
         output: args.output.clone(),
     })
+}
+
+/// Build a vfat cidata partition image from cloud-init config files.
+fn build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Result<()> {
+    // Collect files from the cloud-init directory
+    let entries: Vec<_> = fs_err::read_dir(cloud_init_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .collect();
+
+    if entries.is_empty() {
+        anyhow::bail!(
+            "no files found in cloud-init directory: {}",
+            cloud_init_dir.display()
+        );
+    }
+
+    // Calculate size: 8MB minimum, enough for all files
+    let total_size: u64 = entries
+        .iter()
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum();
+    let image_size = std::cmp::max(8 * 1024 * 1024, (total_size + 1024 * 1024) & !0xFFFFF);
+
+    // Create empty image file
+    let f = fs_err::File::create(output)?;
+    f.set_len(image_size)?;
+    drop(f);
+
+    // Format as vfat with label "cidata"
+    tools::run_command_streaming("mkfs.vfat", &["-n", "cidata", &output.display().to_string()])?;
+
+    // Mount and copy files
+    let mount_dir = tempfile::tempdir()?;
+    tools::run_command_streaming(
+        "mount",
+        &[
+            "-o",
+            "loop",
+            &output.display().to_string(),
+            &mount_dir.path().display().to_string(),
+        ],
+    )?;
+
+    let mount_path = mount_dir.path().to_path_buf();
+    let result = (|| -> anyhow::Result<()> {
+        for entry in &entries {
+            let dest = mount_path.join(entry.file_name());
+            fs_err::copy(entry.path(), &dest)?;
+            tracing::debug!(file = %entry.file_name().to_string_lossy(), "copied to cidata");
+        }
+        Ok(())
+    })();
+
+    // Always unmount, even if copy failed
+    let umount_result =
+        tools::run_command_streaming("umount", &[&mount_dir.path().display().to_string()]);
+
+    result?;
+    umount_result?;
+
+    Ok(())
 }
 
 fn ensure_file_exists(path: &Path, label: &str) -> anyhow::Result<()> {

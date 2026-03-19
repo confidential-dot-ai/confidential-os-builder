@@ -43,6 +43,7 @@ pub fn run(args: &PipelineArgs) -> anyhow::Result<()> {
         let uki_args = UkifyBuildArgs {
             kernel: args.kernel.clone(),
             initrds: vec![initrd.clone()],
+            cmdline: Some("console=ttyS0".to_string()),
             output: uki_path.clone(),
         };
         crate::uki::build::build(&uki_args)?;

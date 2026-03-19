@@ -41,7 +41,6 @@ if [[ ! -f "$OUTPUT/manifest.json" ]]; then
         --kernel "$KERNEL" \
         --firmware "$FIRMWARE" \
         --base-image "$BASE_IMAGE" \
-        --service-port 80 \
         -o "$OUTPUT"
 fi
 

@@ -6,6 +6,7 @@ use crate::tools;
 pub struct UkifyBuildArgs {
     pub kernel: PathBuf,
     pub initrds: Vec<PathBuf>,
+    pub cmdline: Option<String>,
     pub output: PathBuf,
 }
 
@@ -20,6 +21,10 @@ impl UkifyBuildArgs {
         for initrd in &self.initrds {
             args.push("--initrd".to_string());
             args.push(initrd.display().to_string());
+        }
+        if let Some(cmdline) = &self.cmdline {
+            args.push("--cmdline".to_string());
+            args.push(cmdline.clone());
         }
         args.push("--output".to_string());
         args.push(self.output.display().to_string());
