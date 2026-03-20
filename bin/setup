@@ -4,18 +4,26 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -x
 
-echo "==> Installing system packages..."
-sudo apt-get update -qq
-sudo apt-get install -y -qq qemu-utils qemu-system-x86
-
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
 
 echo "==> Installing mkosi..."
 which mkosi || uv tool install git+https://github.com/systemd/mkosi.git
 
+echo "==> Installing system packages..."
+sudo apt-get update
+mkosi dependencies | xargs -d '\n' sudo apt install -y
+sudo apt install -y systemd-boot systemd-boot-efi
+
+echo "==> Installing rust..."
+sudo apt install -y build-essential
+which cargo || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+
 echo "==> Installing igvm-tools..."
 TOOLS_DIR="$DIR/../../igvm-tools"
+test -d "$TOOLS_DIR" || git clone git@github.com:lunal-dev/igvm-tools.git ../../
 which igvm-tools || cargo install --path "$TOOLS_DIR"
 
 SHARE_DIR="$HOME/.local/share/steep"
