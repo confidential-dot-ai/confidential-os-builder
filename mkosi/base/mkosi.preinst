@@ -1,2 +1,0 @@
-#!/bin/sh
-ln -s /usr/share/zoneinfo/UTC /etc/localtime
