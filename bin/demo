@@ -10,10 +10,14 @@ for arg in "$@"; do
 done
 
 STEEP="$REPO_ROOT/target/release/steep"
+MKOSI=/home/lunaluser/.local/bin/mkosi
 
 set -x
 
-"$STEEP" base --output output/base
+sudo $MKOSI build -I mkosi/base --repository-key-check=false --debug
+
+# test -e output/base/image.raw || sudo $MKOSI build -C mkosi/base "$@"
+# sudo $MKOSI vm -C mkosi/base
 
 # IGVM_PREBUILT="$(cd "$REPO_ROOT/../igvm-tools/examples/prebuilt" && pwd)"
 # PREBUILT_UKI="$IGVM_PREBUILT/uki.efi"
