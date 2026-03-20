@@ -1,8 +1,9 @@
 .worktrees/
-/mkosi/*/output
 /target
 mkosi.cache/
 mkosi.crt
 mkosi.key
+mkosi.output/
+mkosi.pkgcache/
 mkosi.tools.manifest
 mkosi.tools/
