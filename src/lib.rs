@@ -30,9 +30,6 @@ pub struct KernelArgs {
 
 #[derive(clap::Args)]
 pub struct BaseArgs {
-    /// Output directory for the base partition image
-    #[arg(short, long)]
-    pub output: PathBuf,
 }
 
 #[derive(clap::Args)]
