@@ -13,11 +13,9 @@ which mkosi || uv tool install git+https://github.com/systemd/mkosi.git
 
 echo "==> Installing system packages..."
 sudo apt-get update
-mkosi dependencies | xargs -d '\n' sudo apt install -y
-sudo apt install -y systemd-boot systemd-boot-efi
+sudo apt install -y build-essential
 
 echo "==> Installing rust..."
-sudo apt install -y build-essential
 which cargo || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 . "$HOME/.cargo/env"
 
