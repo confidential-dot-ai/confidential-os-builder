@@ -30,6 +30,9 @@ pub struct KernelArgs {
 
 #[derive(clap::Args)]
 pub struct BaseArgs {
+    /// Force mkosi to rebuild the image even if it exists
+    #[arg(short, long)]
+    pub force: bool,
 }
 
 #[derive(clap::Args)]
