@@ -8,19 +8,17 @@ Install all external tool dependencies:
 bin/setup
 ```
 
-This installs mkosi, systemd-ukify, qemu-utils, qemu-system-x86 via apt, igvm-tools via cargo, and copies the prebuilt OVMF firmware to `~/.local/share/steep/OVMF.fd`.
+This installs mkosi, igvm-tools via cargo, and copies the prebuilt OVMF firmware to `~/.local/share/steep/OVMF.fd`.
 
 ## Pipeline
 
 ### 1. Build the base image
 
 ```bash
-steep base -o output/base
+steep base
 ```
 
-mkosi builds the base partition from scratch (no source image required).
-
-The base image includes nftables rules that block all incoming and outgoing traffic (except loopback and established connections). The cloud-init step opens a single service port.
+Steep uses mkosi to build a base image for Ubuntu 26.04 (Resolute Raccoon)
 
 ### 2. Prepare a cloud-init directory
 
@@ -46,15 +44,7 @@ EOF
 ### 3. Build the CVM image
 
 ```bash
-steep cloud-init my-cloud-init \
-    --kernel /path/to/vmlinuz \
-    --initrd /path/to/initrd.img \
-    --firmware ~/.local/share/steep/OVMF.fd \
-    --base-image output/base/base.raw \
-    --service-port 80 \
-    --smp 2 \
-    --memory 2G \
-    -o output/cvm
+steep cloud-init my-cloud-init
 ```
 
 This runs the full pipeline:
