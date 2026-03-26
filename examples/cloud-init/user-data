@@ -1,10 +1,4 @@
 #cloud-config
-packages:
-  - debian-keyring
-  - debian-archive-keyring
-  - apt-transport-https
-  - curl
-
 write_files:
   - path: /var/www/html/index.html
     content: |
@@ -13,18 +7,16 @@ write_files:
       <body><h1>steep demo</h1>
       <p>Served by caddy inside a confidential VM built with steep (cloud-init).</p>
       </body></html>
+  - path: /etc/caddy/Caddyfile
+    content: |
+      :80 {
+          root * /var/www/html
+          file_server
+      }
 
 runcmd:
-  - mkdir -p /usr/share/keyrings /etc/apt/sources.list.d
-  - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-  - apt-get update
+  - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/cfg/setup/bash.deb.sh' | bash
   - apt-get install -y caddy
-  - |
-    cat > /etc/caddy/Caddyfile << 'EOF'
-    :80 {
-        root * /var/www/html
-        file_server
-    }
-    EOF
   - systemctl enable --now caddy
+  - systemctl reload caddy
+  - echo "Caddy is running and serving the index.html file at http://localhost:80, forwarded to http://localhost:8888 on the host."
