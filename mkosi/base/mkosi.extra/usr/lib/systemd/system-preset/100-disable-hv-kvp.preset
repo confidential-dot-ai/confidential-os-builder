@@ -1,0 +1,2 @@
+# https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1820063
+disable hv-kvp-daemon.service
