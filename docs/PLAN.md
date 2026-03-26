@@ -1,3 +1,4 @@
 # Future plans
 
-1. Update `bin/demo` to fully build working images from both `cloud-init` and `container` subcommands, and then run both result images using `steep run`.
+1. Release a built image, with instructions for use, that accepts cloud-init configuration.
+2. Release an image with privateclaw cloud-init baked in already.
