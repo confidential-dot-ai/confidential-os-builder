@@ -16,7 +16,7 @@ write_files:
 
 runcmd:
   - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/cfg/setup/bash.deb.sh' | bash
-  - apt-get install -y caddy
+  - DEBIAN_FRONTEND=noninteractive apt-get install caddy -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
   - systemctl enable --now caddy
   - systemctl reload caddy
   - echo "Caddy is running and serving the index.html file at http://localhost:80, forwarded to http://localhost:8888 on the host."
