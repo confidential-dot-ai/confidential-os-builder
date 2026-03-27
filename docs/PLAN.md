@@ -4,7 +4,7 @@
 
 - [x] Build a base image, from Ubuntu Resolute Raccoon, that can host our refinements
 - [ ] Finalize `steep base` command that builds the image using mkosi
-- [ ] Compress the base image, make it read-only, and boot with an overlay for writes
+- [x] Create an image overlay for any uses of the base image
 
 ## cloud-init and project images
 
