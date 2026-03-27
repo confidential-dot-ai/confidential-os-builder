@@ -1,4 +1,5 @@
 .worktrees/
+/output
 /target
 mkosi.cache/
 mkosi.crt
