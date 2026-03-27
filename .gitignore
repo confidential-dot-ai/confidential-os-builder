@@ -7,3 +7,4 @@ mkosi.output/
 mkosi.pkgcache/
 mkosi.tools.manifest
 mkosi.tools/
+seed.iso
