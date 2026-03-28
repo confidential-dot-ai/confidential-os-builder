@@ -16,10 +16,13 @@ pub fn run(args: &BaseArgs) -> anyhow::Result<()> {
         mkosi_dir.to_str().unwrap(),
         "build",
     ].to_vec();
+
     if args.force {
         mkosi_args.push("--force");
     }
+
     tracing::info!("invoking mkosi {}", mkosi_args.join(" "));
     tools::run_command_streaming("mkosi", &mkosi_args)?;
+
     Ok(())
 }

@@ -1,8 +1,6 @@
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
-use steep::{
-    commands, BaseArgs, CloudInitArgs, ContainerArgs, KernelArgs, RunArgs,
-};
+use steep::{commands, BaseArgs, CloudInitArgs, KernelArgs, RunArgs};
 
 #[derive(Parser)]
 #[command(name = "steep", about = "Confidential VM image builder")]
@@ -16,15 +14,15 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Commands {
-    /// Build the hardened custom kernel
+    /// Build the hardened custom kernel (internal)
+    #[command(hide = true)]
     Kernel(KernelArgs),
-    /// Build the security-hardened base image
+    /// Build the security-hardened base image (internal)
+    #[command(hide = true)]
     Base(BaseArgs),
-    /// Build a CVM image with cloud-init configuration. The cloud-init user-data must configure any required firewall rules (e.g. opening a service port with nftables).
+    /// Build a CVM image with cloud-init configuration
     CloudInit(CloudInitArgs),
-    /// Build a CVM image running a container
-    Container(ContainerArgs),
-    /// Launch a confidential VM from build artifacts
+    /// Launch a confidential VM from build output directory
     Run(RunArgs),
 }
 
@@ -66,7 +64,6 @@ fn main() -> anyhow::Result<()> {
         Commands::Kernel(args) => commands::kernel::run(args),
         Commands::Base(args) => commands::base::run(args),
         Commands::CloudInit(args) => commands::cloud_init::run(args),
-        Commands::Container(args) => commands::container::run(args),
         Commands::Run(args) => commands::run::run(args),
     }
 }

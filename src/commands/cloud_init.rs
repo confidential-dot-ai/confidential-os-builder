@@ -1,55 +1,77 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{tools, CloudInitArgs};
-use crate::pipeline::{self, PipelineArgs};
 
 pub fn run(args: &CloudInitArgs) -> anyhow::Result<()> {
     tracing::info!(dir = %args.dir.display(), "building cloud-init CVM image");
 
     // Stage 1: Validate inputs
     ensure_dir_exists(&args.dir, "cloud-init directory")?;
-    ensure_file_exists(&args.kernel, "kernel")?;
-    if let Some(initrd) = &args.initrd {
-        ensure_file_exists(initrd, "initrd")?;
-    }
-    ensure_file_exists(&args.firmware, "firmware")?;
-    ensure_file_exists(&args.base_image, "base image")?;
+    // ensure_file_exists(&args.kernel, "kernel")?;
+    // if let Some(initrd) = &args.initrd {
+    //     ensure_file_exists(initrd, "initrd")?;
+    // }
+    // ensure_file_exists(&args.firmware, "firmware")?;
+    // ensure_file_exists(&args.base_image, "base image")?;
 
     // Stage 2: Check required tools
-    tools::require("mkfs.vfat")?;
-    if args.initrd.is_some() {
-        tools::require("ukify")?;
-    }
-    tools::require("igvm-tools")?;
+    // tools::require("mkfs.vfat")?;
+    // if args.initrd.is_some() {
+    //     tools::require("ukify")?;
+    // }
+    // tools::require("igvm-tools")?;
     tools::require("qemu-img")?;
-
-    // Stage 3: Create output directory
-    fs_err::create_dir_all(&args.output)?;
-
     tracing::info!("all inputs validated and tools found");
 
-    // Stage 4: Build cidata partition (vfat with cloud-init files)
-    let work_dir = tempfile::tempdir()?;
-    let project_partition = work_dir.path().join("image.raw");
-    build_cidata_partition(&args.dir, &project_partition)?;
+    // create the output directory
+    let mut output_dir = PathBuf::new();
+    output_dir.push("output");
+    output_dir.push(args.dir.file_name().unwrap());
+    let output_dir = output_dir.canonicalize()?;
+    fs_err::create_dir_all(&output_dir)?;
+
+    // Build cidata ISO
+    let ci_path = output_dir.join("seed.iso");
+    let ci_path_str = &ci_path.to_string_lossy();
+    let ci_args = vec![
+        "-output",
+        ci_path_str,
+        "-input-charset",
+        "utf-8",
+        "-volid",
+        "cidata",
+        "-joliet",
+        "-rock",
+        "user-data",
+        "meta-data",
+    ];
+    tools::run_command_streaming_in("genisoimage", &ci_args, Some(args.dir.to_owned()))?;
     tracing::info!("cidata partition built");
 
-    // Stages 5-9: Shared pipeline
-    pipeline::run(&PipelineArgs {
-        project_partition,
-        kernel: args.kernel.clone(),
-        initrd: args.initrd.clone(),
-        firmware: args.firmware.clone(),
-        base_image: args.base_image.clone(),
-        memory: args.memory.clone(),
-        smp: args.smp,
-        format: args.format.clone(),
-        output: args.output.clone(),
-    })
+    // Create the qcow2
+    let img_path = output_dir.join("image.qcow2");
+    let img_path_str = &img_path.to_string_lossy();
+    let base_path = std::env::current_dir()?.join("mkosi/base/mkosi.output/image.raw");
+    let base_path_str = base_path.to_string_lossy();
+    let img_args = vec![
+        "create",
+        "-B",
+        "raw",
+        "-b",
+        &base_path_str,
+        "-f",
+        "qcow2",
+        img_path_str,
+        "5G",
+    ];
+    tools::run_command_streaming("qemu-img", &img_args)?;
+    tracing::info!("qcow2 image created at {}", img_path_str);
+
+    Ok(())
 }
 
 /// Build a vfat cidata partition image from cloud-init config files.
-fn build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Result<()> {
+fn _build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Result<()> {
     // Collect files from the cloud-init directory
     let entries: Vec<_> = fs_err::read_dir(cloud_init_dir)?
         .filter_map(|e| e.ok())
@@ -77,7 +99,10 @@ fn build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Resul
     drop(f);
 
     // Format as vfat with label "cidata"
-    tools::run_command_streaming("mkfs.vfat", &["-n", "cidata", &output.display().to_string()])?;
+    tools::run_command_streaming(
+        "mkfs.vfat",
+        &["-n", "cidata", &output.display().to_string()],
+    )?;
 
     // Mount and copy files
     let mount_dir = tempfile::tempdir()?;
@@ -111,7 +136,7 @@ fn build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Resul
     Ok(())
 }
 
-fn ensure_file_exists(path: &Path, label: &str) -> anyhow::Result<()> {
+fn _ensure_file_exists(path: &Path, label: &str) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("{label} not found: {}", path.display());
     }

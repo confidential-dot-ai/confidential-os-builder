@@ -61,8 +61,25 @@ pub fn run_command(tool: &str, args: &[&str]) -> Result<String, ToolError> {
 /// Run a command with inherited stdio (streams output to the terminal).
 /// Fails if the command exits with a non-zero status.
 pub fn run_command_streaming(tool: &str, args: &[impl AsRef<OsStr>]) -> Result<(), ToolError> {
+    run_command_streaming_in(tool, args, None)
+}
+
+pub fn run_command_streaming_in(
+    tool: &str,
+    args: &[impl AsRef<OsStr>],
+    cwd: Option<PathBuf>,
+) -> Result<(), ToolError> {
+    println!(
+        "🍵 {} {}",
+        tool,
+        args.iter()
+            .map(|i| i.as_ref().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
     let status = Command::new(tool)
         .args(args)
+        .current_dir(cwd.unwrap_or_else(|| std::env::current_dir().unwrap()))
         .stdin(std::process::Stdio::null())
         .status()
         .map_err(|e| ToolError::Io {

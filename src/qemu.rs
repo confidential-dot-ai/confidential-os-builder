@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{os::unix::process::CommandExt as _, path::PathBuf, process::Command};
 
 use crate::tools;
 
@@ -78,19 +78,28 @@ impl QemuArgs {
                     "q35".to_string(),
                     "-enable-kvm".to_string(),
                     "-drive".to_string(),
-                    format!("if=pflash,format=raw,readonly=on,file={}", firmware.display()),
+                    format!(
+                        "if=pflash,format=raw,readonly=on,file={}",
+                        firmware.display()
+                    ),
                     "-kernel".to_string(),
                     uki.display().to_string(),
                 ]
             }
             QemuTier::Emulated => {
                 let uki = self.uki.as_ref().expect("Emulated tier requires uki");
-                let firmware = self.firmware.as_ref().expect("Emulated tier requires firmware");
+                let firmware = self
+                    .firmware
+                    .as_ref()
+                    .expect("Emulated tier requires firmware");
                 vec![
                     "-machine".to_string(),
                     "q35".to_string(),
                     "-drive".to_string(),
-                    format!("if=pflash,format=raw,readonly=on,file={}", firmware.display()),
+                    format!(
+                        "if=pflash,format=raw,readonly=on,file={}",
+                        firmware.display()
+                    ),
                     "-kernel".to_string(),
                     uki.display().to_string(),
                 ]
@@ -152,6 +161,8 @@ pub fn launch(args: &QemuArgs) -> anyhow::Result<()> {
             );
         }
     }
-    tools::run_command_streaming("qemu-system-x86_64", &cmd_args)?;
+
+    let _ = Command::new("qemu-system-x86_64").args(&cmd_args).exec();
+
     Ok(())
 }
