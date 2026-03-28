@@ -1,4 +1,5 @@
 use std::ffi::OsStr;
+use std::os::unix::process::CommandExt as _;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -58,16 +59,30 @@ pub fn run_command(tool: &str, args: &[&str]) -> Result<String, ToolError> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+pub fn run_command_exec(tool: &str, args: &[&str]) -> Result<(), ToolError> {
+    println!(
+        "🍵 {} {}",
+        tool,
+        args.iter()
+            .map(|i| i.to_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let _ = Command::new(tool).args(args).exec();
+
+    Ok(())
+}
+
 /// Run a command with inherited stdio (streams output to the terminal).
 /// Fails if the command exits with a non-zero status.
 pub fn run_command_streaming(tool: &str, args: &[impl AsRef<OsStr>]) -> Result<(), ToolError> {
-    run_command_streaming_in(tool, args, None)
+    run_command_streaming_in(tool, args, std::env::current_dir().unwrap())
 }
 
 pub fn run_command_streaming_in(
     tool: &str,
     args: &[impl AsRef<OsStr>],
-    cwd: Option<PathBuf>,
+    cwd: PathBuf,
 ) -> Result<(), ToolError> {
     println!(
         "🍵 {} {}",
@@ -79,7 +94,7 @@ pub fn run_command_streaming_in(
     );
     let status = Command::new(tool)
         .args(args)
-        .current_dir(cwd.unwrap_or_else(|| std::env::current_dir().unwrap()))
+        .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .status()
         .map_err(|e| ToolError::Io {
