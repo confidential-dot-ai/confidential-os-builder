@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use crate::convert;
 use crate::manifest;
 use crate::qemu::{QemuArgs, QemuTier};
 use crate::RunArgs;
@@ -77,15 +76,6 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         );
     }
 
-    // Step 7: Determine qemu disk format
-    let format_enum = match manifest.build.format.as_str() {
-        "qcow2" => crate::ImageFormat::Qcow2,
-        "vhd" => crate::ImageFormat::Vhd,
-        "raw" => crate::ImageFormat::Raw,
-        other => anyhow::bail!("unknown disk format in manifest: {other}"),
-    };
-    let qemu_format = convert::qemu_img_format(&format_enum);
-
     // Step 8: Parse port forwards
     let port_forwards = args
         .port_forward
@@ -111,7 +101,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         uki: uki_path,
         firmware: firmware_path,
         disk: disk_path,
-        disk_format: qemu_format.to_string(),
+        disk_format: "qcow2".to_string(),
         smp: manifest.build.smp,
         memory: manifest.build.memory,
         port_forwards,
