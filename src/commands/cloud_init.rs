@@ -4,6 +4,7 @@ use crate::{tools, CloudInitArgs};
 
 pub fn run(args: &CloudInitArgs) -> anyhow::Result<()> {
     tracing::info!(dir = %args.dir.display(), "building cloud-init CVM image");
+    let project_name = args.dir.file_name().unwrap();
 
     // Stage 1: Validate inputs
     ensure_dir_exists(&args.dir, "cloud-init directory")?;
@@ -26,9 +27,12 @@ pub fn run(args: &CloudInitArgs) -> anyhow::Result<()> {
     // create the output directory
     let mut output_dir = PathBuf::new();
     output_dir.push("output");
-    output_dir.push(args.dir.file_name().unwrap());
-    let output_dir = output_dir.canonicalize()?;
+    output_dir.push(project_name);
+    if fs_err::exists(&output_dir)? {
+        fs_err::remove_dir_all(&output_dir)?;
+    }
     fs_err::create_dir_all(&output_dir)?;
+    let output_dir = output_dir.canonicalize()?;
 
     // Build cidata ISO
     build_cidata_partition(&args.dir, &output_dir)?;
@@ -52,13 +56,14 @@ pub fn run(args: &CloudInitArgs) -> anyhow::Result<()> {
     tools::run_command_streaming("qemu-img", &img_args)?;
     tracing::info!("qcow2 image created at {}", img_path_str);
 
+    println!("Image created in {}", output_dir.to_string_lossy());
     Ok(())
 }
 
 /// Build a vfat cidata partition image from cloud-init config files.
 fn build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Result<()> {
     // Collect files from the cloud-init directory
-    let entries: Vec<_> = fs_err::read_dir(cloud_init_dir)?
+    let entries: Vec<String> = fs_err::read_dir(cloud_init_dir)?
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
         .map(|f| f.file_name().into_string().unwrap())
@@ -69,6 +74,21 @@ fn build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Resul
             "no files found in cloud-init directory: {}",
             cloud_init_dir.display()
         );
+    }
+
+    if !entries.contains(&"user-data".to_owned()) {
+        anyhow::bail!("no user-data file found in {}", cloud_init_dir.display())
+    }
+
+    // ensure we have a minimal meta-data so cloud-init will run
+    if !entries.contains(&"meta-data".to_owned()) {
+        fs_err::write(
+            cloud_init_dir.join("meta-data"),
+            format!(
+                "instance-id: {}",
+                cloud_init_dir.file_name().unwrap().to_string_lossy()
+            ),
+        )?;
     }
 
     let ci_path = output.join("seed.iso");

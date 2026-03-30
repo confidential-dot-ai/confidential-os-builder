@@ -1,4 +1,5 @@
 .worktrees/
+/examples/cloud-init/privateclaw/meta-data
 /output
 /target
 mkosi.cache/
