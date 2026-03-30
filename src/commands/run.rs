@@ -1,3 +1,5 @@
+use std::process::Command;
+
 use crate::tools;
 use crate::RunArgs;
 
@@ -105,11 +107,51 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     // };
     // crate::qemu::launch(&qemu_args)?;
 
+    Command::new("mkdir").args(["-p", "/tmp/swtpm"]).output()?;
+    Command::new("swtpm")
+        .args([
+            "socket",
+            "--tpmstate",
+            "dir=/tmp/swtpm",
+            "--ctrl",
+            "type=unixio,path=/tmp/swtpm/sock",
+            "--tpm2",
+        ])
+        .stdin(std::process::Stdio::null())
+        .spawn()?;
+
     let ci_image = args.dir.join("seed.iso");
     let ci_drive = format!("file={},index=0,media=cdrom", ci_image.to_string_lossy());
     let image_path = args.dir.join("image.qcow2");
     let image_blockdev = format!("driver=qcow2,node-name=mkosi,discard=unmap,file.driver=file,file.filename={},file.aio=io_uring,cache.direct=yes,cache.no-flush=no", image_path.to_string_lossy());
-    let args = vec!["-machine", "type=q35,smm=off,hpet=off", "-smp", "2", "-m", "2048M", "-drive", &ci_drive, "-object", "rng-random,filename=/dev/urandom,id=rng0", "-device", "virtio-rng-pci,rng=rng0,id=rng-device0", "-device", "virtio-balloon,free-page-reporting=on", "-no-user-config", "-nic", "user,model=virtio-net-pci,hostfwd=tcp::8888-:80", "-cpu", "max", "-accel", "tcg", "-nographic", "-nodefaults", "-chardev", "stdio,mux=on,id=console,signal=off", "-device", "virtio-serial-pci,id=mkosi-virtio-serial-pci", "-device", "virtconsole,chardev=console", "-mon", "console", "-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd", "-device", "virtio-scsi-pci,id=mkosi", "-blockdev", &image_blockdev, "-device", "virtio-blk-pci,drive=mkosi,bootindex=1", "-smbios", "type=11,value=io.systemd.stub.kernel-cmdline-extra=systemd.wants=network.target SYSTEMD_SULOGIN_FORCE=1 rw module_blacklist=vmw_vmci systemd.tty.term.hvc0=xterm-256color systemd.tty.columns.hvc0=230 systemd.tty.rows.hvc0=36 ip=enc0:any ip=enp0s1:any ip=enp0s2:any ip=host0:any ip=none loglevel=4 systemd.tty.term.console=xterm-256color systemd.tty.columns.console=230 systemd.tty.rows.console=36 console=hvc0 TERM=xterm-256color", "-smbios", "type=11,value=io.systemd.boot.kernel-cmdline-extra=systemd.wants=network.target SYSTEMD_SULOGIN_FORCE=1 rw module_blacklist=vmw_vmci systemd.tty.term.hvc0=xterm-256color systemd.tty.columns.hvc0=230 systemd.tty.rows.hvc0=36 ip=enc0:any ip=enp0s1:any ip=enp0s2:any ip=host0:any ip=none loglevel=4 systemd.tty.term.console=xterm-256color systemd.tty.columns.console=230 systemd.tty.rows.console=36 console=hvc0 TERM=xterm-256color"];
+    let args = vec![
+        "-machine", "type=q35,smm=off,hpet=off",
+        "-smp", "2",
+        "-m", "2048M",
+        "-drive", &ci_drive,
+        "-object", "rng-random,filename=/dev/urandom,id=rng0",
+        "-device", "virtio-rng-pci,rng=rng0,id=rng-device0",
+        "-device", "virtio-balloon,free-page-reporting=on",
+        "-no-user-config",
+        "-nic", "user,model=virtio-net-pci,hostfwd=tcp::8888-:80",
+        "-cpu", "max",
+        "-accel", "tcg",
+        "-nographic",
+        "-nodefaults",
+        "-chardev", "stdio,mux=on,id=console,signal=off",
+        "-device", "virtio-serial-pci,id=mkosi-virtio-serial-pci",
+        "-device", "virtconsole,chardev=console",
+        "-mon", "console",
+        "-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
+        "-device", "virtio-scsi-pci,id=mkosi",
+        "-blockdev", &image_blockdev,
+        "-device", "virtio-blk-pci,drive=mkosi,bootindex=1",
+        "-smbios", "type=11,value=io.systemd.stub.kernel-cmdline-extra=systemd.wants=network.target SYSTEMD_SULOGIN_FORCE=1 rw module_blacklist=vmw_vmci systemd.tty.term.hvc0=xterm-256color systemd.tty.columns.hvc0=230 systemd.tty.rows.hvc0=36 ip=enc0:any ip=enp0s1:any ip=enp0s2:any ip=host0:any ip=none loglevel=4 systemd.tty.term.console=xterm-256color systemd.tty.columns.console=230 systemd.tty.rows.console=36 console=hvc0 TERM=xterm-256color",
+        "-smbios", "type=11,value=io.systemd.boot.kernel-cmdline-extra=systemd.wants=network.target SYSTEMD_SULOGIN_FORCE=1 rw module_blacklist=vmw_vmci systemd.tty.term.hvc0=xterm-256color systemd.tty.columns.hvc0=230 systemd.tty.rows.hvc0=36 ip=enc0:any ip=enp0s1:any ip=enp0s2:any ip=host0:any ip=none loglevel=4 systemd.tty.term.console=xterm-256color systemd.tty.columns.console=230 systemd.tty.rows.console=36 console=hvc0 TERM=xterm-256color",
+        "-chardev", "socket,id=chrtpm,path=/tmp/swtpm/sock",
+        "-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
+        "-device", "tpm-tis,tpmdev=tpm0"
+    ];
     tools::run_command_exec("qemu-system-x86_64", &args)?;
 
     Ok(())
