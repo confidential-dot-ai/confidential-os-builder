@@ -10,7 +10,10 @@ packages:
   - ufw
   - tpm2-tools
   - libtss2-tctildr0
-users: [claw]
+users:
+  - name: claw
+    groups: sudo
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
 runcmd:
   - export DEBIAN_FRONTEND=noninteractive
   - apt-get -y purge needrestart || true
