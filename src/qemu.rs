@@ -33,7 +33,7 @@ pub fn detect_tier() -> anyhow::Result<QemuTier> {
 
     let object_help = tools::run_command("qemu-system-x86_64", &["-object", "help"])?;
 
-    let kvm_available = std::fs::OpenOptions::new()
+    let kvm_available = fs_err::OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/kvm")
