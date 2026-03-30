@@ -10,7 +10,7 @@ packages:
   - ufw
   - tpm2-tools
   - libtss2-tctildr0
-
+users: [claw]
 runcmd:
   - export DEBIAN_FRONTEND=noninteractive
   - apt-get -y purge needrestart || true
