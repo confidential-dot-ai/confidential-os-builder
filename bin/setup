@@ -4,15 +4,15 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -x
 
+echo "==> Installing system packages..."
+sudo apt-get update
+sudo apt install -y build-essential systemd-container
+
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 echo "==> Installing mkosi..."
-which mkosi || uv tool install git+https://github.com/systemd/mkosi.git
-
-echo "==> Installing system packages..."
-sudo apt-get update
-sudo apt install -y build-essential
+which mkosi || uv tool install git+https://github.com/systemd/mkosi.git@v26
 
 echo "==> Installing rust..."
 which cargo || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
