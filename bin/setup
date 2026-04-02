@@ -6,7 +6,11 @@ set -x
 
 echo "==> Installing system packages..."
 sudo apt-get update
-sudo apt install -y build-essential systemd-container
+sudo apt install -y \
+  # we need build tools and compilers etc
+  build-essential \
+  # debian-archive-keyring is required to install mkosi tools during build
+  debian-archive-keyring
 
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
