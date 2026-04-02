@@ -6,7 +6,6 @@ set -x
 
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
 
 echo "==> Installing mkosi..."
 which mkosi || uv tool install git+https://github.com/systemd/mkosi.git
@@ -17,11 +16,10 @@ sudo apt install -y build-essential
 
 echo "==> Installing rust..."
 which cargo || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-. "$HOME/.cargo/env"
 
 echo "==> Installing igvm-tools..."
 TOOLS_DIR="$DIR/../../igvm-tools"
-test -d "$TOOLS_DIR" || git clone git@github.com:lunal-dev/igvm-tools.git ../../
+test -d "$TOOLS_DIR" || git clone git@github.com:lunal-dev/igvm-tools.git "$TOOLS_DIR"
 which igvm-tools || cargo install --path "$TOOLS_DIR"
 
 SHARE_DIR="$HOME/.local/share/steep"
