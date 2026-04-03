@@ -2,6 +2,8 @@
 /examples/privateclaw/meta-data
 /output
 /target
+
+# mkosi build artifacts
 mkosi.cache/
 mkosi.crt
 mkosi.key
@@ -10,3 +12,12 @@ mkosi.pkgcache/
 mkosi.tools.manifest
 mkosi.tools/
 seed.iso
+mkosi/base/image
+mkosi/base/image.*
+mkosi/base/initrd
+mkosi/base/initrd.cpio.zst
+mkosi/initrd/image
+mkosi/initrd/image.*
+
+# downloaded packages
+*.deb

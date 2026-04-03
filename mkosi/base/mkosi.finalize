@@ -1,7 +1,60 @@
 #!/bin/bash
 set -euo pipefail
 
-mkdir -p $BUILDROOT/var/lib/dpkg
-mkdir -p $BUILDROOT/usr/share/keyrings
-mkdir -p $BUILDROOT/etc/apt/sources.list.d
-# $BUILDROOT/usr/bin/cloud-init clean
+mkdir -p "$BUILDROOT/var/lib/dpkg"
+mkdir -p "$BUILDROOT/usr/share/keyrings"
+mkdir -p "$BUILDROOT/etc/apt/sources.list.d"
+
+# --bake mode: apply cloud-init at build time so everything lands in the verity root.
+# The sentinel file is created by `steep seal --cloud-init --bake`.
+BAKE_SENTINEL="$BUILDROOT/var/lib/cloud/seed/nocloud/.steep-bake"
+if [ -f "$BAKE_SENTINEL" ]; then
+    echo "steep: bake mode — applying cloud-init in chroot"
+    rm -f "$BAKE_SENTINEL"
+
+    # Set up chroot environment with trap-based cleanup
+    cleanup_mounts() {
+        umount "$BUILDROOT/dev" 2>/dev/null || true
+        umount "$BUILDROOT/sys" 2>/dev/null || true
+        umount "$BUILDROOT/proc" 2>/dev/null || true
+    }
+    trap cleanup_mounts EXIT
+
+    mount -t proc proc "$BUILDROOT/proc"
+    mount -t sysfs sysfs "$BUILDROOT/sys"
+    mount --bind /dev "$BUILDROOT/dev"
+    # resolv.conf is often a symlink to systemd-resolved; replace it for chroot DNS
+    rm -f "$BUILDROOT/etc/resolv.conf"
+    cp /etc/resolv.conf "$BUILDROOT/etc/resolv.conf"
+
+    # Run cloud-init stages that work in chroot:
+    #   init --local: processes NoCloud seed (write_files, etc.)
+    #   modules --mode=config: installs packages, configures services
+    #   modules --mode=final: runs runcmd
+    BAKE_WARNINGS=0
+    if ! chroot "$BUILDROOT" cloud-init init --local; then
+        echo "steep: WARNING: cloud-init init --local failed (user-data may not be processed)" >&2
+        BAKE_WARNINGS=$((BAKE_WARNINGS + 1))
+    fi
+    if ! chroot "$BUILDROOT" cloud-init init; then
+        echo "steep: WARNING: cloud-init init failed" >&2
+        BAKE_WARNINGS=$((BAKE_WARNINGS + 1))
+    fi
+    chroot "$BUILDROOT" cloud-init modules --mode=config || true
+    chroot "$BUILDROOT" cloud-init modules --mode=final || true
+
+    # Clean cloud-init state so it doesn't re-run at boot
+    chroot "$BUILDROOT" cloud-init clean --logs || true
+
+    # Restore resolv.conf symlink for systemd-resolved at boot
+    rm -f "$BUILDROOT/etc/resolv.conf"
+    ln -s ../run/systemd/resolve/stub-resolv.conf "$BUILDROOT/etc/resolv.conf"
+
+    # Mounts are cleaned up by the EXIT trap
+
+    if [ "$BAKE_WARNINGS" -gt 0 ]; then
+        echo "steep: bake complete with $BAKE_WARNINGS warning(s) — check output above" >&2
+    else
+        echo "steep: bake complete"
+    fi
+fi

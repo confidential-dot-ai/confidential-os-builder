@@ -11,11 +11,12 @@ pub fn run(args: &BaseArgs) -> anyhow::Result<()> {
         anyhow::bail!("mkosi config dir not found: {}", mkosi_dir.display());
     }
 
-    let mut mkosi_args: Vec<&str> = [
+    let mkosi_dir_str = mkosi_dir.to_string_lossy();
+    let mut mkosi_args: Vec<&str> = vec![
         "--directory",
-        mkosi_dir.to_str().unwrap(),
+        &mkosi_dir_str,
         "build",
-    ].to_vec();
+    ];
 
     if args.force {
         mkosi_args.push("--force");

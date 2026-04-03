@@ -1,0 +1,90 @@
+#!/bin/bash
+set -e
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+echo "initrd: loading modules..."
+KVER=$(uname -r)
+for mod in dm-bufio dm-verity overlay; do
+    MODPATH=$(find /usr/lib/modules/$KVER -name "${mod}.ko*" 2>/dev/null | head -1)
+    if [ -n "$MODPATH" ]; then
+        case "$MODPATH" in
+            *.zst)
+                DECOMPRESSED="/tmp/${mod}.ko"
+                zstd -d "$MODPATH" -o "$DECOMPRESSED" 2>/dev/null
+                insmod "$DECOMPRESSED"
+                rm -f "$DECOMPRESSED"
+                echo "initrd: loaded $mod (from zst)"
+                ;;
+            *)
+                insmod "$MODPATH"
+                echo "initrd: loaded $mod"
+                ;;
+        esac
+    else
+        echo "initrd: WARNING: $mod not found"
+    fi
+done
+
+# Parse roothash from kernel cmdline
+ROOTHASH=""
+for param in $(cat /proc/cmdline); do
+    case "$param" in
+        roothash=*) ROOTHASH="${param#roothash=}" ;;
+    esac
+done
+
+if [ -z "$ROOTHASH" ]; then
+    echo "FATAL: no roothash= on kernel cmdline"
+    echo "Rebooting in 5 seconds..."
+    sleep 5
+    echo b > /proc/sysrq-trigger
+fi
+
+echo "initrd: setting up dm-verity with roothash=$ROOTHASH"
+
+# Wait for virtio disk to appear (up to 30 seconds)
+WAITED=0
+while [ ! -e /dev/vda2 ] && [ "$WAITED" -lt 30 ]; do
+    sleep 1
+    WAITED=$((WAITED + 1))
+done
+if [ ! -e /dev/vda2 ]; then
+    echo "FATAL: /dev/vda2 not found after ${WAITED}s"
+    echo b > /proc/sysrq-trigger
+fi
+
+veritysetup open /dev/vda2 root /dev/vda3 "$ROOTHASH"
+echo "initrd: dm-verity device created at /dev/mapper/root"
+
+# Mount verified root as lower layer
+mkdir -p /sysroot-lower
+mount -o ro,noload /dev/mapper/root /sysroot-lower
+echo "initrd: verified root mounted (read-only)"
+
+# Set up overlayfs: writable upper on tmpfs, verified lower via dm-verity
+mount -t tmpfs tmpfs /sysroot-upper -o size=2G
+mkdir -p /sysroot-upper/upper /sysroot-upper/work
+mount -t overlay overlay \
+    -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
+    /sysroot
+echo "initrd: overlayfs mounted (writes go to tmpfs, reads verified by dm-verity)"
+
+# Minimal runtime directories
+mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
+
+# Generate unique machine-id for this boot (overlay — does not persist)
+cat /proc/sys/kernel/random/uuid | tr -d '-' > /sysroot/etc/machine-id
+
+echo "initrd: switching root..."
+mount --move /proc /sysroot/proc
+mount --move /sys /sysroot/sys
+mount --move /dev /sysroot/dev
+
+# switch_root implemented in shell (not available in resolute util-linux)
+cd /sysroot
+mount --move . /
+exec chroot . /sbin/init

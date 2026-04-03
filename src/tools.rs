@@ -1,6 +1,5 @@
 use std::ffi::OsStr;
-use std::os::unix::process::CommandExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use thiserror::Error;
@@ -59,24 +58,14 @@ pub fn run_command(tool: &str, args: &[&str]) -> Result<String, ToolError> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-pub fn run_command_exec(tool: &str, args: &[&str]) -> Result<(), ToolError> {
-    println!(
-        "🍵 {} {}",
-        tool,
-        args.iter()
-            .map(|i| i.to_owned())
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-    let _ = Command::new(tool).args(args).exec();
-
-    Ok(())
-}
-
 /// Run a command with inherited stdio (streams output to the terminal).
 /// Fails if the command exits with a non-zero status.
 pub fn run_command_streaming(tool: &str, args: &[impl AsRef<OsStr>]) -> Result<(), ToolError> {
-    run_command_streaming_in(tool, args, std::env::current_dir().unwrap())
+    let cwd = std::env::current_dir().map_err(|e| ToolError::Io {
+        tool: tool.to_string(),
+        source: e,
+    })?;
+    run_command_streaming_in(tool, args, cwd)
 }
 
 pub fn run_command_streaming_in(
@@ -116,36 +105,16 @@ pub fn run_command_streaming_in(
     Ok(())
 }
 
-/// Builder for constructing command argument lists.
-pub struct CommandBuilder {
-    tool: String,
-    args: Vec<String>,
-}
-
-impl CommandBuilder {
-    pub fn new(tool: &str) -> Self {
-        Self {
-            tool: tool.to_string(),
-            args: Vec::new(),
+/// Safe PATH for sudo commands — only system directories, no user-controlled paths.
+/// Includes ~/.local/bin only if mkosi was installed there (pip install --user).
+pub fn safe_path() -> String {
+    let base = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+    if let Ok(home) = std::env::var("HOME") {
+        let local_bin = format!("{home}/.local/bin");
+        if Path::new(&local_bin).join("mkosi").exists() {
+            return format!("{local_bin}:{base}");
         }
     }
-
-    pub fn arg(mut self, arg: &str) -> Self {
-        self.args.push(arg.to_string());
-        self
-    }
-
-    pub fn arg_pair(mut self, flag: &str, value: &str) -> Self {
-        self.args.push(flag.to_string());
-        self.args.push(value.to_string());
-        self
-    }
-
-    pub fn tool(&self) -> &str {
-        &self.tool
-    }
-
-    pub fn build(self) -> Vec<String> {
-        self.args
-    }
+    base.to_string()
 }
+

@@ -4,30 +4,15 @@ use crate::{tools, CloudInitArgs};
 
 pub fn run(args: &CloudInitArgs) -> anyhow::Result<()> {
     tracing::info!(dir = %args.dir.display(), "building cloud-init CVM image");
-    let project_name = args.dir.file_name().unwrap();
+    let project_name = args.dir.file_name()
+        .ok_or_else(|| anyhow::anyhow!("cloud-init directory has no file name: {}", args.dir.display()))?;
 
-    // Stage 1: Validate inputs
     ensure_dir_exists(&args.dir, "cloud-init directory")?;
-    // ensure_file_exists(&args.kernel, "kernel")?;
-    // if let Some(initrd) = &args.initrd {
-    //     ensure_file_exists(initrd, "initrd")?;
-    // }
-    // ensure_file_exists(&args.firmware, "firmware")?;
-    // ensure_file_exists(&args.base_image, "base image")?;
-
-    // Stage 2: Check required tools
-    // tools::require("mkfs.vfat")?;
-    // if args.initrd.is_some() {
-    //     tools::require("ukify")?;
-    // }
-    // tools::require("igvm-tools")?;
     tools::require("qemu-img")?;
+    tools::require("genisoimage")?;
     tracing::info!("all inputs validated and tools found");
 
-    // create the output directory
-    let mut output_dir = PathBuf::new();
-    output_dir.push("output");
-    output_dir.push(project_name);
+    let output_dir = PathBuf::from("output").join(project_name);
     if fs_err::exists(&output_dir)? {
         fs_err::remove_dir_all(&output_dir)?;
     }
@@ -66,7 +51,7 @@ fn build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Resul
     let entries: Vec<String> = fs_err::read_dir(cloud_init_dir)?
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-        .map(|f| f.file_name().into_string().unwrap())
+        .filter_map(|f| f.file_name().into_string().ok())
         .collect();
 
     if entries.is_empty() {
@@ -80,14 +65,23 @@ fn build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Resul
         anyhow::bail!("no user-data file found in {}", cloud_init_dir.display())
     }
 
-    // ensure we have a minimal meta-data so cloud-init will run
+    // Stage files into a temp dir so we don't mutate the user's source directory
+    let staging = tempfile::tempdir()?;
+    for entry in fs_err::read_dir(cloud_init_dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            fs_err::copy(entry.path(), staging.path().join(entry.file_name()))?;
+        }
+    }
+
+    // Ensure we have a minimal meta-data so cloud-init will run
     if !entries.contains(&"meta-data".to_owned()) {
+        let instance_id = cloud_init_dir.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "steep".to_string());
         fs_err::write(
-            cloud_init_dir.join("meta-data"),
-            format!(
-                "instance-id: {}",
-                cloud_init_dir.file_name().unwrap().to_string_lossy()
-            ),
+            staging.path().join("meta-data"),
+            format!("instance-id: {instance_id}"),
         )?;
     }
 
@@ -106,19 +100,12 @@ fn build_cidata_partition(cloud_init_dir: &Path, output: &Path) -> anyhow::Resul
     for e in &entries {
         ci_args.push(e);
     }
-    tools::run_command_streaming_in("genisoimage", &ci_args, cloud_init_dir.to_owned())?;
+    if !entries.contains(&"meta-data".to_owned()) {
+        ci_args.push("meta-data");
+    }
+    tools::run_command_streaming_in("genisoimage", &ci_args, staging.path().to_owned())?;
     tracing::info!("cidata partition built");
 
-    Ok(())
-}
-
-fn _ensure_file_exists(path: &Path, label: &str) -> anyhow::Result<()> {
-    if !path.exists() {
-        anyhow::bail!("{label} not found: {}", path.display());
-    }
-    if !path.is_file() {
-        anyhow::bail!("{label} is not a file: {}", path.display());
-    }
     Ok(())
 }
 

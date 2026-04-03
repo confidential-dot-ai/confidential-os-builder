@@ -9,7 +9,8 @@ pub struct BuildManifest {
     pub build: BuildConfig,
     pub inputs: ManifestInputs,
     pub outputs: ManifestOutputs,
-    pub measurement: Measurement,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<Measurement>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -29,18 +30,17 @@ pub struct FileEntry {
 
 #[derive(Serialize, Deserialize)]
 pub struct ManifestInputs {
-    pub kernel: FileEntry,
+    pub initrd: FileEntry,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub initrd: Option<FileEntry>,
-    pub firmware: FileEntry,
+    pub firmware: Option<FileEntry>,
     pub base_image: FileEntry,
-    pub project_partition: FileEntry,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ManifestOutputs {
     pub disk_image: FileEntry,
-    pub igvm: FileEntry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub igvm: Option<FileEntry>,
     pub uki: FileEntry,
 }
 
