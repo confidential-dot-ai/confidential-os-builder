@@ -27,17 +27,18 @@ pub fn select_tier(object_help_output: &str, kvm_available: bool) -> QemuTier {
     }
 }
 
-/// Detect the best available QEMU tier by probing the system.
-pub fn detect_tier() -> anyhow::Result<QemuTier> {
-    tools::require("qemu-system-x86_64")?;
+/// Detect the best available QEMU tier for a specific binary.
+/// For SNP, we check QEMU capabilities + /dev/kvm existence (not writability,
+/// since we'll run with sudo anyway for /dev/sev access).
+pub fn detect_tier_for(qemu_bin: &str) -> anyhow::Result<QemuTier> {
+    if !std::path::Path::new(qemu_bin).exists() {
+        tools::require("qemu-system-x86_64")?;
+    }
 
-    let object_help = tools::run_command("qemu-system-x86_64", &["-object", "help"])?;
+    let object_help = tools::run_command(qemu_bin, &["-object", "help"])?;
 
-    let kvm_available = fs_err::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/kvm")
-        .is_ok();
+    // Check /dev/kvm exists (not writability — sudo handles that for SNP)
+    let kvm_available = std::path::Path::new("/dev/kvm").exists();
 
     Ok(select_tier(&object_help, kvm_available))
 }
@@ -45,6 +46,7 @@ pub fn detect_tier() -> anyhow::Result<QemuTier> {
 /// Arguments for launching a VM with QEMU.
 pub struct QemuArgs {
     pub tier: QemuTier,
+    pub qemu_bin: String,
     pub igvm: Option<PathBuf>,
     pub uki: Option<PathBuf>,
     pub firmware: Option<PathBuf>,
@@ -62,21 +64,35 @@ impl QemuArgs {
             QemuTier::SevSnp => {
                 let igvm = self.igvm.as_ref().expect("SevSnp tier requires igvm");
                 vec![
+                    "-enable-kvm".to_string(),
+                    "-cpu".to_string(),
+                    "EPYC-Genoa".to_string(),
                     "-machine".to_string(),
-                    "q35,confidential-guest-support=sev0,igvm-cfg=igvm0".to_string(),
-                    "-object".to_string(),
-                    "sev-snp-guest,id=sev0,reduced-phys-bits=1".to_string(),
+                    "q35,confidential-guest-support=sev0,igvm-cfg=igvm0,memory-backend=ram1,kernel-irqchip=split".to_string(),
                     "-object".to_string(),
                     format!("igvm-cfg,id=igvm0,file={}", igvm.display()),
+                    "-object".to_string(),
+                    format!("memory-backend-memfd,id=ram1,size={},share=true", self.memory),
+                    "-object".to_string(),
+                    "sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1".to_string(),
+                    "-no-reboot".to_string(),
+                    "-serial".to_string(),
+                    "mon:stdio".to_string(),
+                    "-monitor".to_string(),
+                    "none".to_string(),
                 ]
             }
-            QemuTier::Kvm => {
-                let uki = self.uki.as_ref().expect("Kvm tier requires uki");
-                let firmware = self.firmware.as_ref().expect("Kvm tier requires firmware");
-                vec![
+            QemuTier::Kvm | QemuTier::Emulated => {
+                let uki = self.uki.as_ref().expect("Kvm/Emulated tier requires uki");
+                let firmware = self.firmware.as_ref().expect("Kvm/Emulated tier requires firmware");
+                let mut v = vec![
                     "-machine".to_string(),
                     "q35".to_string(),
-                    "-enable-kvm".to_string(),
+                ];
+                if self.tier == QemuTier::Kvm {
+                    v.push("-enable-kvm".to_string());
+                }
+                v.extend([
                     "-drive".to_string(),
                     format!(
                         "if=pflash,format=raw,readonly=on,file={}",
@@ -84,25 +100,8 @@ impl QemuArgs {
                     ),
                     "-kernel".to_string(),
                     uki.display().to_string(),
-                ]
-            }
-            QemuTier::Emulated => {
-                let uki = self.uki.as_ref().expect("Emulated tier requires uki");
-                let firmware = self
-                    .firmware
-                    .as_ref()
-                    .expect("Emulated tier requires firmware");
-                vec![
-                    "-machine".to_string(),
-                    "q35".to_string(),
-                    "-drive".to_string(),
-                    format!(
-                        "if=pflash,format=raw,readonly=on,file={}",
-                        firmware.display()
-                    ),
-                    "-kernel".to_string(),
-                    uki.display().to_string(),
-                ]
+                ]);
+                v
             }
         };
 
@@ -137,32 +136,46 @@ impl QemuArgs {
 
 /// Launch a VM using QEMU.
 pub fn launch(args: &QemuArgs) -> anyhow::Result<()> {
-    tools::require("qemu-system-x86_64")?;
+    let qemu_bin = &args.qemu_bin;
+    if !std::path::Path::new(qemu_bin).exists() {
+        anyhow::bail!("QEMU binary not found: {qemu_bin}");
+    }
+
     let cmd_args = args.to_args();
     match args.tier {
         QemuTier::SevSnp => {
+            let igvm = args.igvm.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("SevSnp tier requires igvm path"))?;
             tracing::info!(
-                igvm = %args.igvm.as_ref().unwrap().display(),
+                igvm = %igvm.display(),
                 disk = %args.disk.display(),
                 smp = args.smp,
                 memory = %args.memory,
                 "launching CVM via QEMU (SEV-SNP)"
             );
+            // SNP requires sudo for /dev/sev
+            let mut sudo_args = vec![qemu_bin.to_string()];
+            sudo_args.extend(cmd_args);
+            let err = Command::new("sudo").args(&sudo_args).exec();
+            // exec() only returns on failure
+            anyhow::bail!("failed to exec sudo qemu: {err}");
         }
         QemuTier::Kvm | QemuTier::Emulated => {
+            let uki = args.uki.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Kvm/Emulated tier requires uki path"))?;
+            let firmware = args.firmware.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Kvm/Emulated tier requires firmware path"))?;
             tracing::info!(
-                uki = %args.uki.as_ref().unwrap().display(),
-                firmware = %args.firmware.as_ref().unwrap().display(),
+                uki = %uki.display(),
+                firmware = %firmware.display(),
                 disk = %args.disk.display(),
                 smp = args.smp,
                 memory = %args.memory,
                 tier = ?args.tier,
                 "launching VM via QEMU"
             );
+            let err = Command::new(qemu_bin).args(&cmd_args).exec();
+            anyhow::bail!("failed to exec qemu: {err}");
         }
     }
-
-    let _ = Command::new("qemu-system-x86_64").args(&cmd_args).exec();
-
-    Ok(())
 }
