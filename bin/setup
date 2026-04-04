@@ -7,7 +7,7 @@ set -x
 echo "==> Installing system packages..."
 sudo apt-get update
 # debian-archive-keyring is required to install mkosi tools during build
-sudo apt install -y build-essential debian-archive-keyring systemd-container systemd-repart
+sudo apt install -y build-essential debian-archive-keyring systemd-container systemd-repart qemu-utils
 
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
