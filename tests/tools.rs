@@ -2,7 +2,6 @@ use steep::tools;
 
 #[test]
 fn test_require_finds_existing_tool() {
-    // `sh` should always exist
     let result = tools::require("sh");
     assert!(result.is_ok());
 }
@@ -28,25 +27,8 @@ fn test_run_command_failure() {
 }
 
 #[test]
-fn test_build_command_args() {
-    let cmd = tools::CommandBuilder::new("igvm-tools")
-        .arg("build")
-        .arg_pair("--firmware", "/path/to/ovmf")
-        .arg_pair("--kernel", "/path/to/uki")
-        .arg_pair("--smp", "4")
-        .arg_pair("--platform", "snp")
-        .arg_pair("-o", "/path/to/output.igvm")
-        .build();
-    let args: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
-    assert_eq!(
-        args,
-        vec![
-            "build",
-            "--firmware", "/path/to/ovmf",
-            "--kernel", "/path/to/uki",
-            "--smp", "4",
-            "--platform", "snp",
-            "-o", "/path/to/output.igvm",
-        ]
-    );
+fn test_safe_path_includes_system_dirs() {
+    let path = tools::safe_path();
+    assert!(path.contains("/usr/bin"));
+    assert!(path.contains("/usr/sbin"));
 }

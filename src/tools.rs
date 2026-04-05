@@ -73,13 +73,9 @@ pub fn run_command_streaming_in(
     args: &[impl AsRef<OsStr>],
     cwd: PathBuf,
 ) -> Result<(), ToolError> {
-    println!(
-        "🍵 {} {}",
-        tool,
-        args.iter()
-            .map(|i| i.as_ref().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" ")
+    tracing::debug!(
+        cmd = %format!("{} {}", tool, args.iter().map(|i| i.as_ref().to_string_lossy()).collect::<Vec<_>>().join(" ")),
+        "exec"
     );
     let status = Command::new(tool)
         .args(args)
@@ -102,6 +98,20 @@ pub fn run_command_streaming_in(
         });
     }
 
+    Ok(())
+}
+
+/// Copy a file with sudo and set permissions to 644.
+/// mkosi outputs are root-owned; this copies them to the output directory readably.
+pub fn sudo_copy(src: &Path, dst: &Path) -> Result<(), ToolError> {
+    run_command("sudo", &["cp", &src.to_string_lossy(), &dst.to_string_lossy()])?;
+    run_command("sudo", &["chmod", "644", &dst.to_string_lossy()])?;
+    Ok(())
+}
+
+/// Make a root-owned file readable (chmod 644 via sudo).
+pub fn sudo_chmod_readable(path: &Path) -> Result<(), ToolError> {
+    run_command("sudo", &["chmod", "644", &path.to_string_lossy()])?;
     Ok(())
 }
 

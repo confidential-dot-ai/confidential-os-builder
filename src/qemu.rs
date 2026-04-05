@@ -31,11 +31,15 @@ pub fn select_tier(object_help_output: &str, kvm_available: bool) -> QemuTier {
 /// For SNP, we check QEMU capabilities + /dev/kvm existence (not writability,
 /// since we'll run with sudo anyway for /dev/sev access).
 pub fn detect_tier_for(qemu_bin: &str) -> anyhow::Result<QemuTier> {
-    if !std::path::Path::new(qemu_bin).exists() {
-        tools::require("qemu-system-x86_64")?;
-    }
+    let resolved = if std::path::Path::new(qemu_bin).exists() {
+        qemu_bin.to_string()
+    } else {
+        // If it's a bare name like "qemu-system-x86_64", resolve via PATH
+        let path = tools::require(qemu_bin)?;
+        path.to_string_lossy().to_string()
+    };
 
-    let object_help = tools::run_command(qemu_bin, &["-object", "help"])?;
+    let object_help = tools::run_command(&resolved, &["-object", "help"])?;
 
     // Check /dev/kvm exists (not writability — sudo handles that for SNP)
     let kvm_available = std::path::Path::new("/dev/kvm").exists();
@@ -59,10 +63,11 @@ pub struct QemuArgs {
 
 impl QemuArgs {
     /// Build the QEMU command-line arguments.
-    pub fn to_args(&self) -> Vec<String> {
+    pub fn to_args(&self) -> anyhow::Result<Vec<String>> {
         let mut args = match self.tier {
             QemuTier::SevSnp => {
-                let igvm = self.igvm.as_ref().expect("SevSnp tier requires igvm");
+                let igvm = self.igvm.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("SevSnp tier requires igvm path"))?;
                 vec![
                     "-enable-kvm".to_string(),
                     "-cpu".to_string(),
@@ -83,8 +88,10 @@ impl QemuArgs {
                 ]
             }
             QemuTier::Kvm | QemuTier::Emulated => {
-                let uki = self.uki.as_ref().expect("Kvm/Emulated tier requires uki");
-                let firmware = self.firmware.as_ref().expect("Kvm/Emulated tier requires firmware");
+                let uki = self.uki.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Kvm/Emulated tier requires uki path"))?;
+                let firmware = self.firmware.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Kvm/Emulated tier requires firmware path"))?;
                 let mut v = vec![
                     "-machine".to_string(),
                     "q35".to_string(),
@@ -130,18 +137,20 @@ impl QemuArgs {
             args.push("virtio-net-pci,netdev=net0".to_string());
         }
 
-        args
+        Ok(args)
     }
 }
 
 /// Launch a VM using QEMU.
 pub fn launch(args: &QemuArgs) -> anyhow::Result<()> {
-    let qemu_bin = &args.qemu_bin;
-    if !std::path::Path::new(qemu_bin).exists() {
-        anyhow::bail!("QEMU binary not found: {qemu_bin}");
-    }
+    let qemu_bin = if std::path::Path::new(&args.qemu_bin).exists() {
+        args.qemu_bin.clone()
+    } else {
+        let path = tools::require(&args.qemu_bin)?;
+        path.to_string_lossy().to_string()
+    };
 
-    let cmd_args = args.to_args();
+    let cmd_args = args.to_args()?;
     match args.tier {
         QemuTier::SevSnp => {
             let igvm = args.igvm.as_ref()
