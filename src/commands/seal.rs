@@ -39,9 +39,10 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Check required tools
-    tools::require("mkosi")?;
-    tracing::info!("all required tools found");
+    // Check required tools — resolve mkosi's full canonical path so sudo can invoke it
+    // directly (uv-installed mkosi has a symlink chain that breaks under sudo + env + PATH).
+    let mkosi_bin = tools::resolve_mkosi()?;
+    tracing::info!("mkosi resolved to {mkosi_bin}");
 
     // Prepare output directory
     if fs_err::exists(&args.output)? {
@@ -68,11 +69,9 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     tools::run_command_streaming(
         "sudo",
         &[
-            "env",
-            &format!("PATH={}", tools::safe_path()),
-            "mkosi",
+            mkosi_bin.as_str(),
             "--directory",
-            &initrd_dir.to_string_lossy(),
+            &*initrd_dir.to_string_lossy(),
             "--force",
         ],
     )?;
@@ -93,14 +92,12 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     tools::run_command_streaming(
         "sudo",
         &[
-            "env",
-            &format!("PATH={}", tools::safe_path()),
-            "mkosi",
+            mkosi_bin.as_str(),
             "--directory",
-            &mkosi_dir.to_string_lossy(),
+            &*mkosi_dir.to_string_lossy(),
             "--force",
             "--initrd",
-            &initrd_path.to_string_lossy(),
+            &*initrd_path.to_string_lossy(),
         ],
     )?;
 

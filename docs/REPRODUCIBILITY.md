@@ -1,0 +1,140 @@
+# Reproducibility and Attestation Verification
+
+## The Problem
+
+Remote attestation requires a verifier to compare a hardware-signed measurement against an **expected value**. If the same inputs produce different measurements on each build, the verifier has nothing stable to compare against.
+
+Before this work, two consecutive `steep seal` runs with identical config produced completely different roothashes, UKIs, and IGVM measurements. This made pre-computing expected measurements impossible.
+
+## Our Approach
+
+We achieve **bit-identical base images** from mkosi. The base image (Ubuntu + stock packages, no bake) produces the same roothash and UKI SHA256 across consecutive builds. This gives us a reproducible foundation.
+
+For baked images (cloud-init with packages, custom binaries, runcmd), we publish the artifact and its signed measurement rather than requiring users to reproduce the bake. This follows the same model as Constellation (Edgeless Systems) and is the standard approach in confidential computing deployments.
+
+### Trust model
+
+```
+Verifier checks:
+  1. SNP attestation report is hardware-signed (AMD VCEK) ✓
+  2. IGVM launch measurement matches published measurement ✓
+  3. Published measurement is signed by us (cosign/sigstore) ✓
+  4. (Optional) Verifier reproduces base image to confirm our toolchain is honest ✓
+```
+
+The base image reproducibility serves as an **audit mechanism** — anyone can rebuild it to verify we aren't shipping a tampered base. The baked layer on top is verified via artifact signing rather than reproduction.
+
+## What We Changed (Layer 0)
+
+### mkosi.conf
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `Incremental` | `false` | No stale build cache leaking between builds |
+| `SourceDateEpoch` | `0` | Clamps all file mtimes to epoch 0 |
+| `Seed` | `d4f09d27-7e4e-4b1a-9c3a-deadbeef0001` | Deterministic partition UUIDs, verity salt, GPT metadata |
+| `EnvironmentFiles` | `mkosi.env` | Passes env vars to systemd-repart sandbox |
+
+### mkosi.env
+
+| Variable | Purpose |
+|----------|---------|
+| `SOURCE_DATE_EPOCH=0` | Propagated to dpkg/apt for timestamp clamping |
+| `SYSTEMD_REPART_MKFS_OPTIONS_EXT4=-E hash_seed=<fixed>` | Deterministic ext4 directory hash seed (undocumented for ext4 but confirmed working on systemd 257) |
+
+### mkosi.finalize
+
+Reproducibility cleanup runs **after** the bake block (ordering matters — bake recreates logs/caches):
+- Truncate `/etc/machine-id` and `/var/lib/dbus/machine-id`
+- Delete dpkg/apt/alternatives logs, journal dir
+- Delete apt cache, ldconfig aux-cache, man cache
+- Delete random seeds, cargo cache
+
+## Sources of Non-Determinism We Fixed
+
+| Source | Fix |
+|--------|-----|
+| ext4 Directory Hash Seed (random per mkfs) | `SYSTEMD_REPART_MKFS_OPTIONS_EXT4=-E hash_seed=<fixed>` |
+| Partition UUIDs (random per repart run) | `Seed=<fixed>` in mkosi.conf |
+| Verity salt (random per repart run) | `Seed=<fixed>` — systemd PR #28695 derives salt from seed |
+| File mtimes (wallclock) | `SourceDateEpoch=0` |
+| `/etc/machine-id` (random UUID) | Truncated in finalize |
+| `/var/lib/dbus/machine-id` (random UUID) | Truncated in finalize |
+| Log file content (wallclock timestamps) | Deleted in finalize |
+| apt cache (timestamps in binary cache) | Deleted in finalize |
+| `Incremental=true` (stale cache) | Set to `false` |
+
+## What's NOT Reproducible (and doesn't need to be)
+
+Baked images (cloud-init with `--bake`) are not reproducible across independent builds because:
+
+- **apt mirrors change over time** — package metadata and versions drift. Pinning to a snapshot mirror (e.g., `https://snapshot.ubuntu.com/ubuntu/<timestamp>`) would help but adds operational complexity.
+- **Compilation is non-deterministic** — Rust's hash randomization, parallel codegen ordering, and linker section layout produce different binaries from identical source. Fixing this requires `CARGO_BUILD_JOBS=1`, `--remap-path-prefix`, and pinned toolchains.
+- **Cloud-init is stateful** — logs, cache files, and runtime state vary between runs even with identical config.
+
+These are verified via artifact signing instead.
+
+## Open Questions
+
+**Will adding packages to the base image break reproducibility?**
+Adding packages to `Packages=` in mkosi.conf should remain reproducible as long as the same package versions are installed (same apt mirror state). The finalize cleanup handles the logs and caches that package installation creates. This needs testing.
+
+**Will adding cloud-init config (boot-only, no bake) break reproducibility?**
+Boot-only mode injects the cloud-init YAML as a static file into the verity root. Static files with clamped mtimes should be deterministic. This needs testing.
+
+## How Others Solve This
+
+### Constellation (Edgeless Systems)
+- Fully baked immutable image with dm-verity, architecturally closest to steep
+- Base image built with mkosi, toolchain pinned via Nix
+- Default: users fetch signed measurements from Edgeless's registry (cosign + Rekor transparency log)
+- Paranoid path: reproduce from source via Bazel + Nix
+- Per-deployment config (cluster identity) measured into a separate PCR, not the image
+- Project has moved to Contrast (confidential containers)
+
+### Flashbots BuilderNet
+- Full image reproducibility required — every operator must produce identical TDX measurements
+- Built with Yocto (exploring mkosi migration)
+- Strongest trust model: decentralized, no single party trusted
+- Reference measurements published at measurements.buildernet.org
+
+### CoCo / Kata Containers (CNCF)
+- TEE boot stack measured and requires reference values (small surface)
+- Container workloads verified via image signatures (cosign/sigstore), not measurement matching
+- Hardware attestation proves the policy enforcement engine is genuine
+- Key Broker Service releases secrets only if attestation + signature policy passes
+
+### AWS Nitro Enclaves
+- Entire application baked into an immutable EIF
+- PCR values computed at build time, explicitly support reproducible builds via Kaniko
+- Trust root is AWS's Nitro Hypervisor (not CPU-level TEE)
+
+### Cloud Providers (Azure, GCP)
+- vTPM-mediated attestation with proprietary firmware
+- Reference values managed internally (Azure MAA, Google Cloud Attestation)
+- Firmware is closed-source and not reproducible — users must trust the provider
+- Guest OS measurements are the user's responsibility
+
+### Attestable Builds (emerging)
+- Run builds inside a TEE, TEE attests "this artifact was built from this source"
+- Record in transparency log — no reproducibility needed, TEE is the witness
+- Early research (Cambridge 2025, Tinfoil, Garnix)
+
+## References
+
+- [Reproducible Arch images with mkosi — Jelle van der Waa](https://vdwaa.nl/mkosi-reproducible-arch-images.html)
+- [edgelesssys/reproducible-mkosi](https://github.com/edgelesssys/reproducible-mkosi)
+- [Reproducible builds for confidential computing — Edgeless Systems](https://www.edgeless.systems/blog/reproducible-builds-for-confidential-computing)
+- [systemd/systemd#28656 — reproducible verity salt and UUID](https://github.com/systemd/systemd/issues/28656)
+- [systemd/mkosi#2957 — reproducible UKI](https://github.com/systemd/mkosi/issues/2957)
+- [systemd/mkosi#1112 — reproducible builds tracking](https://github.com/systemd/mkosi/issues/1112)
+- [systemd/mkosi#2962 — Environment= space-splitting bug](https://github.com/systemd/mkosi/issues/2962)
+- [FOSDEM 2024 — Reproducible Builds for Confidential Computing](https://archive.fosdem.org/2024/schedule/event/fosdem-2024-1769-reproducible-builds-for-confidential-computing-why-remote-attestation-is-worthless-without-it/)
+- [Constellation attestation architecture](https://docs.edgeless.systems/constellation/architecture/attestation)
+- [CoCo attestation flow](https://confidentialcontainers.org/docs/attestation/)
+- [IETF RFC 9334 — RATS Architecture](https://datatracker.ietf.org/doc/rfc9334/)
+- [SOURCE_DATE_EPOCH specification](https://reproducible-builds.org/specs/source-date-epoch/)
+- [Flashbots BuilderNet v1.3](https://buildernet.org/blog/2025/04/28/buildernet-v1.3)
+- [Trail of Bits — Notes on AWS Nitro Enclaves](https://blog.trailofbits.com/2024/02/16/a-few-notes-on-aws-nitro-enclaves-images-and-attestation/)
+- [Attestable Builds (Cambridge 2025)](https://arxiv.org/html/2505.02521v1)
+- [Confidential Computing Transparency Framework](https://arxiv.org/html/2409.03720v2)
