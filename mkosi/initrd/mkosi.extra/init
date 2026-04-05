@@ -39,7 +39,12 @@ done
 
 if [ -z "$ROOTHASH" ]; then
     echo "FATAL: no roothash= on kernel cmdline"
-    echo "Rebooting in 5 seconds..."
+    sleep 5
+    echo b > /proc/sysrq-trigger
+fi
+
+if ! echo "$ROOTHASH" | grep -qE '^[a-f0-9]{64}$'; then
+    echo "FATAL: invalid roothash (expected 64 hex chars): $ROOTHASH"
     sleep 5
     echo b > /proc/sysrq-trigger
 fi

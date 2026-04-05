@@ -116,18 +116,14 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
 
     // Copy UKI to output
     let output_uki = output.join("uki.efi");
-    tools::run_command(
-        "sudo",
-        &["cp", &uki_path.to_string_lossy(), &output_uki.to_string_lossy()],
-    )?;
-    tools::run_command("sudo", &["chmod", "644", &output_uki.to_string_lossy()])?;
+    tools::sudo_copy(&uki_path, &output_uki)?;
 
     // Read roothash (produced by mkosi SplitArtifacts=roothash)
     let roothash_path = mkosi_dir.join("image.roothash");
     if !roothash_path.exists() {
         anyhow::bail!("image.roothash not found — check mkosi.conf has SplitArtifacts=roothash");
     }
-    tools::run_command("sudo", &["chmod", "644", &roothash_path.to_string_lossy()])?;
+    tools::sudo_chmod_readable(&roothash_path)?;
     let roothash = fs_err::read_to_string(&roothash_path)?.trim().to_string();
     if roothash.is_empty() || !roothash.chars().all(|c| c.is_ascii_hexdigit()) {
         anyhow::bail!("invalid roothash from mkosi: {roothash:?}");
@@ -151,8 +147,10 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
 
         // firmware and igvm_tools are guaranteed Some when skip_igvm is false (validated at top)
         let igvm_args = IgvmBuildArgs {
-            igvm_tools_bin: igvm_tools.clone().expect("igvm_tools validated"),
-            firmware: firmware.clone().expect("firmware validated"),
+            igvm_tools_bin: igvm_tools.clone()
+                .ok_or_else(|| anyhow::anyhow!("igvm-tools path required for IGVM build"))?,
+            firmware: firmware.clone()
+                .ok_or_else(|| anyhow::anyhow!("firmware path required for IGVM build"))?,
             kernel: output_uki.clone(),
             smp: args.smp,
             manifest: Some(igvm_manifest_path.clone()),
@@ -172,11 +170,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     // Copy raw disk image to output
     let disk_path = output.join("disk.raw");
     let base_abs = base_image.canonicalize()?;
-    tools::run_command(
-        "sudo",
-        &["cp", &base_abs.to_string_lossy(), &disk_path.to_string_lossy()],
-    )?;
-    tools::run_command("sudo", &["chmod", "644", &disk_path.to_string_lossy()])?;
+    tools::sudo_copy(&base_abs, &disk_path)?;
 
     // Write manifest
     let build_manifest = BuildManifest {

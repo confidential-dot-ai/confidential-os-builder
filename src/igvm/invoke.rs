@@ -14,7 +14,7 @@ pub struct IgvmBuildArgs {
 
 impl IgvmBuildArgs {
     /// Convert to command-line argument list for igvm-tools.
-    fn to_args(&self) -> Vec<String> {
+    pub fn to_args(&self) -> Vec<String> {
         let mut args = vec![
             "build".to_string(),
             "--firmware".to_string(),
@@ -37,9 +37,10 @@ impl IgvmBuildArgs {
 }
 
 /// Invoke `igvm-tools build` with the given arguments.
-pub fn build(args: &IgvmBuildArgs) -> Result<(), tools::ToolError> {
+pub fn build(args: &IgvmBuildArgs) -> anyhow::Result<()> {
     let bin = args.igvm_tools_bin.to_string_lossy();
     let cmd_args = args.to_args();
     tracing::info!(output = %args.output.display(), smp = args.smp, "invoking igvm-tools build");
-    tools::run_command_streaming(&bin, &cmd_args)
+    tools::run_command_streaming(&bin, &cmd_args)?;
+    Ok(())
 }

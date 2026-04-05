@@ -21,3 +21,15 @@ mkosi/initrd/image.*
 
 # downloaded packages
 *.deb
+
+# Claude skills and tooling
+.claude/skills/
+
+# Progress docs (local working notes)
+PROGRESS*.md
+
+# Cloud-init test files
+*.cloud-init.yaml
+
+# GitHub templates and workflows (managed separately)
+.github/
