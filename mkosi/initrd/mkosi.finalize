@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+
+# Reproducibility cleanup for the initrd cpio archive
+rm -f "$BUILDROOT/var/cache/ldconfig/aux-cache"
+rm -f "$BUILDROOT/var/log/alternatives.log"
