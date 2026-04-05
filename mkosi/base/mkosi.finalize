@@ -89,3 +89,32 @@ if [ -f "$BAKE_SENTINEL" ]; then
         echo "steep: bake complete"
     fi
 fi
+
+# --- Reproducibility cleanup (MUST run last, after bake) ---
+# Empty machine-id so it doesn't vary between builds
+# (systemd regenerates on first boot if empty)
+: > "$BUILDROOT/etc/machine-id"
+: > "$BUILDROOT/var/lib/dbus/machine-id"
+
+# Remove timestamped log content
+rm -f "$BUILDROOT/var/log/dpkg.log"
+rm -f "$BUILDROOT/var/log/alternatives.log"
+rm -f "$BUILDROOT/var/log/bootstrap.log"
+rm -rf "$BUILDROOT/var/log/journal"
+rm -f "$BUILDROOT/var/log/apt/history.log"
+rm -f "$BUILDROOT/var/log/apt/term.log"
+
+# Remove caches with embedded timestamps
+rm -f "$BUILDROOT/var/cache/ldconfig/aux-cache"
+rm -rf "$BUILDROOT/var/cache/man"
+rm -rf "$BUILDROOT/var/cache/apt"
+rm -rf "$BUILDROOT/var/lib/apt/lists"
+
+# Remove random seeds
+rm -f "$BUILDROOT/var/lib/systemd/random-seed"
+rm -f "$BUILDROOT/boot/efi/loader/random-seed"
+rm -f "$BUILDROOT/efi/loader/random-seed"
+
+# Remove cargo cache if present (non-deterministic)
+rm -rf "$BUILDROOT/root/.cargo"
+# --- End reproducibility cleanup ---

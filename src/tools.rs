@@ -128,3 +128,17 @@ pub fn safe_path() -> String {
     base.to_string()
 }
 
+/// Resolve the canonical path of mkosi, following symlinks.
+/// uv-installed mkosi lives at ~/.local/bin/mkosi -> ~/.local/share/uv/tools/mkosi/bin/mkosi
+/// which has a shebang pointing to the venv Python. sudo + env + PATH can't resolve
+/// through this chain, so we resolve it once and invoke the full path directly.
+pub fn resolve_mkosi() -> Result<String, ToolError> {
+    let path = require("mkosi")?;
+    path.canonicalize()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| ToolError::Io {
+            tool: "mkosi".to_string(),
+            source: e,
+        })
+}
+
