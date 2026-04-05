@@ -94,7 +94,9 @@ fi
 # Empty machine-id so it doesn't vary between builds
 # (systemd regenerates on first boot if empty)
 : > "$BUILDROOT/etc/machine-id"
-: > "$BUILDROOT/var/lib/dbus/machine-id"
+if [ -f "$BUILDROOT/var/lib/dbus/machine-id" ]; then
+    : > "$BUILDROOT/var/lib/dbus/machine-id"
+fi
 
 # Remove timestamped log content
 rm -f "$BUILDROOT/var/log/dpkg.log"
