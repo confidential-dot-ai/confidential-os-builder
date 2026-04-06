@@ -110,12 +110,13 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         ],
     )?;
 
+    let mkosi_output = mkosi_dir.join("mkosi.output");
     // Find the split artifacts mkosi produced
-    let uki_path = mkosi_dir.join("image.efi");
+    let uki_path = mkosi_output.join("image.efi");
     if !uki_path.exists() {
         anyhow::bail!("UKI .efi not found in mkosi output. Check mkosi build logs.");
     }
-    let base_image = mkosi_dir.join("image.raw");
+    let base_image = mkosi_output.join("image.raw");
     if !base_image.exists() {
         anyhow::bail!("image.raw not found in mkosi output. Check mkosi build logs.");
     }
@@ -125,7 +126,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     tools::sudo_copy(&uki_path, &output_uki)?;
 
     // Read roothash (produced by mkosi SplitArtifacts=roothash)
-    let roothash_path = mkosi_dir.join("image.roothash");
+    let roothash_path = mkosi_output.join("image.roothash");
     if !roothash_path.exists() {
         anyhow::bail!("image.roothash not found — check mkosi.conf has SplitArtifacts=roothash");
     }
