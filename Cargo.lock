@@ -165,7 +165,6 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
- "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -449,11 +448,10 @@ dependencies = [
 
 [[package]]
 name = "igvm-tools"
-version = "0.1.0"
+version = "0.2.0"
+source = "git+git+ssh://github.com/lunal-dev/igvm-tools#41f45ae8e3d5513632d0ab02350dc679130b5778"
 dependencies = [
  "bitfield-struct",
- "chrono",
- "clap",
  "hex",
  "igvm",
  "igvm_defs",
