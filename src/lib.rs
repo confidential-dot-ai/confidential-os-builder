@@ -80,10 +80,6 @@ pub struct SealArgs {
     #[arg(long, env = "STEEP_FIRMWARE")]
     pub firmware: Option<PathBuf>,
 
-    /// Path to igvm-tools binary (required unless --skip-igvm)
-    #[arg(long, env = "STEEP_IGVM_TOOLS")]
-    pub igvm_tools: Option<PathBuf>,
-
     /// RAM for VM (QEMU-style suffix, e.g. "4G")
     #[arg(long, default_value = "4G")]
     pub memory: String,
@@ -93,9 +89,24 @@ pub struct SealArgs {
     pub smp: u32,
 }
 
+#[derive(clap::Args)]
+pub struct IgvmArgs {
+    /// Sealed output directory (from steep seal)
+    pub dir: PathBuf,
+
+    /// SMP counts to generate IGVM files for (e.g. --smp 1 2 4 8)
+    #[arg(long, required = true, num_args = 1..)]
+    pub smp: Vec<u32>,
+
+    /// Path to OVMF firmware binary
+    #[arg(long, env = "STEEP_FIRMWARE")]
+    pub firmware: PathBuf,
+}
+
 pub mod commands {
     pub mod base;
     pub mod cloud_init;
+    pub mod igvm;
     pub mod kernel;
     pub mod run;
     pub mod seal;

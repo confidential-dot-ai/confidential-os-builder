@@ -1,46 +1,25 @@
-use std::path::PathBuf;
+use igvm_tools::{BootMode, BuildConfig, BuildResult, Platform};
 
-use crate::tools;
+/// Build an IGVM image from firmware and kernel (UKI) bytes.
+///
+/// Returns the serialized IGVM binary and SNP measurement result.
+pub fn build_snp(firmware: &[u8], kernel: &[u8], smp: u32) -> anyhow::Result<BuildResult> {
+    tracing::info!(smp, "building IGVM via igvm_tools library");
 
-/// Arguments for `igvm-tools build`.
-pub struct IgvmBuildArgs {
-    pub igvm_tools_bin: PathBuf,
-    pub firmware: PathBuf,
-    pub kernel: PathBuf,
-    pub smp: u32,
-    pub manifest: Option<PathBuf>,
-    pub output: PathBuf,
-}
+    let config = BuildConfig {
+        firmware,
+        kernel: Some(kernel),
+        vars: None,
+        shim: None,
+        pk: None,
+        kek: None,
+        db: None,
+        dbx: None,
+        platform: Platform::Snp,
+        boot_mode: BootMode::Real16,
+        smp,
+        verbose: false,
+    };
 
-impl IgvmBuildArgs {
-    /// Convert to command-line argument list for igvm-tools.
-    pub fn to_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "build".to_string(),
-            "--firmware".to_string(),
-            self.firmware.display().to_string(),
-            "--kernel".to_string(),
-            self.kernel.display().to_string(),
-            "--smp".to_string(),
-            self.smp.to_string(),
-            "--platform".to_string(),
-            "snp".to_string(),
-        ];
-        if let Some(ref manifest) = self.manifest {
-            args.push("--manifest".to_string());
-            args.push(manifest.display().to_string());
-        }
-        args.push("-o".to_string());
-        args.push(self.output.display().to_string());
-        args
-    }
-}
-
-/// Invoke `igvm-tools build` with the given arguments.
-pub fn build(args: &IgvmBuildArgs) -> anyhow::Result<()> {
-    let bin = args.igvm_tools_bin.to_string_lossy();
-    let cmd_args = args.to_args();
-    tracing::info!(output = %args.output.display(), smp = args.smp, "invoking igvm-tools build");
-    tools::run_command_streaming(&bin, &cmd_args)?;
-    Ok(())
+    igvm_tools::build(&config).map_err(|e| anyhow::anyhow!("igvm build failed: {e}"))
 }

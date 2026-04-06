@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::igvm::invoke::IgvmBuildArgs;
 use crate::manifest::{
-    self, BuildConfig, BuildManifest, FileEntry, ManifestInputs, ManifestOutputs,
+    self, BuildConfig, BuildManifest, FileEntry, Measurement, ManifestInputs, ManifestOutputs,
 };
 use crate::{tools, SealArgs};
 
@@ -19,17 +18,6 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
             anyhow::bail!("firmware not found: {}. Pass --skip-igvm to build without IGVM.", fw.display());
         }
         Some(fw.clone())
-    };
-    let igvm_tools = if args.skip_igvm {
-        None
-    } else {
-        let it = args.igvm_tools.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("--igvm-tools is required (or set STEEP_IGVM_TOOLS). Pass --skip-igvm to build without IGVM.")
-        })?;
-        if !it.exists() {
-            anyhow::bail!("igvm-tools not found at {}. Build it, pass --igvm-tools, or use --skip-igvm.", it.display());
-        }
-        Some(it.clone())
     };
 
     // Validate memory format before it reaches QEMU arg interpolation
@@ -167,28 +155,28 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         None
     } else {
         println!("\n=== Step 3/3: Building IGVM ===");
-        let igvm_manifest_path = output.join("igvm-manifest.json");
 
-        // firmware and igvm_tools are guaranteed Some when skip_igvm is false (validated at top)
-        let igvm_args = IgvmBuildArgs {
-            igvm_tools_bin: igvm_tools.clone()
-                .ok_or_else(|| anyhow::anyhow!("igvm-tools path required for IGVM build"))?,
-            firmware: firmware.clone()
-                .ok_or_else(|| anyhow::anyhow!("firmware path required for IGVM build"))?,
-            kernel: output_uki.clone(),
-            smp: args.smp,
-            manifest: Some(igvm_manifest_path.clone()),
-            output: igvm_path.clone(),
-        };
-        crate::igvm::invoke::build(&igvm_args)?;
+        // firmware is guaranteed Some when skip_igvm is false (validated at top)
+        let fw_path = firmware.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("firmware path required for IGVM build"))?;
+        let fw_bytes = fs_err::read(fw_path)?;
+        let uki_bytes = fs_err::read(&output_uki)?;
+
+        let result = crate::igvm::invoke::build_snp(&fw_bytes, &uki_bytes, args.smp)?;
+
+        fs_err::write(&igvm_path, &result.igvm_bytes)?;
         println!(
             "IGVM: {} ({})",
             igvm_path.display(),
             human_size(&igvm_path)?
         );
 
-        let igvm_manifest_json = fs_err::read_to_string(&igvm_manifest_path)?;
-        Some(manifest::parse_igvm_manifest(&igvm_manifest_json)?)
+        Some(Measurement {
+            snp_launch_digest: hex::encode(result.measurement.launch_digest),
+            algorithm: "sha384".to_string(),
+            page_count: result.measurement.page_count,
+            vmsa_count: result.measurement.vmsa_count,
+        })
     };
 
     // Copy raw disk image to output
