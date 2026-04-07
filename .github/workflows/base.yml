@@ -46,7 +46,6 @@ jobs:
 
           cd mkosi/base/mkosi.output
 
-          oras push "${IMAGE}:${SHORT_SHA}" \
-            --tag latest \
+          oras push "${IMAGE}:${SHORT_SHA},latest" \
             --artifact-type application/vnd.steep.base.v1 \
             ./*
