@@ -22,11 +22,11 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Install dependencies
-        run: bin/setup
+      - name: Setup mkosi
+        uses: systemd/mkosi@v26
 
       - name: Build base image
-        run: bin/steep base
+        run: sudo mkosi -C mkosi/base
 
       - name: Setup ORAS
         uses: oras-project/setup-oras@v1
