@@ -11,7 +11,7 @@
 
 - [x] Configure the base image with cloud-init and runs a mounted ISO with cloud-init config
 - [x] Release a built image, with instructions for use, that accepts cloud-init configuration
-- [ ] Release an image with privateclaw cloud-init baked in already
+- [x] Release an image with privateclaw cloud-init baked in already
 - [x] Finalize `steep cloud-init` that accepts a cloud-init dir and creates the image files and qemu commands
 - [ ] Switch from qcow2 backed by base image to dm-verity with overlayfs and a copy-on-write partition in one image
 - [ ] Call `run` with the option to run cloud-init can run, clean up after itself, and save a prepared image
