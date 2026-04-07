@@ -1,6 +1,6 @@
 .worktrees/
-/output
-/target
+output/
+target/
 
 # mkosi build artifacts
 mkosi.cache/
