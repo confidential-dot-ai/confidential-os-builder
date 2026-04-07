@@ -229,6 +229,7 @@ pub fn launch(args: &QemuArgs) -> anyhow::Result<()> {
                 tier = ?args.tier,
                 "launching VM via QEMU"
             );
+            tracing::debug!("{} {}", &qemu_bin, &cmd_args.join(" "));
             let err = Command::new(qemu_bin).args(&cmd_args).exec();
             anyhow::bail!("failed to exec qemu: {err}");
         }
