@@ -20,18 +20,8 @@ echo "==> Installing rust..."
 which cargo || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 . $HOME/.cargo/env
 
-echo "==> Installing igvm-tools..."
 TOOLS_DIR="$DIR/../../igvm-tools"
 test -d "$TOOLS_DIR" || git clone git@github.com:lunal-dev/igvm-tools.git "$TOOLS_DIR"
 which igvm-tools || cargo install --path "$TOOLS_DIR"
-
-SHARE_DIR="$HOME/.local/share/steep"
-mkdir -p "$SHARE_DIR"
-
-echo "==> Installing OVMF firmware..."
-test -e "$SHARE_DIR/OVMF.fd" || cp "$TOOLS_DIR/examples/prebuilt/OVMF.fd" "$SHARE_DIR/OVMF.fd"
-
-echo "==> Installing UKI..."
-test -e "$SHARE_DIR/uki.efi" || cp "$TOOLS_DIR/examples/prebuilt/uki.efi" "$SHARE_DIR/uki.efi"
 
 echo "==> Setup complete."
