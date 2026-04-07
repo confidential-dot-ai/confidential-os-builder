@@ -1,5 +1,12 @@
 # Future plans
 
+- [ ] merge steep seal command into build command
+- [ ] create GHA pipeline to build base image
+- [ ] push base image into GHCR after builds
+- [ ] add jobs for pre-baked cloud-init images
+- [ ] add k8s base image pre-baked and pushed to GHCR
+- [ ] add kettle builder service pre-baked image pushed to GHCR
+
 ## Base image
 
 - [x] Build a base image, from Ubuntu Resolute Raccoon, that can host our refinements
