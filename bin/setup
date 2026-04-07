@@ -30,7 +30,11 @@ which cargo-nextest || cargo binstall --no-confirm cargo-nextest
 which cargo-nextest
 
 TOOLS_DIR="$DIR/../../igvm-tools"
-test -d "$TOOLS_DIR" || git clone git@github.com:lunal-dev/igvm-tools.git "$TOOLS_DIR"
+if [[ -n "$CI" ]]; then
+    test -d "$TOOLS_DIR" || git clone https://github.com/lunal-dev/igvm-tools.git "$TOOLS_DIR"
+else
+    test -d "$TOOLS_DIR" || git clone git@github.com:lunal-dev/igvm-tools.git "$TOOLS_DIR"
+fi
 which igvm-tools || cargo install --path "$TOOLS_DIR"
 
 echo "==> Setup complete."
