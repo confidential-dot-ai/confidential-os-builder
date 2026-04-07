@@ -22,11 +22,11 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Install dependencies
-        run: bin/setup
+      - name: Setup mkosi
+        uses: systemd/mkosi@v26
 
       - name: Build base image
-        run: bin/steep base
+        run: sudo mkosi -C mkosi/base
 
       - name: Setup ORAS
         uses: oras-project/setup-oras@v1
@@ -44,9 +44,14 @@ jobs:
           REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
           IMAGE="ghcr.io/${REPO}/base"
 
+          # include the needed OVMF firmware in the published files
+          cp output/OVMF.fd mkosi/base/mkosi.output/OVMF.fd
+
           cd mkosi/base/mkosi.output
 
-          oras push "${IMAGE}:${SHORT_SHA}" \
-            --tag latest \
+          # prevent symlink from becoming a second copy of the image
+          rm image
+
+          oras push "${IMAGE}:${SHORT_SHA},latest" \
             --artifact-type application/vnd.steep.base.v1 \
             ./*
