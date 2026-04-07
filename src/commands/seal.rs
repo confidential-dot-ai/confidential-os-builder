@@ -84,7 +84,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
             "--force",
         ],
     )?;
-    let initrd_path = initrd_dir.join("image.cpio.gz").canonicalize()?;
+    let initrd_path = initrd_dir.join("mkosi.output/image.cpio.gz").canonicalize()?;
     println!(
         "Initrd: {} ({})",
         initrd_path.display(),
