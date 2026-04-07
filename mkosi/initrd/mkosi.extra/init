@@ -80,8 +80,4 @@ mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
 cat /proc/sys/kernel/random/uuid | tr -d '-' > /sysroot/etc/machine-id
 
 echo "initrd: switching root..."
-mount --move /proc /sysroot/proc
-mount --move /sys /sysroot/sys
-mount --move /dev /sysroot/dev
-
 exec switch_root /sysroot /sbin/init
