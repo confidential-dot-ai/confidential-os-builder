@@ -29,6 +29,4 @@ which cargo-binstall
 which cargo-nextest || cargo binstall --no-confirm cargo-nextest
 which cargo-nextest
 
-which igvm-tools || cargo install --path "crates/igvm-tools"
-
 echo "==> Setup complete."
