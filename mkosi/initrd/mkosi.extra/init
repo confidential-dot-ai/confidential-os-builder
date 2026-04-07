@@ -61,7 +61,7 @@ veritysetup open /dev/vda2 root /dev/vda3 "$ROOTHASH"
 echo "initrd: dm-verity device created at /dev/mapper/root"
 
 # Mount verified root as lower layer
-mkdir -p /sysroot-lower
+mkdir -p /sysroot-lower /sysroot-upper /sysroot
 mount -o ro,noload /dev/mapper/root /sysroot-lower
 echo "initrd: verified root mounted (read-only)"
 
