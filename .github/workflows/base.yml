@@ -45,6 +45,7 @@ jobs:
           IMAGE="ghcr.io/${REPO}/base"
 
           cd mkosi/base/mkosi.output
+          rm image # prevent symlink from becoming a second copy of the image
 
           oras push "${IMAGE}:${SHORT_SHA},latest" \
             --artifact-type application/vnd.steep.base.v1 \
