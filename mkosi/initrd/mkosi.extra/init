@@ -62,7 +62,7 @@ echo "initrd: dm-verity device created at /dev/mapper/root"
 
 # Mount verified root as lower layer
 mkdir -p /sysroot-lower /sysroot-upper /sysroot
-mount -o ro,noload /dev/mapper/root /sysroot-lower
+mount -o ro /dev/mapper/root /sysroot-lower
 echo "initrd: verified root mounted (read-only)"
 
 # Set up overlayfs: writable upper on tmpfs, verified lower via dm-verity
