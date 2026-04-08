@@ -18,7 +18,7 @@ The attestation model rests on a deterministic chain from source configuration t
 cloud-init YAML
     |  injected into image as static file
     v
-ext4 root filesystem
+erofs root filesystem
     |  dm-verity hash tree
     v
 roothash (SHA-256)
