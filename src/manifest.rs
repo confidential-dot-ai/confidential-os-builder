@@ -64,8 +64,7 @@ pub fn sha256_file(path: &Path) -> anyhow::Result<String> {
     let mut file = fs_err::File::open(path)?;
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher)?;
-    let result = hasher.finalize();
-    Ok(hex::encode(result))
+    Ok(hex::encode(hasher.finalize()))
 }
 
 /// Write the manifest to a JSON file.
