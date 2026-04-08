@@ -129,7 +129,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
 
     // Copy UKI to output
     let output_uki = output.join("uki.efi");
-    tools::sudo_copy(&uki_path, &output_uki)?;
+    tools::sudo_mv(&uki_path, &output_uki)?;
 
     // Read roothash (produced by mkosi SplitArtifacts=roothash)
     let roothash_path = mkosi_output.join("image.roothash");
@@ -191,7 +191,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     // Copy raw disk image to output
     let disk_path = output.join("disk.raw");
     let base_abs = base_image.canonicalize()?;
-    tools::sudo_copy(&base_abs, &disk_path)?;
+    tools::sudo_mv(&base_abs, &disk_path)?;
 
     // Write manifest
     let build_manifest = BuildManifest {

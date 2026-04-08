@@ -140,4 +140,3 @@ pub fn resolve_mkosi() -> Result<String, ToolError> {
             source: e,
         })
 }
-
