@@ -223,7 +223,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
                 .transpose()?,
             base_image: FileEntry {
                 path: base_abs.to_string_lossy().to_string(),
-                sha256: manifest::sha256_file(&base_abs)?,
+                sha256: manifest::sha256_file(&disk_path)?,
             },
         },
         outputs: ManifestOutputs {
