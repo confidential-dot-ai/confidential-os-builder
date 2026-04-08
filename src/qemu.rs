@@ -8,7 +8,7 @@ use crate::tools;
 pub fn validate_memory(s: &str) -> anyhow::Result<()> {
     // Must be digits optionally followed by a single size suffix
     let valid = !s.is_empty()
-        && s.bytes().last().map_or(false, |last| {
+        && s.bytes().last().is_some_and(|last| {
             let suffix = b"KMGTkmgt";
             if suffix.contains(&last) {
                 s[..s.len() - 1].bytes().all(|b| b.is_ascii_digit())
@@ -101,13 +101,21 @@ impl QemuArgs {
     pub fn to_args(&self) -> anyhow::Result<Vec<String>> {
         // Validate all paths that will be interpolated into comma-delimited QEMU args
         reject_comma_in_path("disk", &self.disk)?;
-        if let Some(ref p) = self.igvm { reject_comma_in_path("igvm", p)?; }
-        if let Some(ref p) = self.uki { reject_comma_in_path("uki", p)?; }
-        if let Some(ref p) = self.firmware { reject_comma_in_path("firmware", p)?; }
+        if let Some(ref p) = self.igvm {
+            reject_comma_in_path("igvm", p)?;
+        }
+        if let Some(ref p) = self.uki {
+            reject_comma_in_path("uki", p)?;
+        }
+        if let Some(ref p) = self.firmware {
+            reject_comma_in_path("firmware", p)?;
+        }
 
         let mut args = match self.tier {
             QemuTier::SevSnp => {
-                let igvm = self.igvm.as_ref()
+                let igvm = self
+                    .igvm
+                    .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("SevSnp tier requires igvm path"))?;
                 vec![
                     "-enable-kvm".to_string(),
@@ -129,14 +137,15 @@ impl QemuArgs {
                 ]
             }
             QemuTier::Kvm | QemuTier::Emulated => {
-                let uki = self.uki.as_ref()
+                let uki = self
+                    .uki
+                    .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Kvm/Emulated tier requires uki path"))?;
-                let firmware = self.firmware.as_ref()
+                let firmware = self
+                    .firmware
+                    .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Kvm/Emulated tier requires firmware path"))?;
-                let mut v = vec![
-                    "-machine".to_string(),
-                    "q35".to_string(),
-                ];
+                let mut v = vec!["-machine".to_string(), "q35".to_string()];
                 if self.tier == QemuTier::Kvm {
                     v.push("-enable-kvm".to_string());
                 }
@@ -199,7 +208,9 @@ pub fn launch(args: &QemuArgs) -> anyhow::Result<()> {
     let cmd_args = args.to_args()?;
     match args.tier {
         QemuTier::SevSnp => {
-            let igvm = args.igvm.as_ref()
+            let igvm = args
+                .igvm
+                .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("SevSnp tier requires igvm path"))?;
             tracing::info!(
                 igvm = %igvm.display(),
@@ -216,9 +227,13 @@ pub fn launch(args: &QemuArgs) -> anyhow::Result<()> {
             anyhow::bail!("failed to exec sudo qemu: {err}");
         }
         QemuTier::Kvm | QemuTier::Emulated => {
-            let uki = args.uki.as_ref()
+            let uki = args
+                .uki
+                .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Kvm/Emulated tier requires uki path"))?;
-            let firmware = args.firmware.as_ref()
+            let firmware = args
+                .firmware
+                .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Kvm/Emulated tier requires firmware path"))?;
             tracing::info!(
                 uki = %uki.display(),

@@ -104,11 +104,15 @@ pub fn run_command_streaming_in(
 /// Copy a file with sudo and set permissions to 644.
 /// mkosi outputs are root-owned; this copies them to the output directory readably.
 /// Uses OsStr args to avoid lossy UTF-8 conversion corrupting paths.
-pub fn sudo_copy(src: &Path, dst: &Path) -> Result<(), ToolError> {
-    run_command_streaming("sudo", &[OsStr::new("cp"), src.as_os_str(), dst.as_os_str()])?;
+pub fn sudo_mv(src: &Path, dst: &Path) -> Result<(), ToolError> {
     run_command_streaming(
         "sudo",
-        &[OsStr::new("chmod"), OsStr::new("644"), dst.as_os_str()],
+        &[OsStr::new("mv"), src.as_os_str(), dst.as_os_str()],
+    )?;
+    let user = std::env!("USER");
+    run_command_streaming(
+        "sudo",
+        &[OsStr::new("chown"), OsStr::new(user), dst.as_os_str()],
     )?;
     Ok(())
 }

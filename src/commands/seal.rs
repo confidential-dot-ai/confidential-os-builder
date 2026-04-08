@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::manifest::{
-    self, BuildConfig, BuildManifest, FileEntry, Measurement, ManifestInputs, ManifestOutputs,
+    self, BuildConfig, BuildManifest, FileEntry, ManifestInputs, ManifestOutputs, Measurement,
 };
 use crate::{tools, SealArgs};
 
@@ -15,7 +15,10 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
             anyhow::anyhow!("--firmware is required (or set STEEP_FIRMWARE). Pass --skip-igvm to build without IGVM.")
         })?;
         if !fw.exists() {
-            anyhow::bail!("firmware not found: {}. Pass --skip-igvm to build without IGVM.", fw.display());
+            anyhow::bail!(
+                "firmware not found: {}. Pass --skip-igvm to build without IGVM.",
+                fw.display()
+            );
         }
         Some(fw.clone())
     };
@@ -51,7 +54,8 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     let output = args.output.canonicalize()?;
 
     // Inject debug autologin if --debug (enables passwordless root on serial console)
-    let autologin_dir = PathBuf::from("mkosi/base/mkosi.extra/etc/systemd/system/serial-getty@ttyS0.service.d");
+    let autologin_dir =
+        PathBuf::from("mkosi/base/mkosi.extra/etc/systemd/system/serial-getty@ttyS0.service.d");
     let _debug_guard = if args.debug {
         println!("WARNING: --debug enables passwordless root on serial console. Do not use in production.");
         inject_debug_autologin(&autologin_dir)?;
@@ -84,7 +88,9 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
             "--force",
         ],
     )?;
-    let initrd_path = initrd_dir.join("mkosi.output/image.cpio.gz").canonicalize()?;
+    let initrd_path = initrd_dir
+        .join("mkosi.output/image.cpio.gz")
+        .canonicalize()?;
     println!(
         "Initrd: {} ({})",
         initrd_path.display(),
@@ -131,10 +137,11 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         anyhow::bail!("image.roothash not found — check mkosi.conf has SplitArtifacts=roothash");
     }
     tools::sudo_chmod_readable(&roothash_path)?;
-    let roothash = fs_err::read_to_string(&roothash_path)?.trim().to_lowercase();
+    let roothash = fs_err::read_to_string(&roothash_path)?
+        .trim()
+        .to_lowercase();
     let valid_lengths = [64, 96, 128]; // SHA-256, SHA-384, SHA-512
-    if !valid_lengths.contains(&roothash.len())
-        || !roothash.chars().all(|c| c.is_ascii_hexdigit())
+    if !valid_lengths.contains(&roothash.len()) || !roothash.chars().all(|c| c.is_ascii_hexdigit())
     {
         anyhow::bail!(
             "invalid roothash from mkosi: {roothash:?} (expected 64/96/128 hex chars, got {})",
@@ -158,7 +165,8 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         println!("\n=== Step 3/3: Building IGVM ===");
 
         // firmware is guaranteed Some when skip_igvm is false (validated at top)
-        let fw_path = firmware.as_ref()
+        let fw_path = firmware
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("firmware path required for IGVM build"))?;
         let fw_bytes = fs_err::read(fw_path)?;
         let uki_bytes = fs_err::read(&output_uki)?;
@@ -193,19 +201,26 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
             smp: args.smp,
             memory: args.memory.clone(),
             format: "raw".to_string(),
-            platform: if args.skip_igvm { "generic".to_string() } else { "snp".to_string() },
+            platform: if args.skip_igvm {
+                "generic".to_string()
+            } else {
+                "snp".to_string()
+            },
         },
         inputs: ManifestInputs {
             initrd: FileEntry {
                 path: initrd_path.to_string_lossy().to_string(),
                 sha256: manifest::sha256_file(&initrd_path)?,
             },
-            firmware: firmware.as_ref().map(|fw| -> anyhow::Result<FileEntry> {
-                Ok(FileEntry {
-                    path: fw.to_string_lossy().to_string(),
-                    sha256: manifest::sha256_file(fw)?,
+            firmware: firmware
+                .as_ref()
+                .map(|fw| -> anyhow::Result<FileEntry> {
+                    Ok(FileEntry {
+                        path: fw.to_string_lossy().to_string(),
+                        sha256: manifest::sha256_file(fw)?,
+                    })
                 })
-            }).transpose()?,
+                .transpose()?,
             base_image: FileEntry {
                 path: base_abs.to_string_lossy().to_string(),
                 sha256: manifest::sha256_file(&base_abs)?,
@@ -247,7 +262,14 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         println!("  Launch digest: {}", m.snp_launch_digest);
     }
     if args.cloud_init.is_some() {
-        println!("  Cloud-init: measured in verity root{}", if args.bake { " (baked)" } else { " (boot-time)" });
+        println!(
+            "  Cloud-init: measured in verity root{}",
+            if args.bake {
+                " (baked)"
+            } else {
+                " (boot-time)"
+            }
+        );
     }
     if args.debug {
         println!("  Debug:      autologin enabled (NOT for production)");
