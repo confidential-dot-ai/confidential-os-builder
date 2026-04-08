@@ -188,19 +188,31 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         })
     };
 
-    // Copy raw disk image to output
+    // move raw disk image to output
     let disk_path = output.join("disk.raw");
     let base_abs = base_image.canonicalize()?;
     tools::sudo_mv(&base_abs, &disk_path)?;
 
-    println!("\n=== Calculating initrd checksum ===");
+    println!("\n=== Calculating checksums ===");
+    // Read the disk checksum from the mkosi output
+    let mkosi_checksums = fs_err::read(mkosi_output.join("image.SHA256SUMS"))?;
+    let disk_checksum = String::try_from(mkosi_checksums)?
+        .split("\n")
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("bad checksum file"))?
+        .split(" ")
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("bad checksum file"))?
+        .to_owned();
+    println!("disk.raw {}", disk_checksum);
+
+    // calculate the other checksums
     let initrd_hash = manifest::sha256_file(&initrd_path)?;
-    println!("\n=== Calculating disk checksum ===");
-    let disk_checksum = manifest::sha256_file(&disk_path)?;
-    println!("\n=== Calculating igvm checksum ===");
+    println!("initrd   {}", initrd_hash);
     let igvm_hash = manifest::sha256_file(&igvm_path)?;
-    println!("\n=== Calculating uki checksum ===");
+    println!("igvm     {}", igvm_hash);
     let uki_hash = manifest::sha256_file(&output_uki)?;
+    println!("uki      {}", initrd_hash);
 
     println!("\n=== Writing manifest.json ===");
     // Write manifest
