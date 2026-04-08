@@ -193,6 +193,16 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     let base_abs = base_image.canonicalize()?;
     tools::sudo_mv(&base_abs, &disk_path)?;
 
+    println!("\n=== Calculating initrd checksum ===");
+    let initrd_hash = manifest::sha256_file(&initrd_path)?;
+    println!("\n=== Calculating disk checksum ===");
+    let disk_checksum = manifest::sha256_file(&disk_path)?;
+    println!("\n=== Calculating igvm checksum ===");
+    let igvm_hash = manifest::sha256_file(&igvm_path)?;
+    println!("\n=== Calculating uki checksum ===");
+    let uki_hash = manifest::sha256_file(&output_uki)?;
+
+    println!("\n=== Writing manifest.json ===");
     // Write manifest
     let build_manifest = BuildManifest {
         version: 1,
@@ -210,7 +220,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         inputs: ManifestInputs {
             initrd: FileEntry {
                 path: initrd_path.to_string_lossy().to_string(),
-                sha256: manifest::sha256_file(&initrd_path)?,
+                sha256: initrd_hash,
             },
             firmware: firmware
                 .as_ref()
@@ -223,25 +233,25 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
                 .transpose()?,
             base_image: FileEntry {
                 path: base_abs.to_string_lossy().to_string(),
-                sha256: manifest::sha256_file(&disk_path)?,
+                sha256: disk_checksum.to_owned(),
             },
         },
         outputs: ManifestOutputs {
             disk_image: FileEntry {
                 path: disk_path.to_string_lossy().to_string(),
-                sha256: manifest::sha256_file(&disk_path)?,
+                sha256: disk_checksum,
             },
             igvm: if args.skip_igvm {
                 None
             } else {
                 Some(FileEntry {
                     path: igvm_path.to_string_lossy().to_string(),
-                    sha256: manifest::sha256_file(&igvm_path)?,
+                    sha256: igvm_hash,
                 })
             },
             uki: FileEntry {
                 path: output_uki.to_string_lossy().to_string(),
-                sha256: manifest::sha256_file(&output_uki)?,
+                sha256: uki_hash,
             },
         },
         measurement,
