@@ -1,102 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-mkdir -p "$BUILDROOT/var/lib/dpkg"
-mkdir -p "$BUILDROOT/usr/share/keyrings"
-mkdir -p "$BUILDROOT/etc/apt/sources.list.d"
-
-# --bake mode: apply cloud-init at build time so everything lands in the verity root.
-# The sentinel file is created by `steep seal --cloud-init --bake`.
-BAKE_SENTINEL="$BUILDROOT/var/lib/cloud/seed/nocloud/.steep-bake"
-if [ -f "$BAKE_SENTINEL" ]; then
-    echo "steep: bake mode — applying cloud-init in chroot"
-    rm -f "$BAKE_SENTINEL"
-
-    # Set up chroot environment with trap-based cleanup
-    cleanup_mounts() {
-        umount "$BUILDROOT/dev" 2>/dev/null || true
-        umount "$BUILDROOT/sys" 2>/dev/null || true
-        umount "$BUILDROOT/proc" 2>/dev/null || true
-    }
-    trap cleanup_mounts EXIT INT TERM
-
-    mount -t proc proc "$BUILDROOT/proc"
-    mount -t sysfs sysfs "$BUILDROOT/sys"
-    mount --bind /dev "$BUILDROOT/dev"
-    # DNS: the host resolv.conf typically points to 127.0.0.53 (systemd-resolved stub),
-    # which doesn't work in the chroot. Write a public resolver instead.
-    # The finalize script runs in mkosi's sandbox where host tools like resolvectl
-    # may not be available, so we use a known-good public DNS.
-    rm -f "$BUILDROOT/etc/resolv.conf"
-    printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > "$BUILDROOT/etc/resolv.conf"
-    echo "steep: chroot DNS set to 1.1.1.1, 8.8.8.8"
-
-    # Prevent cloud-init from overwriting apt sources with broken "UNAVAILABLE" suites.
-    # Cloud-init can't detect the release codename in a chroot, so it writes garbage.
-    # mkosi already wrote correct sources in resolute.sources.
-    mkdir -p "$BUILDROOT/etc/cloud/cloud.cfg.d"
-    printf "apt_preserve_sources_list: true\n" > "$BUILDROOT/etc/cloud/cloud.cfg.d/99-steep-bake.cfg"
-
-    # Populate apt cache — mkosi installs via dpkg directly, so apt lists are empty.
-    echo "steep: updating apt cache in chroot"
-    if ! chroot "$BUILDROOT" apt-get update -qq 2>&1; then
-        echo "steep: WARNING: apt-get update failed — packages directive will not work" >&2
-    fi
-
-    # Run cloud-init stages:
-    #   init --local: processes NoCloud seed (write_files, etc.)
-    #   init: network-based init (datasource setup)
-    #   modules --mode=config: installs packages, configures services
-    #   modules --mode=final: runs runcmd
-    # Every cloud-init stage must succeed. If any module fails, the build
-    # fails — a "successful" build that silently skipped user setup or SSH
-    # keys is worse than a failed build. If a module can't run in a chroot
-    # (e.g., user creation, SSH key generation), that's a signal to use
-    # boot-time cloud-init instead of --bake.
-    BAKE_ERRORS=0
-    if ! chroot "$BUILDROOT" cloud-init init --local 2>&1; then
-        echo "steep: ERROR: cloud-init init --local failed" >&2
-        BAKE_ERRORS=$((BAKE_ERRORS + 1))
-    fi
-    if ! chroot "$BUILDROOT" cloud-init init 2>&1; then
-        echo "steep: ERROR: cloud-init init failed" >&2
-        BAKE_ERRORS=$((BAKE_ERRORS + 1))
-    fi
-    if ! chroot "$BUILDROOT" cloud-init modules --mode=config 2>&1; then
-        echo "steep: ERROR: cloud-init modules --mode=config failed" >&2
-        BAKE_ERRORS=$((BAKE_ERRORS + 1))
-    fi
-    if ! chroot "$BUILDROOT" cloud-init modules --mode=final 2>&1; then
-        echo "steep: ERROR: cloud-init modules --mode=final failed" >&2
-        BAKE_ERRORS=$((BAKE_ERRORS + 1))
-    fi
-    # Dump cloud-init logs for debugging
-    if [ -f "$BUILDROOT/var/log/cloud-init.log" ]; then
-        echo "steep: === cloud-init.log (last 40 lines) ==="
-        tail -40 "$BUILDROOT/var/log/cloud-init.log"
-    fi
-
-    # Clean all cloud-init state so it doesn't re-run at boot.
-    # Without --seed, semaphore files persist and boot-time cloud-init skips modules.
-    chroot "$BUILDROOT" cloud-init clean || true
-
-    # Remove bake-only config so it doesn't affect boot-time cloud-init
-    rm -f "$BUILDROOT/etc/cloud/cloud.cfg.d/99-steep-bake.cfg"
-
-    # Restore resolv.conf symlink for systemd-resolved at boot
-    rm -f "$BUILDROOT/etc/resolv.conf"
-    ln -s ../run/systemd/resolve/stub-resolv.conf "$BUILDROOT/etc/resolv.conf"
-
-    # Mounts are cleaned up by the EXIT trap
-
-    if [ "$BAKE_ERRORS" -gt 0 ]; then
-        echo "steep: bake failed with $BAKE_ERRORS error(s) — see output above" >&2
-        exit 1
-    fi
-    echo "steep: bake complete"
-fi
-
-# --- Reproducibility cleanup (MUST run last, after bake) ---
 # Empty machine-id so it doesn't vary between builds
 # (systemd regenerates on first boot if empty)
 : > "$BUILDROOT/etc/machine-id"
@@ -125,4 +29,3 @@ rm -f "$BUILDROOT/efi/loader/random-seed"
 
 # Remove cargo cache if present (non-deterministic)
 rm -rf "$BUILDROOT/root/.cargo"
-# --- End reproducibility cleanup ---

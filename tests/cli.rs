@@ -9,18 +9,15 @@ fn test_help_shows_subcommands() {
         .stdout(predicates::str::contains("seal"))
         .stdout(predicates::str::contains("run"))
         .stdout(predicates::str::contains("cloud-init"));
- }
+}
 
- #[test]
- fn test_cloud_init_fails_with_missing_dir() {
-     let mut cmd = Command::cargo_bin("steep").unwrap();
-     cmd.args([
-         "cloud-init",
-         "/nonexistent/dir",
-     ])
-     .assert()
-     .failure()
-     .stderr(predicates::str::contains("not found"));
+#[test]
+fn test_cloud_init_fails_with_missing_dir() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["cloud-init", "/nonexistent/dir"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not found"));
 }
 
 #[test]
@@ -67,8 +64,7 @@ fn test_seal_skip_igvm_flag() {
         .assert()
         .success()
         .stdout(predicates::str::contains("skip-igvm"))
-        .stdout(predicates::str::contains("cloud-init"))
-        .stdout(predicates::str::contains("bake"));
+        .stdout(predicates::str::contains("cloud-init"));
 }
 
 #[test]

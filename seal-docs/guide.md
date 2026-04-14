@@ -45,14 +45,6 @@ steep seal --skip-igvm --cloud-init config.yaml -o output/my-image
 
 Everything except `guest.igvm`. Platform is `generic` instead of `snp`.
 
-### Bake mode
-
-```bash
-steep seal --cloud-init config.yaml --bake -o output/my-image
-```
-
-Executes cloud-init at build time in a chroot. See [Bake Mode](#bake-mode) below for limitations.
-
 ### Debug mode
 
 ```bash
@@ -130,43 +122,6 @@ Properties:
 
 This is the production path and the reproducibility target.
 
-### Bake Mode
-
-Bake mode executes cloud-init at build time inside a chroot, so the results land in the verity root and are measured.
-
-Properties:
-- Not reproducible. Live apt fetches, compilation non-determinism, and cloud-init state vary between runs. Verified via artifact signing.
-- Partial module support (see tables below).
-- Attestation proves "this VM contains the exact results of running X."
-
-**What works in bake mode**
-
-| Module | Notes |
-|--------|-------|
-| `write_files` | Writes bytes to paths, no system dependencies. Most reliable bake module. |
-| `packages` | apt works in chroot (network available, DNS set to 1.1.1.1/8.8.8.8) |
-| `runcmd` | Arbitrary commands work if they don't depend on running services |
-| `apt` (sources, repos, keys) | Operates on filesystem directly |
-
-**What fails in bake mode**
-
-| Module | Why |
-|--------|-----|
-| `users` / `groups` | useradd/groupadd fail without PAM/nsswitch in chroot |
-| `ssh_authorized_keys` | Depends on the user existing first |
-| `ssh_host_keys` | ssh-keygen fails without /dev/urandom in chroot |
-| `locale` | locale-gen not available |
-| `growpart` / `resizefs` | No real block devices in chroot |
-| Any service-dependent module | No running systemd, dbus, or services |
-
-**Rule of thumb.** Use `--bake` for pre-installing packages and writing config files. Use boot-time cloud-init for user setup, SSH keys, and service configuration.
-
-**Bake failures are fatal.** If any cloud-init stage fails during bake, the build fails. A "successful" build that silently skipped user setup or SSH keys is worse than a failed build. The four stages run in order: `init --local`, `init`, `modules --mode=config`, `modules --mode=final`.
-
-**Trust model.** `--bake` executes user-data as root on the build machine inside a chroot with bind-mounted `/dev`. The user-data is trusted. Network access is available. Bake mode is for operator-authored configs only. The real risk is runcmd execution as root, not the /dev bind-mount. A CLI warning is emitted when `--bake` is used. Proper sandboxing (systemd-nspawn, bubblewrap) is not implemented; revisit if bake becomes a production path.
-
-**Heavy builds.** Cargo builds in chroot can exhaust system RAM and OOM-kill the process. Use `CARGO_BUILD_JOBS=1` or `-j2` in runcmd.
-
 ### Nftables / firewall
 
 Firewall rules are user-controlled via cloud-init, not injected by steep.
@@ -179,8 +134,6 @@ write_files:
 runcmd:
   - systemctl enable nftables
 ```
-
-With `--bake`, the rules are sealed into the verity root and measured.
 
 ---
 

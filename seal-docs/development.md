@@ -10,8 +10,6 @@ Remote attestation requires a verifier to compare a hardware-signed measurement 
 
 Boot-time cloud-init images (the production target) are bit-identical across builds. The same mkosi config + cloud-init YAML produces the same roothash, UKI hash, and IGVM measurement every time.
 
-Bake-mode images are not reproducible and are not intended to be. They are verified via artifact signing instead of reproduction.
-
 ### Sources of non-determinism we fixed
 
 | Source | Layer | Fix |
@@ -33,8 +31,6 @@ Bake-mode images are not reproducible and are not intended to be. They are verif
 **ext4 hash_seed is the critical variable.** Even with `SOURCE_DATE_EPOCH=0` and a fixed `Seed=`, ext4 filesystems differ because `mkfs.ext4` generates a random Directory Hash Seed on each invocation. This seed is used for HTree directory indexing and changes the on-disk layout. The fix passes `-E hash_seed=<fixed-uuid>` to mkfs.ext4 via the `SYSTEMD_REPART_MKFS_OPTIONS_EXT4` environment variable. This variable is undocumented for ext4 in `repart.d(5)` but the `mkfs_options_from_env` function constructs the variable name dynamically from the filesystem type. Confirmed working on systemd 257.
 
 **mkosi Environment= splits on spaces.** mkosi's `Environment=` config option splits values on spaces ([systemd/mkosi#2962](https://github.com/systemd/mkosi/issues/2962)). This breaks `-E hash_seed=...` because the flag and value become separate tokens. The fix uses `EnvironmentFiles=mkosi.env` which reads KEY=VALUE format without splitting.
-
-**Finalize script ordering matters.** The reproducibility cleanup (truncate machine-id, delete logs/caches) must run after the bake block in `mkosi.finalize`. The bake block runs `apt-get update`, `cloud-init init`, etc., all of which recreate the files being cleaned.
 
 ### Apt snapshot pinning
 
@@ -82,7 +78,7 @@ Verifier checks:
   4. (Optional) Verifier reproduces base image to confirm toolchain integrity
 ```
 
-Base image reproducibility serves as an audit mechanism. The baked layer is verified via artifact signing. This follows the same model as Constellation (Edgeless Systems).
+Base image reproducibility serves as an audit mechanism. This follows the same model as Constellation (Edgeless Systems).
 
 ### How others solve this
 
@@ -98,25 +94,13 @@ Base image reproducibility serves as an audit mechanism. The baked layer is veri
 
 ## Design Decisions
 
-### Boot-time cloud-init is the production path, not bake
+### Boot-time cloud-init is the production path
 
-Bake mode runs cloud-init in a chroot without systemd, PAM, user management, or SSH key generation. Half the cloud-init modules fail. Boot-time cloud-init runs in a fully booted system where everything works. The tradeoff is that boot-time attestation proves "this VM was told to do X" not "X happened." For most deployments, the boot-time guarantee is sufficient since the operator trusts their own config.
-
-### Reproducibility targets boot-time images only
-
-Bake mode involves live apt fetches, non-deterministic compilation, and cloud-init runtime state. Making this reproducible would require Nix-pinned toolchains, `CARGO_BUILD_JOBS=1`, `--remap-path-prefix`, and frozen apt snapshots inside the chroot. Significant complexity for a non-production path.
+Boot-time cloud-init runs in a fully booted system where everything works. The tradeoff is that boot-time attestation proves "this VM was told to do X" not "X happened." For most deployments, the boot-time guarantee is sufficient since the operator trusts their own config.
 
 ### Firewall rules via cloud-init, not steep code
 
 The original `nftables.rs` injected `output policy drop`, silently breaking all outbound traffic including cloud-init's ability to reach the internet. Firewall policy is deployment-specific and doesn't belong in the image builder. Users declare rules in their cloud-init config.
-
-### Bake failures are fatal, not warnings
-
-A "successful" build that silently skipped user setup or SSH keys is worse than a failed build. The operator gets a measured, sealed image with missing content and no indication anything went wrong. If a module can't run in a chroot, use boot-time cloud-init instead.
-
-### No chroot sandboxing for bake mode
-
-The /dev bind-mount is not the real risk. runcmd execution as root is. The user-data is a trusted input authored by the operator. Proper sandboxing is significant effort for a non-production path. A CLI warning is emitted. Revisit if bake becomes production or untrusted user-data needs support.
 
 ### ext4 hash_seed via environment variable
 
@@ -183,13 +167,10 @@ dm-verity requires direct block access. Raw images are simpler, have no format-s
 ### Reproducible builds
 - Identified 8+ sources of non-determinism in mkosi builds and fixed all of them
 - Discovered and worked around mkosi Environment= space-splitting bug using EnvironmentFiles=
-- Created mkosi.finalize reproducibility cleanup with correct ordering (after bake)
 - Added initrd reproducibility (SourceDateEpoch, Seed, finalize script)
 - Pinned apt mirror to Ubuntu snapshot service
 
 ### Cloud-init
-- Fixed DNS, apt source corruption, and empty apt lists in bake chroot
-- Made all bake cloud-init stage failures fatal
 - Changed cloud-init clean to full cleanup (was --logs only, left semaphore files)
 - Removed nftables.rs (was silently breaking cloud-init networking)
 - Fixed CloudInitCleanup::drop off-by-one

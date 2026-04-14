@@ -58,34 +58,29 @@ pub struct SealArgs {
     pub output: PathBuf,
 
     /// Path to cloud-init user-data file to include in the image
-    #[arg(long)]
+    #[arg()]
     pub cloud_init: Option<PathBuf>,
-
-    /// Pre-apply cloud-init at build time (chroot + cloud-init before verity).
-    /// Without this flag, cloud-init runs at boot from the measured config.
-    #[arg(long, requires = "cloud_init")]
-    pub bake: bool,
 
     /// Enable debug console (passwordless root autologin on serial).
     /// WARNING: In the SNP threat model, the host controls the serial port.
     /// This changes the image measurement.
-    #[arg(long)]
-    pub debug: bool,
+    #[arg(long, verbatim_doc_comment)]
+    pub console: bool,
 
     /// Skip IGVM generation (produce only disk + UKI, no SNP measurement)
     #[arg(long)]
     pub skip_igvm: bool,
 
-    /// Path to OVMF firmware binary (required unless --skip-igvm)
-    #[arg(long, env = "STEEP_FIRMWARE")]
-    pub firmware: Option<PathBuf>,
+    /// Path to OVMF firmware binary
+    #[arg(long, env = "STEEP_FIRMWARE", default_value = "output/OVMF.fd")]
+    pub firmware: PathBuf,
 
     /// RAM for VM (QEMU-style suffix, e.g. "4G")
     #[arg(long, default_value = "4G")]
     pub memory: String,
 
     /// Number of vCPUs
-    #[arg(long, default_value = "1")]
+    #[arg(long, default_value = "2")]
     pub smp: u32,
 }
 

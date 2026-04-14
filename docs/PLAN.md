@@ -3,9 +3,8 @@
 - [ ] merge steep seal command into build command
 - [x] create GHA pipeline to build base image
 - [x] push base image into GHCR after builds
-- [ ] add jobs for pre-baked cloud-init images
-- [x] add k8s base image pre-baked and pushed to GHCR
-- [ ] add kettle builder service pre-baked image pushed to GHCR
+- [x] add k8s base image and pushed to GHCR
+- [ ] add kettle builder service image pushed to GHCR
 
 ## Base image
 

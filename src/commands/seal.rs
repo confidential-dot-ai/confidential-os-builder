@@ -11,16 +11,14 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     let firmware = if args.skip_igvm {
         None
     } else {
-        let fw = args.firmware.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("--firmware is required (or set STEEP_FIRMWARE). Pass --skip-igvm to build without IGVM.")
-        })?;
+        let fw = args.firmware.clone();
         if !fw.exists() {
             anyhow::bail!(
                 "firmware not found: {}. Pass --skip-igvm to build without IGVM.",
                 fw.display()
             );
         }
-        Some(fw.clone())
+        Some(fw)
     };
 
     // Validate memory format before it reaches QEMU arg interpolation
@@ -56,10 +54,10 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     // Inject debug autologin if --debug (enables passwordless root on serial console)
     let autologin_dir =
         PathBuf::from("mkosi/base/mkosi.extra/etc/systemd/system/serial-getty@ttyS0.service.d");
-    let _debug_guard = if args.debug {
-        println!("WARNING: --debug enables passwordless root on serial console. Do not use in production.");
-        inject_debug_autologin(&autologin_dir)?;
-        Some(DebugCleanup { dir: autologin_dir })
+    let _console_guard = if args.console {
+        println!("WARNING: --console enables passwordless root on serial console. Do not use in production.");
+        inject_console_autologin(&autologin_dir)?;
+        Some(ConsoleCleanup { dir: autologin_dir })
     } else {
         None
     };
@@ -67,7 +65,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     // Inject cloud-init user-data into mkosi.extra seed directory (measured in verity root)
     let seed_dir = PathBuf::from("mkosi/base/mkosi.extra/var/lib/cloud/seed/nocloud");
     let _cloud_init_guard = if let Some(ref ci) = args.cloud_init {
-        inject_cloud_init(ci, &seed_dir, args.bake)?;
+        inject_cloud_init(ci, &seed_dir)?;
         Some(CloudInitCleanup { seed_dir })
     } else {
         None
@@ -289,16 +287,9 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         println!("  Launch digest: {}", m.snp_launch_digest);
     }
     if args.cloud_init.is_some() {
-        println!(
-            "  Cloud-init: measured in verity root{}",
-            if args.bake {
-                " (baked)"
-            } else {
-                " (boot-time)"
-            }
-        );
+        println!("  Cloud-init: measured in verity root");
     }
-    if args.debug {
+    if args.console {
         println!("  Debug:      autologin enabled (NOT for production)");
     }
     println!("===============================");
@@ -308,7 +299,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
 
 /// Inject a systemd drop-in that enables passwordless root autologin on ttyS0.
 /// Only used with --debug; changes the image measurement.
-fn inject_debug_autologin(dir: &Path) -> anyhow::Result<()> {
+fn inject_console_autologin(dir: &Path) -> anyhow::Result<()> {
     fs_err::create_dir_all(dir)?;
     fs_err::write(
         dir.join("autologin.conf"),
@@ -318,11 +309,11 @@ fn inject_debug_autologin(dir: &Path) -> anyhow::Result<()> {
 }
 
 /// RAII guard to clean up debug autologin drop-in after mkosi build.
-struct DebugCleanup {
+struct ConsoleCleanup {
     dir: PathBuf,
 }
 
-impl Drop for DebugCleanup {
+impl Drop for ConsoleCleanup {
     fn drop(&mut self) {
         let _ = fs_err::remove_dir_all(&self.dir);
     }
@@ -330,8 +321,7 @@ impl Drop for DebugCleanup {
 
 /// Inject cloud-init user-data into the mkosi.extra seed directory.
 /// The NoCloud datasource picks up user-data from /var/lib/cloud/seed/nocloud/.
-/// When bake=true, a sentinel file is also written so mkosi.finalize runs cloud-init.
-fn inject_cloud_init(user_data: &Path, seed_dir: &Path, bake: bool) -> anyhow::Result<()> {
+fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
     fs_err::create_dir_all(seed_dir)?;
 
     // Copy user-data
@@ -343,13 +333,7 @@ fn inject_cloud_init(user_data: &Path, seed_dir: &Path, bake: bool) -> anyhow::R
         "instance-id: steep-sealed\nlocal-hostname: steep\n",
     )?;
 
-    if bake {
-        // Sentinel tells mkosi.finalize to run cloud-init in chroot
-        fs_err::write(seed_dir.join(".steep-bake"), "")?;
-        println!("Cloud-init: will be applied at build time (--bake)");
-    } else {
-        println!("Cloud-init: config measured in image, will run at boot");
-    }
+    println!("Cloud-init: config measured in image, will run at boot");
 
     Ok(())
 }

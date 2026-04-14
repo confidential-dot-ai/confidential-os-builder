@@ -8,9 +8,9 @@ Before this work, two consecutive `steep seal` runs with identical config produc
 
 ## Our Approach
 
-We achieve **bit-identical base images** from mkosi. The base image (Ubuntu + stock packages, no bake) produces the same roothash and UKI SHA256 across consecutive builds. This gives us a reproducible foundation.
+We achieve **bit-identical base images** from mkosi. The base image (Ubuntu + stock packages) produces the same roothash and UKI SHA256 across consecutive builds. This gives us a reproducible foundation.
 
-For baked images (cloud-init with packages, custom binaries, runcmd), we publish the artifact and its signed measurement rather than requiring users to reproduce the bake. This follows the same model as Constellation (Edgeless Systems) and is the standard approach in confidential computing deployments.
+This follows the same model as Constellation (Edgeless Systems) and is the standard approach in confidential computing deployments.
 
 ### Trust model
 
@@ -22,7 +22,7 @@ Verifier checks:
   4. (Optional) Verifier reproduces base image to confirm our toolchain is honest ✓
 ```
 
-The base image reproducibility serves as an **audit mechanism** — anyone can rebuild it to verify we aren't shipping a tampered base. The baked layer on top is verified via artifact signing rather than reproduction.
+The base image reproducibility serves as an **audit mechanism** — anyone can rebuild it to verify we aren't shipping a tampered base.
 
 ## What We Changed (Layer 0)
 
@@ -44,7 +44,7 @@ The base image reproducibility serves as an **audit mechanism** — anyone can r
 
 ### mkosi.finalize
 
-Reproducibility cleanup runs **after** the bake block (ordering matters — bake recreates logs/caches):
+Reproducibility cleanup:
 - Truncate `/etc/machine-id` and `/var/lib/dbus/machine-id`
 - Delete dpkg/apt/alternatives logs, journal dir
 - Delete apt cache, ldconfig aux-cache, man cache
@@ -64,23 +64,10 @@ Reproducibility cleanup runs **after** the bake block (ordering matters — bake
 | apt cache (timestamps in binary cache) | Deleted in finalize |
 | `Incremental=true` (stale cache) | Set to `false` |
 
-## What's NOT Reproducible (and doesn't need to be)
-
-Baked images (cloud-init with `--bake`) are not reproducible across independent builds because:
-
-- **apt mirrors change over time** — package metadata and versions drift. Pinning to a snapshot mirror (e.g., `https://snapshot.ubuntu.com/ubuntu/<timestamp>`) would help but adds operational complexity.
-- **Compilation is non-deterministic** — Rust's hash randomization, parallel codegen ordering, and linker section layout produce different binaries from identical source. Fixing this requires `CARGO_BUILD_JOBS=1`, `--remap-path-prefix`, and pinned toolchains.
-- **Cloud-init is stateful** — logs, cache files, and runtime state vary between runs even with identical config.
-
-These are verified via artifact signing instead.
-
 ## Open Questions
 
 **Will adding packages to the base image break reproducibility?**
 Adding packages to `Packages=` in mkosi.conf should remain reproducible as long as the same package versions are installed (same apt mirror state). The finalize cleanup handles the logs and caches that package installation creates. This needs testing.
-
-**Will adding cloud-init config (boot-only, no bake) break reproducibility?**
-Boot-only mode injects the cloud-init YAML as a static file into the verity root. Static files with clamped mtimes should be deterministic. This needs testing.
 
 ## How Others Solve This
 

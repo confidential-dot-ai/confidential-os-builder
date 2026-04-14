@@ -391,7 +391,6 @@ Key mkosi directories:
 - `mkosi.conf` — the build config (distro, packages, output format)
 - `mkosi.extra/` — files overlaid into the image (like `etc/hostname`, systemd presets)
 - `mkosi.repart/` — partition definitions (using systemd-repart)
-- `mkosi.finalize` — script that runs after the image is assembled (we use it for --bake mode cloud-init)
 
 ---
 
