@@ -125,8 +125,6 @@ pub struct PublishArgs {
 }
 
 pub mod commands {
-    pub mod base;
-    pub mod cloud_init;
     pub mod igvm;
     pub mod kernel;
     pub mod publish;

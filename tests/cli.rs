@@ -7,17 +7,7 @@ fn test_help_shows_subcommands() {
         .assert()
         .success()
         .stdout(predicates::str::contains("seal"))
-        .stdout(predicates::str::contains("run"))
-        .stdout(predicates::str::contains("cloud-init"));
-}
-
-#[test]
-fn test_cloud_init_fails_with_missing_dir() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args(["cloud-init", "/nonexistent/dir"])
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("not found"));
+        .stdout(predicates::str::contains("run"));
 }
 
 #[test]

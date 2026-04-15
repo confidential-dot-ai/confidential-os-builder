@@ -1,6 +1,6 @@
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
-use steep::{commands, BaseArgs, CloudInitArgs, IgvmArgs, KernelArgs, PublishArgs, RunArgs, SealArgs};
+use steep::{commands, IgvmArgs, KernelArgs, PublishArgs, RunArgs, SealArgs};
 
 #[derive(Parser)]
 #[command(name = "steep", about = "Confidential VM image builder")]
@@ -17,12 +17,7 @@ enum Commands {
     /// Build the hardened custom kernel (internal)
     #[command(hide = true)]
     Kernel(KernelArgs),
-    /// Build the security-hardened base image (internal)
-    #[command(hide = true)]
-    Base(BaseArgs),
-    /// Build a CVM image with cloud-init configuration
-    CloudInit(CloudInitArgs),
-    /// Seal base image with dm-verity, UKI, and IGVM for measured boot
+    /// Build base image with dm-verity, UKI, and IGVM for measured boot
     Seal(SealArgs),
     /// Generate IGVM files for additional SMP counts from a sealed output
     Igvm(IgvmArgs),
@@ -54,8 +49,6 @@ fn main() -> anyhow::Result<()> {
 
     match &cli.command {
         Commands::Kernel(args) => commands::kernel::run(args),
-        Commands::Base(args) => commands::base::run(args),
-        Commands::CloudInit(args) => commands::cloud_init::run(args),
         Commands::Seal(args) => commands::seal::run(args),
         Commands::Igvm(args) => commands::igvm::run(args),
         Commands::Publish(args) => commands::publish::run(args),

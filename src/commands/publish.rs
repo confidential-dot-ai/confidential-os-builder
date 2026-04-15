@@ -55,7 +55,11 @@ pub fn run(args: &PublishArgs) -> anyhow::Result<()> {
     }
 
     // Build IGVM companion image if --igvm flag is set and files exist.
-    let igvm_files = if args.igvm { find_igvm_files(&args.dir) } else { Vec::new() };
+    let igvm_files = if args.igvm {
+        find_igvm_files(&args.dir)
+    } else {
+        Vec::new()
+    };
     let igvm_refs = if !igvm_files.is_empty() {
         let igvm_base = format!("{}/{}-igvm", args.registry, args.name);
         let igvm_ref = format!("{igvm_base}:{tag}");
@@ -139,7 +143,7 @@ fn find_igvm_files(dir: &Path) -> Vec<PathBuf> {
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
-            p.extension().map_or(false, |ext| ext == "igvm")
+            p.extension().is_some_and(|ext| ext == "igvm")
                 && p.file_name()
                     .unwrap()
                     .to_string_lossy()
