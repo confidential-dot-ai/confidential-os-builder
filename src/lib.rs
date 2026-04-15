@@ -103,11 +103,34 @@ pub struct IgvmArgs {
     pub firmware: PathBuf,
 }
 
+#[derive(clap::Args)]
+pub struct PublishArgs {
+    /// Sealed output directory (from steep seal)
+    pub dir: PathBuf,
+
+    /// OCI registry (e.g. ghcr.io/lunal-dev)
+    #[arg(long, default_value = "ghcr.io/lunal-dev")]
+    pub registry: String,
+
+    /// Image name
+    #[arg(long, default_value = "base-cpu-image")]
+    pub name: String,
+
+    /// Image tag (default: sha-<disk hash> from manifest)
+    #[arg(long)]
+    pub tag: Option<String>,
+
+    /// Push to registry after building
+    #[arg(long)]
+    pub push: bool,
+}
+
 pub mod commands {
     pub mod base;
     pub mod cloud_init;
     pub mod igvm;
     pub mod kernel;
+    pub mod publish;
     pub mod run;
     pub mod seal;
 }
