@@ -54,14 +54,61 @@ pub fn run(args: &PublishArgs) -> anyhow::Result<()> {
         refs.push(latest_ref);
     }
 
+    // Build IGVM companion image if --igvm flag is set and files exist.
+    let igvm_files = if args.igvm { find_igvm_files(&args.dir) } else { Vec::new() };
+    let igvm_refs = if !igvm_files.is_empty() {
+        let igvm_base = format!("{}/{}-igvm", args.registry, args.name);
+        let igvm_ref = format!("{igvm_base}:{tag}");
+
+        let mut dockerfile_content = String::from("FROM scratch\n");
+        for f in &igvm_files {
+            let name = f.file_name().unwrap().to_string_lossy();
+            dockerfile_content.push_str(&format!("COPY {name} /igvm/\n"));
+        }
+
+        let igvm_dockerfile = build_ctx.join("Dockerfile.igvm");
+        fs_err::write(&igvm_dockerfile, &dockerfile_content)?;
+        let _igvm_guard = CleanupFile(igvm_dockerfile.clone());
+
+        let count = igvm_files.len();
+        println!("\nBuilding IGVM artifact image: {igvm_ref}");
+        println!("  files: {count} IGVM files");
+
+        tools::run_command_streaming(
+            container_tool,
+            &[
+                "build",
+                "-t",
+                &igvm_ref,
+                "-f",
+                &igvm_dockerfile.to_string_lossy(),
+                &build_ctx.to_string_lossy(),
+            ],
+        )?;
+
+        let mut igvm_refs = vec![igvm_ref];
+        if tag != "latest" {
+            let igvm_latest = format!("{igvm_base}:latest");
+            tools::run_command_streaming(container_tool, &["tag", &igvm_refs[0], &igvm_latest])?;
+            println!("Tagged: {igvm_latest}");
+            igvm_refs.push(igvm_latest);
+        }
+        igvm_refs
+    } else {
+        Vec::new()
+    };
+
     if args.push {
-        for r in &refs {
+        for r in refs.iter().chain(igvm_refs.iter()) {
             println!("Pushing {r}");
             tools::run_command_streaming(container_tool, &["push", r])?;
             println!("Published: {r}");
         }
     } else {
         println!("\nImage built locally: {}", refs[0]);
+        if !igvm_refs.is_empty() {
+            println!("IGVM image built locally: {}", igvm_refs[0]);
+        }
         println!("Run with --push to push to registry.");
     }
 
@@ -83,6 +130,24 @@ fn find_container_tool() -> anyhow::Result<&'static str> {
     } else {
         anyhow::bail!("neither docker nor podman found in PATH")
     }
+}
+
+fn find_igvm_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().map_or(false, |ext| ext == "igvm")
+                && p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("guest-smp")
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 struct CleanupFile(PathBuf);

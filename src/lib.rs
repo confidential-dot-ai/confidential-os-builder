@@ -123,6 +123,10 @@ pub struct PublishArgs {
     /// Push to registry after building
     #[arg(long)]
     pub push: bool,
+
+    /// Also publish IGVM files as a companion artifact image (<name>-igvm)
+    #[arg(long)]
+    pub igvm: bool,
 }
 
 pub mod commands {
