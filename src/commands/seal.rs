@@ -209,10 +209,15 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     // calculate the other checksums
     let initrd_hash = manifest::sha256_file(&initrd_path)?;
     println!("initrd   {}", initrd_hash);
-    let igvm_hash = manifest::sha256_file(&igvm_path)?;
-    println!("igvm     {}", igvm_hash);
+    let igvm_hash = if args.skip_igvm {
+        String::new()
+    } else {
+        let h = manifest::sha256_file(&igvm_path)?;
+        println!("igvm     {}", h);
+        h
+    };
     let uki_hash = manifest::sha256_file(&output_uki)?;
-    println!("uki      {}", initrd_hash);
+    println!("uki      {}", uki_hash);
 
     println!("\n=== Writing manifest.json ===");
     // Write manifest

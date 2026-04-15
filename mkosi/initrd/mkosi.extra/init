@@ -65,18 +65,46 @@ mkdir -p /sysroot-lower /sysroot-upper /sysroot
 mount -o ro /dev/mapper/root /sysroot-lower
 echo "initrd: verified root mounted (read-only)"
 
-# Set up overlayfs: writable upper on tmpfs, verified lower via dm-verity
-mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
-mkdir -p /sysroot-upper/upper /sysroot-upper/work
-mount -t overlay overlay \
-    -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
-    /sysroot
-echo "initrd: overlayfs mounted (writes go to tmpfs, reads verified by dm-verity)"
+# Try to mount a persistent data disk for the overlay upper layer.
+# Look for a virtio disk with LABEL=data (typically vdb).
+# Fall back to tmpfs if no data disk is found (writes lost on reboot).
+DATA_DEV=""
+for dev in /dev/vdb /dev/vdc /dev/vdd; do
+    if [ -e "$dev" ]; then
+        LABEL=$(blkid -s LABEL -o value "$dev" 2>/dev/null || true)
+        if [ "$LABEL" = "data" ]; then
+            DATA_DEV="$dev"
+            break
+        fi
+    fi
+done
+
+if [ -n "$DATA_DEV" ]; then
+    echo "initrd: found data disk at $DATA_DEV"
+    mkdir -p /mnt/data
+    mount "$DATA_DEV" /mnt/data
+    mkdir -p /mnt/data/overlay/upper /mnt/data/overlay/work
+    mount -t overlay overlay \
+        -o lowerdir=/sysroot-lower,upperdir=/mnt/data/overlay/upper,workdir=/mnt/data/overlay/work \
+        /sysroot
+    # Bind-mount data disk into the final root so it's at /data after switch_root
+    mkdir -p /sysroot/data
+    mount --bind /mnt/data /sysroot/data
+    echo "initrd: overlayfs mounted (persistent, backed by $DATA_DEV at /data)"
+else
+    echo "initrd: WARNING: no data disk found, using tmpfs (writes lost on reboot)"
+    mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
+    mkdir -p /sysroot-upper/upper /sysroot-upper/work
+    mount -t overlay overlay \
+        -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
+        /sysroot
+fi
+echo "initrd: overlayfs ready"
 
 # Minimal runtime directories
 mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
 
-# Generate unique machine-id for this boot (overlay — does not persist)
+# Generate unique machine-id for this boot
 cat /proc/sys/kernel/random/uuid | tr -d '-' > /sysroot/etc/machine-id
 
 echo "initrd: switching root..."
