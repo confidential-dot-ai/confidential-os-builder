@@ -1,6 +1,6 @@
 # Steep Seal Documentation
 
-Steep is a confidential VM image builder for AMD SEV-SNP. It produces bit-identical, attestable disk images from declarative configuration. The `seal` command builds a dm-verity protected root filesystem, bundles it into a Unified Kernel Image (UKI), and optionally wraps it in an IGVM for measured launch on SNP hardware.
+
 
 | Document | What it covers |
 |----------|---------------|
@@ -38,10 +38,9 @@ Change one file in the root filesystem and the roothash changes, which changes t
 ## Output Artifacts
 
 ```
-output/<name>/
-  disk.raw         GPT disk image (ESP + root + verity partitions)
-  uki.efi          Unified Kernel Image
-  roothash         SHA-256 hex string of the root filesystem
-  manifest.json    Build metadata with hashes, platform, measurement
-  guest.igvm       IGVM file (only with --firmware and --igvm-tools)
+disk.raw         GPT disk image (ESP + root + verity partitions)
+uki.efi          Unified Kernel Image
+roothash         SHA-256 hex string of the root filesystem
+manifest.json    Build metadata with hashes, platform, measurement
+guest.igvm       IGVM file (optional)
 ```

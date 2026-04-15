@@ -52,12 +52,12 @@ pub struct RunArgs {
 }
 
 #[derive(clap::Args)]
-pub struct SealArgs {
+pub struct BuildArgs {
     /// Output directory for sealed artifacts (IGVM, UKI, manifest, disk)
-    #[arg(short, long, default_value = "output/sealed")]
+    #[arg(short, long, default_value = "output/image")]
     pub output: PathBuf,
 
-    /// Path to cloud-init user-data file to include in the image
+    /// Path to cloud-init user-data file to optionally include in the image
     #[arg()]
     pub cloud_init: Option<PathBuf>,
 
@@ -100,7 +100,7 @@ pub struct IgvmArgs {
 
 #[derive(clap::Args)]
 pub struct PublishArgs {
-    /// Sealed output directory (from steep seal)
+    /// Directory to push (output from `steep build`)
     pub dir: PathBuf,
 
     /// OCI registry (e.g. ghcr.io/lunal-dev)
@@ -108,20 +108,12 @@ pub struct PublishArgs {
     pub registry: String,
 
     /// Image name
-    #[arg(long, default_value = "base-cpu-image")]
-    pub name: String,
-
-    /// Image tag (default: sha-<disk hash> from manifest)
     #[arg(long)]
-    pub tag: Option<String>,
+    pub name: Option<String>,
 
-    /// Push to registry after building
-    #[arg(long)]
-    pub push: bool,
-
-    /// Also publish IGVM files as a companion artifact image (<name>-igvm)
-    #[arg(long)]
-    pub igvm: bool,
+    /// Image tag
+    #[arg(long, default_value = "latest")]
+    pub tag: String,
 }
 
 pub mod commands {

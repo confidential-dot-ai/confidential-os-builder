@@ -1,13 +1,29 @@
 # 🍵 steep, secure VM image builder
 
+Steep is a confidential VM image builder for AMD SEV-SNP. It produces
+bit-identical, attestable disk images from declarative configuration. The `build`
+command builds a dm-verity protected root filesystem, bundles it into a Unified
+Kernel Image (UKI), and optionally wraps it in an IGVM for measured launch on
+SNP hardware.
+
+| Document | What it covers |
+|----------|---------------|
+| [Concepts](docs/CONCEPTS.md) | Architecture, boot steps, image structure to ensure security |
+| [Reproducibility](docs/REPRODUCIBILITY.md.md) | Changes needed, prior art, comparisons to other work |
+
 ## Running steep-built VMs
 
-You can use the base images built by `steep` without even installing it yourself.
+You can use the base images built by `steep` without installing the tool.
 
 ```
 mkdir steep-base; cd steep-base
 oras pull ghcr.io/lunal-dev/steep/base:latest
-qemu-system-x86_64 -machine q35 -drive if=pflash,format=raw,readonly=on,file=OVMF.fd -kernel uki.efi -drive file=disk.raw,format=raw,if=virtio -smp 1 -m 4G -nographic
+qemu-system-x86_64 \
+  -machine q35 \
+  -kernel uki.efi \
+  -drive if=pflash,format=raw,readonly=on,file=OVMF.fd \
+  -drive file=disk.raw,format=raw,if=virtio \
+  -smp 1 -m 4G -nographic
 ```
 
 ## Installation
@@ -22,30 +38,71 @@ bin/setup
 
 ## Usage
 
-### 1. Build the base image
+### 1. Build a base VM image
 
 ```bash
-steep base
+steep build
 ```
 
-Steep uses mkosi to build a base image for Ubuntu 26.04 (Resolute Raccoon).
+Steep uses `mkosi` to build base image for Ubuntu 26.04 (Resolute Raccoon).
+Built images is fully measured (see [Measurement Chain](#measurement-chain)),
+and suitable for booting trusted confidential VMs.
 
-### 2. Build a cloud-init image
+### 2. Build a VM image
 
 ```bash
-steep cloud-init path/to/cloud-init-dir
+steep build path/to/cloud-init/user-data
 ```
 
-This will `output/cloud-init-dir`, containing a cidata ISO disk image of the
-cloud-init files, and a qcow2 copy-on-write VM image backed by the base image
-generated in step 1.
+This will build and measure a new image, including  containing a cidata ISO
+disk image of the cloud-init files, and a qcow2 copy-on-write VM image backed by
+the base image generated in step 1.
 
 ### 3. Launch the built VM
 
 ```bash
-steep run output/cloud-init-dir
+steep run output/dir [--dev]
 ```
 
 Use qemu to boot the VM image with a software-emulated TPM and the cidata ISO
-attached. Will run the cloud-init and update the cloud-init image into an
-artifact that can be used to boot cloud VMs in the future.
+attached. After boot, the VM will run cloud-init, if a config file was included
+in the build.
+
+Pass the `--dev` option to make changes persist to disk. Without the `--dev`
+option, changes while the VM is running will be written to a ramdisk instead,
+and discarded when the VM is shut down.
+
+## Measurement Chain
+
+The attestation model rests on a deterministic chain from source configuration to hardware-signed measurement.
+
+```
+cloud-init YAML
+    |  injected into image as static file
+    v
+erofs root filesystem
+    |  dm-verity hash tree
+    v
+roothash (SHA-256)
+    |  embedded in kernel cmdline
+    v
+UKI (kernel + initrd + cmdline as one EFI binary)
+    |  bundled with OVMF firmware
+    v
+IGVM (measured by SNP hardware on launch)
+    |
+    v
+SNP launch digest (hardware-signed, unforgeable)
+```
+
+Change one file in the root filesystem and the roothash changes, which changes the UKI, which changes the IGVM measurement. A remote verifier checks the launch digest against a published expected value and can trust the entire stack.
+
+## Output Artifacts
+
+```
+disk.raw         GPT disk image (ESP + root + verity partitions)
+uki.efi          Unified Kernel Image
+roothash         SHA-256 hex string of the root filesystem
+manifest.json    Build metadata with hashes, platform, measurement
+guest.igvm       IGVM file (optional)
+```

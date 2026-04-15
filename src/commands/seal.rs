@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use crate::manifest::{
     self, BuildConfig, BuildManifest, FileEntry, ManifestInputs, ManifestOutputs, Measurement,
 };
-use crate::{tools, SealArgs};
+use crate::{tools, BuildArgs};
 
-pub fn run(args: &SealArgs) -> anyhow::Result<()> {
+pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     tracing::info!("sealing base image with dm-verity + UKI");
 
     let firmware = if args.skip_igvm {
@@ -186,6 +186,13 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
         })
     };
 
+    // Copy firmware into output so the directory is self-contained for publish/run
+    if let Some(ref fw) = firmware {
+        let output_fw = output.join("OVMF.fd");
+        fs_err::copy(fw, &output_fw)?;
+        println!("Firmware: {}", output_fw.display());
+    }
+
     // move raw disk image to output
     let disk_path = output.join("disk.raw");
     let base_abs = base_image.canonicalize()?;
@@ -275,7 +282,7 @@ pub fn run(args: &SealArgs) -> anyhow::Result<()> {
     manifest::write_manifest(&build_manifest, &manifest_path)?;
 
     println!("\n===============================");
-    println!("  Seal complete!");
+    println!("  Build complete!");
     println!("  Output:     {}", output.display());
     if !args.skip_igvm {
         println!("  IGVM:       {}", igvm_path.display());

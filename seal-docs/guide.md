@@ -109,9 +109,7 @@ Fields include `version`, `build.platform` (generic or snp), `build.format`, `bu
 
 ---
 
-## Cloud-Init Modes
-
-### Boot-time (default)
+## Cloud-Init
 
 The cloud-init YAML is injected as a static file into the NoCloud seed directory inside the verity root. It is measured (included in the dm-verity hash) but not executed at build time. Cloud-init runs normally when the VM boots.
 
@@ -119,8 +117,6 @@ Properties:
 - Reproducible. The YAML file is static content with clamped timestamps.
 - All modules work. Cloud-init runs in a fully booted system with systemd, networking, users, and services.
 - Attestation proves "this VM was configured to do X." The config is attested, not the execution result.
-
-This is the production path and the reproducibility target.
 
 ### Nftables / firewall
 
@@ -155,10 +151,3 @@ sudo ./tests/e2e.sh
 ```
 
 The e2e test seals an image with boot-time cloud-init (write_files + HTTP server), validates output artifacts and manifest structure, optionally seals with IGVM and checks reproducibility, and optionally boots the VM and verifies cloud-init applied via HTTP health check.
-
-Environment variables for IGVM/boot tests:
-
-```bash
-export STEEP_FIRMWARE=/path/to/OVMF.fd
-export STEEP_IGVM_TOOLS=/path/to/igvm-tools
-```

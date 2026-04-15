@@ -1,6 +1,6 @@
 # Future plans
 
-- [ ] merge steep seal command into build command
+- [x] merge steep seal command into build command
 - [x] create GHA pipeline to build base image
 - [x] push base image into GHCR after builds
 - [x] add k8s base image and pushed to GHCR
@@ -19,14 +19,13 @@
 - [x] Release a built image, with instructions for use, that accepts cloud-init configuration
 - [x] Release an image with privateclaw cloud-init baked in already
 - [x] Finalize `steep cloud-init` that accepts a cloud-init dir and creates the image files and qemu commands
-- [ ] Switch from qcow2 backed by base image to dm-verity with overlayfs and a copy-on-write partition in one image
-- [ ] Call `run` with the option to run cloud-init can run, clean up after itself, and save a prepared image
+- [x] Switch from qcow2 backed by base image to dm-verity with overlayfs and a copy-on-write partition in one image
+- [x] Call `run` with the option to run cloud-init can run, clean up after itself, and save a prepared image
 
 ## `steep run`
 
 - [x] Accept a steep output directory, with base and cloud-init images, and run qemu
-- [ ] Use kvm, but only if available
-- [ ] Option to save an image and shut down the VM after cloud-init finishes running
+- [x] Use kvm, but only if available
 
 ## Kernel hardening
 
