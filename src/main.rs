@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
 
     match &cli.command {
         Commands::Kernel(args) => commands::kernel::run(args),
-        Commands::Build(args) => commands::seal::run(args),
+        Commands::Build(args) => commands::build::run(args),
         Commands::Igvm(args) => commands::igvm::run(args),
         Commands::Publish(args) => commands::publish::run(args),
         Commands::Run(args) => commands::run::run(args),
