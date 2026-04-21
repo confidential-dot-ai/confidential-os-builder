@@ -53,12 +53,12 @@ pub struct RunArgs {
 
 #[derive(clap::Args)]
 pub struct BuildArgs {
-    /// Output directory for sealed artifacts (IGVM, UKI, manifest, disk)
-    #[arg(short, long, default_value = "output/image")]
-    pub output: PathBuf,
+    /// Output directory for artifacts (IGVM, UKI, manifest, disk image)
+    #[arg(default_value = "base")]
+    pub name: PathBuf,
 
     /// Path to cloud-init user-data file to optionally include in the image
-    #[arg()]
+    #[arg(short, long)]
     pub cloud_init: Option<PathBuf>,
 
     /// Enable debug console (passwordless root autologin on serial).

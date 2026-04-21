@@ -11,7 +11,6 @@
 - [x] Build a base image, from Ubuntu Resolute Raccoon, that can host our refinements
 - [x] Finalize `steep base` command that builds the image using mkosi
 - [x] Create an image overlay for any uses of the base image
-- [ ] Add firewall rules that block all incoming and outgoing traffic at the end of the build
 
 ## cloud-init and project images
 

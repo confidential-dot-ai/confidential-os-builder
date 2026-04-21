@@ -38,18 +38,19 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Prepare output directory — check for symlinks before deletion to prevent
     // remove_dir_all from following a symlink and deleting an unrelated directory.
-    if fs_err::exists(&args.output)? {
-        let meta = fs_err::symlink_metadata(&args.output)?;
+    let dir = PathBuf::from("output").join(&args.name);
+    if fs_err::exists(&dir)? {
+        let meta = fs_err::symlink_metadata(&dir)?;
         if meta.is_symlink() {
             anyhow::bail!(
                 "output path is a symlink (refusing to delete): {}",
-                args.output.display()
+                args.name.display()
             );
         }
-        fs_err::remove_dir_all(&args.output)?;
+        fs_err::remove_dir_all(&dir)?;
     }
-    fs_err::create_dir_all(&args.output)?;
-    let output = args.output.canonicalize()?;
+    fs_err::create_dir_all(&dir)?;
+    let output = dir.canonicalize()?;
 
     // Inject debug autologin if --debug (enables passwordless root on serial console)
     let autologin_dir =
