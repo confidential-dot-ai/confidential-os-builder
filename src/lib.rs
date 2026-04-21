@@ -99,7 +99,7 @@ pub struct IgvmArgs {
 }
 
 #[derive(clap::Args)]
-pub struct PublishArgs {
+pub struct PushArgs {
     /// Directory to push (output from `steep build`)
     pub dir: PathBuf,
 
@@ -134,7 +134,7 @@ pub mod commands {
     pub mod build;
     pub mod igvm;
     pub mod kernel;
-    pub mod publish;
+    pub mod push;
     pub mod pull;
     pub mod run;
 }
