@@ -1,8 +1,8 @@
 use std::ffi::OsString;
 
-use crate::{tools, PublishArgs};
+use crate::{tools, PushArgs};
 
-pub fn run(args: &PublishArgs) -> anyhow::Result<()> {
+pub fn run(args: &PushArgs) -> anyhow::Result<()> {
     tools::require("oras")?;
 
     let dir = args
@@ -53,6 +53,6 @@ pub fn run(args: &PublishArgs) -> anyhow::Result<()> {
 
     tools::run_command_streaming_in("oras", &oras_args, dir)?;
 
-    println!("Published successfully.");
+    println!("Pushed successfully.");
     Ok(())
 }

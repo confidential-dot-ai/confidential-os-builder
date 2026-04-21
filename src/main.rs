@@ -1,6 +1,6 @@
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
-use steep::{commands, BuildArgs, IgvmArgs, KernelArgs, PublishArgs, PullArgs, RunArgs};
+use steep::{commands, BuildArgs, IgvmArgs, KernelArgs, PullArgs, PushArgs, RunArgs};
 
 #[derive(Parser)]
 #[command(name = "steep", about = "Confidential VM image builder")]
@@ -22,7 +22,7 @@ enum Commands {
     /// Generate IGVM files for additional SMP counts from a sealed output
     Igvm(IgvmArgs),
     /// Build and push an image to GHCR using oras
-    Publish(PublishArgs),
+    Push(PushArgs),
     /// Pull build files from an OCI registry using oras
     Pull(PullArgs),
     /// Launch a confidential VM from build output directory
@@ -53,7 +53,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Kernel(args) => commands::kernel::run(args),
         Commands::Build(args) => commands::build::run(args),
         Commands::Igvm(args) => commands::igvm::run(args),
-        Commands::Publish(args) => commands::publish::run(args),
+        Commands::Push(args) => commands::push::run(args),
         Commands::Pull(args) => commands::pull::run(args),
         Commands::Run(args) => commands::run::run(args),
     }
