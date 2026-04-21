@@ -117,9 +117,9 @@ pub struct PublishArgs {
 }
 
 pub mod commands {
+    pub mod build;
     pub mod igvm;
     pub mod kernel;
     pub mod publish;
     pub mod run;
-    pub mod seal;
 }

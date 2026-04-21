@@ -51,12 +51,11 @@ and suitable for booting trusted confidential VMs.
 ### 2. Build a VM image
 
 ```bash
-steep build path/to/cloud-init/user-data
+steep build NAME -c path/to/cloud-init/user-data
 ```
 
-This will build and measure a new image, including  containing a cidata ISO
-disk image of the cloud-init files, and a qcow2 copy-on-write VM image backed by
-the base image generated in step 1.
+This will build and measure a new image, including the cloud-init file. The results will be written to `output/NAME`,
+ready to be run with `steep run output/NAME` or pushed to GHCR with `steep push output/NAME`.
 
 ### 3. Launch the built VM
 
