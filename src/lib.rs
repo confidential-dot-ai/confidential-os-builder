@@ -116,10 +116,25 @@ pub struct PublishArgs {
     pub tag: String,
 }
 
+#[derive(clap::Args)]
+pub struct PullArgs {
+    /// Image name to pull (e.g. "base")
+    pub name: String,
+
+    /// OCI registry (e.g. ghcr.io/lunal-dev)
+    #[arg(long, default_value = "ghcr.io/lunal-dev")]
+    pub registry: String,
+
+    /// Image tag
+    #[arg(long, default_value = "latest")]
+    pub tag: String,
+}
+
 pub mod commands {
     pub mod build;
     pub mod igvm;
     pub mod kernel;
     pub mod publish;
+    pub mod pull;
     pub mod run;
 }
