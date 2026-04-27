@@ -2,7 +2,6 @@ use steep::tools;
 
 #[test]
 fn test_require_finds_existing_tool() {
-    // `sh` should always exist
     let result = tools::require("sh");
     assert!(result.is_ok());
 }
@@ -28,25 +27,63 @@ fn test_run_command_failure() {
 }
 
 #[test]
-fn test_build_command_args() {
-    let cmd = tools::CommandBuilder::new("igvm-tools")
-        .arg("build")
-        .arg_pair("--firmware", "/path/to/ovmf")
-        .arg_pair("--kernel", "/path/to/uki")
-        .arg_pair("--smp", "4")
-        .arg_pair("--platform", "snp")
-        .arg_pair("-o", "/path/to/output.igvm")
-        .build();
-    let args: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
-    assert_eq!(
-        args,
-        vec![
-            "build",
-            "--firmware", "/path/to/ovmf",
-            "--kernel", "/path/to/uki",
-            "--smp", "4",
-            "--platform", "snp",
-            "-o", "/path/to/output.igvm",
-        ]
-    );
+fn test_run_command_failure_contains_exit_code() {
+    let result = tools::run_command("sh", &["-c", "exit 42"]);
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("42"), "error should contain exit code: {err}");
+}
+
+#[test]
+fn test_run_command_captures_stderr() {
+    let result = tools::run_command("sh", &["-c", "echo oops >&2; exit 1"]);
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("oops"), "error should contain stderr: {err}");
+}
+
+#[test]
+fn test_run_command_nonexistent_binary() {
+    let result = tools::run_command("nonexistent-binary-xyz", &[]);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("nonexistent-binary-xyz"));
+}
+
+#[test]
+fn test_run_command_streaming_success() {
+    let result = tools::run_command_streaming("sh", &["-c", "true"]);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_run_command_streaming_failure() {
+    let result = tools::run_command_streaming("sh", &["-c", "exit 1"]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_run_command_streaming_nonexistent_binary() {
+    let result = tools::run_command_streaming("nonexistent-binary-xyz", &["-c", "true"]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_run_command_streaming_in_with_cwd() {
+    let dir = tempfile::tempdir().unwrap();
+    let result = tools::run_command_streaming_in("sh", &["-c", "true"], dir.path().to_path_buf());
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_tool_error_not_found_display() {
+    let err = tools::require("nonexistent-tool-xyz-123").unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("nonexistent-tool-xyz-123"));
+    assert!(msg.contains("not found in PATH"));
+}
+
+#[test]
+fn test_tool_error_failed_display() {
+    let err = tools::run_command("sh", &["-c", "echo bad >&2; exit 7"]).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("7"), "should contain exit code: {msg}");
+    assert!(msg.contains("bad"), "should contain stderr: {msg}");
 }

@@ -6,25 +6,8 @@ fn test_help_shows_subcommands() {
     cmd.arg("--help")
         .assert()
         .success()
-        .stdout(predicates::str::contains("cloud-init"));
-}
-
-#[test]
-fn test_cloud_init_requires_dir() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args(["cloud-init"]).assert().failure();
-}
-
-#[test]
-fn test_cloud_init_fails_with_missing_dir() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
-    cmd.args([
-        "cloud-init",
-        "/nonexistent/dir",
-    ])
-    .assert()
-    .failure()
-    .stderr(predicates::str::contains("not found"));
+        .stdout(predicates::str::contains("build"))
+        .stdout(predicates::str::contains("run"));
 }
 
 #[test]
@@ -39,7 +22,6 @@ fn test_run_accepts_dir() {
     cmd.args(["run", "/tmp/nonexistent"]).assert().failure();
 }
 
-
 #[test]
 fn test_help_shows_run_subcommand() {
     let mut cmd = Command::cargo_bin("steep").unwrap();
@@ -47,4 +29,114 @@ fn test_help_shows_run_subcommand() {
         .assert()
         .success()
         .stdout(predicates::str::contains("run"));
+}
+
+#[test]
+fn test_cloud_init_requires_dir() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["cloud-init"]).assert().failure();
+}
+
+#[test]
+fn test_build_help() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["build", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("output"))
+        .stdout(predicates::str::contains("firmware"));
+}
+
+#[test]
+fn test_build_skip_igvm_flag() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["build", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("skip-igvm"))
+        .stdout(predicates::str::contains("cloud-init"));
+}
+
+#[test]
+fn test_run_port_forward_flag() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("port-forward"));
+}
+
+// --- push command tests ---
+
+#[test]
+fn test_push_help() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["push", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("registry"))
+        .stdout(predicates::str::contains("tag"));
+}
+
+#[test]
+fn test_push_requires_dir() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["push"]).assert().failure();
+}
+
+// --- pull command tests ---
+
+#[test]
+fn test_pull_help() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["pull", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("registry"))
+        .stdout(predicates::str::contains("tag"));
+}
+
+#[test]
+fn test_pull_requires_name() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["pull"]).assert().failure();
+}
+
+// --- igvm command tests ---
+
+#[test]
+fn test_igvm_help() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["igvm", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("smp"))
+        .stdout(predicates::str::contains("firmware"));
+}
+
+#[test]
+fn test_igvm_requires_dir_and_smp() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["igvm"]).assert().failure();
+}
+
+// --- build command validation tests ---
+
+#[test]
+fn test_build_rejects_invalid_memory() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["build", "--memory", "4GB", "--skip-igvm"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_build_name_argument() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["build", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("[NAME]"))
+        .stdout(predicates::str::contains("--smp"))
+        .stdout(predicates::str::contains("--memory"));
 }

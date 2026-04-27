@@ -1,6 +1,6 @@
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
-use steep::{commands, BaseArgs, CloudInitArgs, KernelArgs, RunArgs};
+use steep::{commands, BuildArgs, IgvmArgs, KernelArgs, PullArgs, PushArgs, RunArgs};
 
 #[derive(Parser)]
 #[command(name = "steep", about = "Confidential VM image builder")]
@@ -17,11 +17,14 @@ enum Commands {
     /// Build the hardened custom kernel (internal)
     #[command(hide = true)]
     Kernel(KernelArgs),
-    /// Build the security-hardened base image (internal)
-    #[command(hide = true)]
-    Base(BaseArgs),
-    /// Build a CVM image with cloud-init configuration
-    CloudInit(CloudInitArgs),
+    /// Build base image with dm-verity, UKI, and IGVM for measured boot
+    Build(BuildArgs),
+    /// Generate IGVM files for additional SMP counts from a sealed output
+    Igvm(IgvmArgs),
+    /// Build and push an image to GHCR using oras
+    Push(PushArgs),
+    /// Pull build files from an OCI registry using oras
+    Pull(PullArgs),
     /// Launch a confidential VM from build output directory
     Run(RunArgs),
 }
@@ -29,30 +32,16 @@ enum Commands {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    let tracing_level = match cli.verbose.log_level() {
+        Some(clap_verbosity_flag::log::Level::Error) => tracing::Level::ERROR,
+        Some(clap_verbosity_flag::log::Level::Warn) => tracing::Level::WARN,
+        Some(clap_verbosity_flag::log::Level::Info) => tracing::Level::INFO,
+        Some(clap_verbosity_flag::log::Level::Debug) => tracing::Level::DEBUG,
+        Some(clap_verbosity_flag::log::Level::Trace) => tracing::Level::TRACE,
+        None => tracing::Level::ERROR,
+    };
     let filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive(
-            match cli.verbose.log_level_filter() {
-                clap_verbosity_flag::log::LevelFilter::Off => {
-                    tracing_subscriber::filter::LevelFilter::OFF
-                }
-                clap_verbosity_flag::log::LevelFilter::Error => {
-                    tracing_subscriber::filter::LevelFilter::ERROR
-                }
-                clap_verbosity_flag::log::LevelFilter::Warn => {
-                    tracing_subscriber::filter::LevelFilter::WARN
-                }
-                clap_verbosity_flag::log::LevelFilter::Info => {
-                    tracing_subscriber::filter::LevelFilter::INFO
-                }
-                clap_verbosity_flag::log::LevelFilter::Debug => {
-                    tracing_subscriber::filter::LevelFilter::DEBUG
-                }
-                clap_verbosity_flag::log::LevelFilter::Trace => {
-                    tracing_subscriber::filter::LevelFilter::TRACE
-                }
-            }
-            .into(),
-        )
+        .with_default_directive(tracing_level.into())
         .from_env_lossy();
 
     tracing_subscriber::fmt()
@@ -62,8 +51,10 @@ fn main() -> anyhow::Result<()> {
 
     match &cli.command {
         Commands::Kernel(args) => commands::kernel::run(args),
-        Commands::Base(args) => commands::base::run(args),
-        Commands::CloudInit(args) => commands::cloud_init::run(args),
+        Commands::Build(args) => commands::build::run(args),
+        Commands::Igvm(args) => commands::igvm::run(args),
+        Commands::Push(args) => commands::push::run(args),
+        Commands::Pull(args) => commands::pull::run(args),
         Commands::Run(args) => commands::run::run(args),
     }
 }

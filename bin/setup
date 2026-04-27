@@ -7,7 +7,7 @@ set -x
 echo "==> Installing system packages..."
 sudo apt-get update
 # debian-archive-keyring is required to install mkosi tools during build
-sudo apt install -y build-essential debian-archive-keyring systemd-repart systemd-container qemu-utils genisoimage swtpm
+sudo apt install -y build-essential debian-archive-keyring systemd-repart systemd-container qemu-utils genisoimage swtpm cpio
 
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -28,7 +28,5 @@ which cargo-binstall || curl -L --proto '=https' --tlsv1.2 -sSf https://raw.gith
 which cargo-binstall
 which cargo-nextest || cargo binstall --no-confirm cargo-nextest
 which cargo-nextest
-
-which igvm-tools || cargo install --path "crates/igvm-tools"
 
 echo "==> Setup complete."

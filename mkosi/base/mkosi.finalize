@@ -1,7 +1,31 @@
 #!/bin/bash
 set -euo pipefail
 
-mkdir -p $BUILDROOT/var/lib/dpkg
-mkdir -p $BUILDROOT/usr/share/keyrings
-mkdir -p $BUILDROOT/etc/apt/sources.list.d
-# $BUILDROOT/usr/bin/cloud-init clean
+# Empty machine-id so it doesn't vary between builds
+# (systemd regenerates on first boot if empty)
+: > "$BUILDROOT/etc/machine-id"
+if [ -f "$BUILDROOT/var/lib/dbus/machine-id" ]; then
+    : > "$BUILDROOT/var/lib/dbus/machine-id"
+fi
+
+# Remove timestamped log content
+rm -f "$BUILDROOT/var/log/dpkg.log"
+rm -f "$BUILDROOT/var/log/alternatives.log"
+rm -f "$BUILDROOT/var/log/bootstrap.log"
+rm -rf "$BUILDROOT/var/log/journal"
+rm -f "$BUILDROOT/var/log/apt/history.log"
+rm -f "$BUILDROOT/var/log/apt/term.log"
+
+# Remove caches with embedded timestamps
+rm -f "$BUILDROOT/var/cache/ldconfig/aux-cache"
+rm -rf "$BUILDROOT/var/cache/man"
+rm -rf "$BUILDROOT/var/cache/apt"
+rm -rf "$BUILDROOT/var/lib/apt/lists"
+
+# Remove random seeds
+rm -f "$BUILDROOT/var/lib/systemd/random-seed"
+rm -f "$BUILDROOT/boot/efi/loader/random-seed"
+rm -f "$BUILDROOT/efi/loader/random-seed"
+
+# Remove cargo cache if present (non-deterministic)
+rm -rf "$BUILDROOT/root/.cargo"

@@ -1,7 +1,8 @@
 .worktrees/
-/examples/privateclaw/meta-data
-/output
-/target
+output/
+target/
+
+# mkosi build artifacts
 mkosi.cache/
 mkosi.crt
 mkosi.key
@@ -10,3 +11,12 @@ mkosi.pkgcache/
 mkosi.tools.manifest
 mkosi.tools/
 seed.iso
+
+# downloaded packages
+*.deb
+
+# Claude skills and tooling
+.claude/skills/
+
+# Progress docs (local working notes)
+PROGRESS*.md

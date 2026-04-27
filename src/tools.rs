@@ -1,6 +1,5 @@
 use std::ffi::OsStr;
-use std::os::unix::process::CommandExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use thiserror::Error;
@@ -52,31 +51,21 @@ pub fn run_command(tool: &str, args: &[&str]) -> Result<String, ToolError> {
         return Err(ToolError::Failed {
             tool: tool.to_string(),
             code,
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-pub fn run_command_exec(tool: &str, args: &[&str]) -> Result<(), ToolError> {
-    println!(
-        "🍵 {} {}",
-        tool,
-        args.iter()
-            .map(|i| i.to_owned())
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-    let _ = Command::new(tool).args(args).exec();
-
-    Ok(())
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Run a command with inherited stdio (streams output to the terminal).
 /// Fails if the command exits with a non-zero status.
 pub fn run_command_streaming(tool: &str, args: &[impl AsRef<OsStr>]) -> Result<(), ToolError> {
-    run_command_streaming_in(tool, args, std::env::current_dir().unwrap())
+    let cwd = std::env::current_dir().map_err(|e| ToolError::Io {
+        tool: tool.to_string(),
+        source: e,
+    })?;
+    run_command_streaming_in(tool, args, cwd)
 }
 
 pub fn run_command_streaming_in(
@@ -84,13 +73,9 @@ pub fn run_command_streaming_in(
     args: &[impl AsRef<OsStr>],
     cwd: PathBuf,
 ) -> Result<(), ToolError> {
-    println!(
-        "🍵 {} {}",
-        tool,
-        args.iter()
-            .map(|i| i.as_ref().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" ")
+    tracing::debug!(
+        cmd = %format!("{} {}", tool, args.iter().map(|i| i.as_ref().to_string_lossy()).collect::<Vec<_>>().join(" ")),
+        "exec"
     );
     let status = Command::new(tool)
         .args(args)
@@ -116,36 +101,42 @@ pub fn run_command_streaming_in(
     Ok(())
 }
 
-/// Builder for constructing command argument lists.
-pub struct CommandBuilder {
-    tool: String,
-    args: Vec<String>,
+/// Copy a file with sudo and set permissions to 644.
+/// mkosi outputs are root-owned; this copies them to the output directory readably.
+/// Uses OsStr args to avoid lossy UTF-8 conversion corrupting paths.
+pub fn sudo_mv(src: &Path, dst: &Path) -> Result<(), ToolError> {
+    run_command_streaming(
+        "sudo",
+        &[OsStr::new("mv"), src.as_os_str(), dst.as_os_str()],
+    )?;
+    let user = std::env!("USER");
+    run_command_streaming(
+        "sudo",
+        &[OsStr::new("chown"), OsStr::new(user), dst.as_os_str()],
+    )?;
+    Ok(())
 }
 
-impl CommandBuilder {
-    pub fn new(tool: &str) -> Self {
-        Self {
-            tool: tool.to_string(),
-            args: Vec::new(),
-        }
-    }
+/// Make a root-owned file readable (chmod 644 via sudo).
+/// Uses OsStr args to avoid lossy UTF-8 conversion corrupting paths.
+pub fn sudo_chmod_readable(path: &Path) -> Result<(), ToolError> {
+    run_command_streaming(
+        "sudo",
+        &[OsStr::new("chmod"), OsStr::new("644"), path.as_os_str()],
+    )?;
+    Ok(())
+}
 
-    pub fn arg(mut self, arg: &str) -> Self {
-        self.args.push(arg.to_string());
-        self
-    }
-
-    pub fn arg_pair(mut self, flag: &str, value: &str) -> Self {
-        self.args.push(flag.to_string());
-        self.args.push(value.to_string());
-        self
-    }
-
-    pub fn tool(&self) -> &str {
-        &self.tool
-    }
-
-    pub fn build(self) -> Vec<String> {
-        self.args
-    }
+/// Resolve the canonical path of mkosi, following symlinks.
+/// uv-installed mkosi lives at ~/.local/bin/mkosi -> ~/.local/share/uv/tools/mkosi/bin/mkosi
+/// which has a shebang pointing to the venv Python. sudo + env + PATH can't resolve
+/// through this chain, so we resolve it once and invoke the full path directly.
+pub fn resolve_mkosi() -> Result<String, ToolError> {
+    let path = require("mkosi")?;
+    path.canonicalize()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| ToolError::Io {
+            tool: "mkosi".to_string(),
+            source: e,
+        })
 }
