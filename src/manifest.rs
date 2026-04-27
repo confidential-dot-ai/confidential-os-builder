@@ -4,15 +4,18 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuildManifest {
     pub version: u32,
     pub build: BuildConfig,
     pub inputs: ManifestInputs,
     pub outputs: ManifestOutputs,
-    pub measurement: Measurement,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<Measurement>,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuildConfig {
     pub timestamp: String,
     pub smp: u32,
@@ -22,29 +25,32 @@ pub struct BuildConfig {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileEntry {
     pub path: String,
     pub sha256: String,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManifestInputs {
-    pub kernel: FileEntry,
+    pub initrd: FileEntry,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub initrd: Option<FileEntry>,
-    pub firmware: FileEntry,
+    pub firmware: Option<FileEntry>,
     pub base_image: FileEntry,
-    pub project_partition: FileEntry,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManifestOutputs {
     pub disk_image: FileEntry,
-    pub igvm: FileEntry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub igvm: Option<FileEntry>,
     pub uki: FileEntry,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Measurement {
     pub snp_launch_digest: String,
     pub algorithm: String,
@@ -58,8 +64,7 @@ pub fn sha256_file(path: &Path) -> anyhow::Result<String> {
     let mut file = fs_err::File::open(path)?;
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher)?;
-    let result = hasher.finalize();
-    Ok(hex::encode(result))
+    Ok(hex::encode(hasher.finalize()))
 }
 
 /// Write the manifest to a JSON file.

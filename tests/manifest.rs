@@ -13,27 +13,25 @@ fn sample_manifest() -> BuildManifest {
             timestamp: "2026-03-13T12:00:00Z".to_string(),
             smp: 4,
             memory: "2G".to_string(),
-            format: "qcow2".to_string(),
+            format: "raw".to_string(),
             platform: "snp".to_string(),
         },
         inputs: ManifestInputs {
-            kernel: sample_entry("vmlinuz"),
-            initrd: Some(sample_entry("initrd.img")),
-            firmware: sample_entry("OVMF.fd"),
+            initrd: sample_entry("initrd.cpio.gz"),
+            firmware: Some(sample_entry("OVMF.fd")),
             base_image: sample_entry("base.raw"),
-            project_partition: sample_entry("project.raw"),
         },
         outputs: ManifestOutputs {
-            disk_image: sample_entry("disk.qcow2"),
-            igvm: sample_entry("guest.igvm"),
+            disk_image: sample_entry("disk.raw"),
+            igvm: Some(sample_entry("guest.igvm")),
             uki: sample_entry("uki.efi"),
         },
-        measurement: Measurement {
+        measurement: Some(Measurement {
             snp_launch_digest: "aabbcc".to_string(),
             algorithm: "sha384".to_string(),
             page_count: 5598,
             vmsa_count: 4,
-        },
+        }),
     }
 }
 
@@ -44,10 +42,8 @@ fn test_manifest_serializes_to_json() {
     assert!(json.contains("\"version\": 1"));
     assert!(json.contains("\"snp_launch_digest\": \"aabbcc\""));
     assert!(json.contains("\"vmsa_count\": 4"));
-    assert!(json.contains("\"kernel\""));
     assert!(json.contains("\"firmware\""));
     assert!(json.contains("\"base_image\""));
-    assert!(json.contains("\"project_partition\""));
 }
 
 #[test]
@@ -57,8 +53,20 @@ fn test_manifest_roundtrip() {
     let deserialized: BuildManifest = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.version, manifest.version);
     assert_eq!(deserialized.build.smp, manifest.build.smp);
-    assert_eq!(deserialized.inputs.kernel.path, "vmlinuz");
-    assert_eq!(deserialized.outputs.disk_image.path, "disk.qcow2");
+    assert_eq!(deserialized.inputs.initrd.path, "initrd.cpio.gz");
+    assert_eq!(deserialized.outputs.disk_image.path, "disk.raw");
+}
+
+#[test]
+fn test_manifest_optional_fields_omitted() {
+    let mut manifest = sample_manifest();
+    manifest.measurement = None;
+    manifest.inputs.firmware = None;
+    manifest.outputs.igvm = None;
+    let json = serde_json::to_string_pretty(&manifest).unwrap();
+    assert!(!json.contains("measurement"));
+    assert!(!json.contains("firmware"));
+    assert!(!json.contains("igvm"));
 }
 
 #[test]
@@ -88,13 +96,6 @@ fn test_parse_igvm_manifest() {
 }
 
 #[test]
-fn test_manifest_includes_memory() {
-    let manifest = sample_manifest();
-    let json = serde_json::to_string_pretty(&manifest).unwrap();
-    assert!(json.contains("\"memory\": \"2G\""));
-}
-
-#[test]
 fn test_read_manifest_from_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("manifest.json");
@@ -103,5 +104,126 @@ fn test_read_manifest_from_file() {
     let loaded = steep::manifest::read_manifest(&path).unwrap();
     assert_eq!(loaded.build.smp, 4);
     assert_eq!(loaded.build.memory, "2G");
-    assert_eq!(loaded.build.format, "qcow2");
+    assert_eq!(loaded.build.format, "raw");
+}
+
+#[test]
+fn test_manifest_rejects_unknown_fields() {
+    let json = r#"{
+        "version": 1,
+        "build": {
+            "timestamp": "2026-03-13T12:00:00Z",
+            "smp": 4,
+            "memory": "2G",
+            "format": "raw",
+            "platform": "snp",
+            "extra_bad_field": true
+        },
+        "inputs": {
+            "initrd": {"path": "a", "sha256": "b"},
+            "base_image": {"path": "c", "sha256": "d"}
+        },
+        "outputs": {
+            "disk_image": {"path": "e", "sha256": "f"},
+            "uki": {"path": "g", "sha256": "h"}
+        }
+    }"#;
+    let result: Result<BuildManifest, _> = serde_json::from_str(json);
+    assert!(result.is_err(), "should reject unknown fields in build config");
+}
+
+#[test]
+fn test_manifest_rejects_unknown_top_level_field() {
+    let json = r#"{
+        "version": 1,
+        "build": {
+            "timestamp": "2026-03-13T12:00:00Z",
+            "smp": 4,
+            "memory": "2G",
+            "format": "raw",
+            "platform": "snp"
+        },
+        "inputs": {
+            "initrd": {"path": "a", "sha256": "b"},
+            "base_image": {"path": "c", "sha256": "d"}
+        },
+        "outputs": {
+            "disk_image": {"path": "e", "sha256": "f"},
+            "uki": {"path": "g", "sha256": "h"}
+        },
+        "injected": "malicious"
+    }"#;
+    let result: Result<BuildManifest, _> = serde_json::from_str(json);
+    assert!(result.is_err(), "should reject unknown top-level fields");
+}
+
+#[test]
+fn test_parse_igvm_manifest_missing_measurement_key() {
+    let json = r#"{"other_key": "value"}"#;
+    let result = steep::manifest::parse_igvm_manifest(json);
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(err.to_string().contains("measurement"));
+}
+
+#[test]
+fn test_parse_igvm_manifest_invalid_json() {
+    let result = steep::manifest::parse_igvm_manifest("not json at all");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_igvm_manifest_incomplete_measurement() {
+    let json = r#"{
+        "measurement": {
+            "snp_launch_digest": "aabbcc"
+        }
+    }"#;
+    let result = steep::manifest::parse_igvm_manifest(json);
+    assert!(result.is_err(), "should reject measurement missing required fields");
+}
+
+#[test]
+fn test_sha256_file_nonexistent() {
+    let result = steep::manifest::sha256_file(std::path::Path::new("/nonexistent/file.bin"));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_sha256_file_empty_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("empty.bin");
+    fs_err::write(&path, b"").unwrap();
+    let hash = steep::manifest::sha256_file(&path).unwrap();
+    // SHA-256 of empty input
+    assert_eq!(hash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+}
+
+#[test]
+fn test_write_manifest_creates_valid_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test_manifest.json");
+    let manifest = sample_manifest();
+    steep::manifest::write_manifest(&manifest, &path).unwrap();
+
+    // Read back raw JSON and verify it's valid pretty-printed JSON
+    let content = fs_err::read_to_string(&path).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["build"]["smp"], 4);
+}
+
+#[test]
+fn test_read_manifest_nonexistent_file() {
+    let result = steep::manifest::read_manifest(std::path::Path::new("/nonexistent/manifest.json"));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_read_manifest_invalid_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bad.json");
+    fs_err::write(&path, "not json").unwrap();
+    let result = steep::manifest::read_manifest(&path);
+    assert!(result.is_err());
 }

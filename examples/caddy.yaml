@@ -1,0 +1,22 @@
+#cloud-config
+write_files:
+  - path: /var/www/html/index.html
+    content: |
+      <!DOCTYPE html>
+      <html><head><title>steep demo</title></head>
+      <body><h1>steep demo</h1>
+      <p>Served by caddy inside a confidential VM built with steep (cloud-init).</p>
+      </body></html>
+  - path: /etc/caddy/Caddyfile
+    content: |
+      :80 {
+          root * /var/www/html
+          file_server
+      }
+
+runcmd:
+  - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/cfg/setup/bash.deb.sh' | bash
+  - DEBIAN_FRONTEND=noninteractive apt-get install caddy -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+  - systemctl enable --now caddy
+  - systemctl reload caddy
+  - echo "Caddy is running and serving the index.html file at http://localhost:80, forwarded to http://localhost:8888 on the host."

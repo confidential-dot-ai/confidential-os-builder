@@ -1,0 +1,111 @@
+#!/bin/bash
+set -eu
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+echo "initrd: loading modules..."
+# depmod to build module dependency map (needed for modprobe in initrd)
+depmod -a
+for mod in dm-verity overlay; do
+    if modprobe "$mod" 2>/dev/null; then
+        echo "initrd: loaded $mod"
+    else
+        echo "initrd: WARNING: $mod not found"
+    fi
+done
+
+# Parse roothash from kernel cmdline (disable globbing to prevent expansion)
+set -f
+ROOTHASH=""
+for param in $(cat /proc/cmdline); do
+    case "$param" in
+        roothash=*) ROOTHASH="${param#roothash=}" ;;
+    esac
+done
+set +f
+
+if [ -z "$ROOTHASH" ]; then
+    echo "FATAL: no roothash= on kernel cmdline"
+    sleep 5
+    echo b > /proc/sysrq-trigger
+    exit 1  # fallback if sysrq disabled
+fi
+
+# Normalize to lowercase and validate: SHA-256 (64), SHA-384 (96), or SHA-512 (128) hex
+ROOTHASH=$(echo "$ROOTHASH" | tr '[:upper:]' '[:lower:]')
+if ! echo "$ROOTHASH" | grep -qE '^[a-f0-9]{64}([a-f0-9]{32})?([a-f0-9]{32})?$'; then
+    echo "FATAL: invalid roothash (expected 64/96/128 hex chars): $ROOTHASH"
+    sleep 5
+    echo b > /proc/sysrq-trigger
+    exit 1  # fallback if sysrq disabled
+fi
+
+echo "initrd: setting up dm-verity with roothash=$ROOTHASH"
+
+# Wait for virtio disk to appear (up to 30 seconds)
+WAITED=0
+while [ ! -e /dev/vda2 ] && [ "$WAITED" -lt 30 ]; do
+    sleep 1
+    WAITED=$((WAITED + 1))
+done
+if [ ! -e /dev/vda2 ]; then
+    echo "FATAL: /dev/vda2 not found after ${WAITED}s"
+    echo b > /proc/sysrq-trigger
+    exit 1  # fallback if sysrq disabled
+fi
+
+veritysetup open /dev/vda2 root /dev/vda3 "$ROOTHASH"
+echo "initrd: dm-verity device created at /dev/mapper/root"
+
+# Mount verified root as lower layer
+mkdir -p /sysroot-lower /sysroot-upper /sysroot
+mount -o ro /dev/mapper/root /sysroot-lower
+echo "initrd: verified root mounted (read-only)"
+
+# Try to mount a persistent data disk for the overlay upper layer.
+# Look for a virtio disk with LABEL=data (typically vdb).
+# Fall back to tmpfs if no data disk is found (writes lost on reboot).
+DATA_DEV=""
+for dev in /dev/vdb /dev/vdc /dev/vdd; do
+    if [ -e "$dev" ]; then
+        LABEL=$(blkid -s LABEL -o value "$dev" 2>/dev/null || true)
+        if [ "$LABEL" = "data" ]; then
+            DATA_DEV="$dev"
+            break
+        fi
+    fi
+done
+
+if [ -n "$DATA_DEV" ]; then
+    echo "initrd: found data disk at $DATA_DEV"
+    mkdir -p /mnt/data
+    mount "$DATA_DEV" /mnt/data
+    mkdir -p /mnt/data/overlay/upper /mnt/data/overlay/work
+    mount -t overlay overlay \
+        -o lowerdir=/sysroot-lower,upperdir=/mnt/data/overlay/upper,workdir=/mnt/data/overlay/work \
+        /sysroot
+    # Bind-mount data disk into the final root so it's at /data after switch_root
+    mkdir -p /sysroot/data
+    mount --bind /mnt/data /sysroot/data
+    echo "initrd: overlayfs mounted (persistent, backed by $DATA_DEV at /data)"
+else
+    echo "initrd: WARNING: no data disk found, using tmpfs (writes lost on reboot)"
+    mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
+    mkdir -p /sysroot-upper/upper /sysroot-upper/work
+    mount -t overlay overlay \
+        -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
+        /sysroot
+fi
+echo "initrd: overlayfs ready"
+
+# Minimal runtime directories
+mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
+
+# Generate unique machine-id for this boot
+cat /proc/sys/kernel/random/uuid | tr -d '-' > /sysroot/etc/machine-id
+
+echo "initrd: switching root..."
+exec switch_root /sysroot /sbin/init
