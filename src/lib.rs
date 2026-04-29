@@ -1,4 +1,6 @@
 pub mod igvm;
+pub mod kernel;
+pub mod kernel_cache;
 pub mod manifest;
 pub mod qemu;
 pub mod tools;
