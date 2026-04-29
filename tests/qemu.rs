@@ -93,8 +93,9 @@ fn test_qemu_args_no_port_forwards_has_no_netdev() {
         port_forwards: vec![],
     };
     let cmd = args.to_args().unwrap();
+    let joined = cmd.join(" ");
     assert!(!cmd.contains(&"-netdev".to_string()));
-    assert!(!cmd.contains(&"-device".to_string()));
+    assert!(!joined.contains("virtio-net-pci"));
 }
 
 #[test]
@@ -389,4 +390,47 @@ fn test_qemu_args_emulated_missing_firmware_errors() {
         port_forwards: vec![],
     };
     assert!(args.to_args().is_err());
+}
+
+#[test]
+fn test_qemu_args_uses_virtio_console() {
+    let args = QemuArgs {
+        tier: QemuTier::SevSnp,
+        qemu_bin: "qemu-system-x86_64".to_string(),
+        igvm: Some(PathBuf::from("/output/guest.igvm")),
+        uki: None,
+        firmware: None,
+        disk: PathBuf::from("/output/disk.raw"),
+        disk_format: "raw".to_string(),
+        smp: 1,
+        memory: "2G".to_string(),
+        port_forwards: vec![],
+    };
+    let cmd = args.to_args().unwrap();
+    let joined = cmd.join(" ");
+    assert!(joined.contains("virtio-serial-pci"), "missing virtio-serial-pci");
+    assert!(joined.contains("virtconsole"), "missing virtconsole device");
+    assert!(joined.contains("chardev=hvc0"), "missing hvc0 chardev hookup");
+    // 8250 is gone — the SNP tier no longer uses -serial mon:stdio.
+    assert!(!joined.contains("-serial mon:stdio"));
+}
+
+#[test]
+fn test_qemu_args_kvm_uses_virtio_console() {
+    let args = QemuArgs {
+        tier: QemuTier::Kvm,
+        qemu_bin: "qemu-system-x86_64".to_string(),
+        igvm: None,
+        uki: Some(PathBuf::from("/output/uki.efi")),
+        firmware: Some(PathBuf::from("/usr/share/OVMF/OVMF.fd")),
+        disk: PathBuf::from("/output/disk.raw"),
+        disk_format: "raw".to_string(),
+        smp: 1,
+        memory: "2G".to_string(),
+        port_forwards: vec![],
+    };
+    let cmd = args.to_args().unwrap();
+    let joined = cmd.join(" ");
+    assert!(joined.contains("virtio-serial-pci"));
+    assert!(joined.contains("chardev=hvc0"));
 }
