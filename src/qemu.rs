@@ -130,8 +130,12 @@ impl QemuArgs {
                     "-object".to_string(),
                     "sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1".to_string(),
                     "-no-reboot".to_string(),
-                    "-serial".to_string(),
-                    "mon:stdio".to_string(),
+                    "-chardev".to_string(),
+                    "stdio,id=hvc0,signal=off".to_string(),
+                    "-device".to_string(),
+                    "virtio-serial-pci,id=virtser0".to_string(),
+                    "-device".to_string(),
+                    "virtconsole,chardev=hvc0,id=console0".to_string(),
                     "-monitor".to_string(),
                     "none".to_string(),
                 ]
@@ -157,6 +161,14 @@ impl QemuArgs {
                     ),
                     "-kernel".to_string(),
                     uki.display().to_string(),
+                ]);
+                v.extend([
+                    "-chardev".to_string(),
+                    "stdio,id=hvc0,signal=off".to_string(),
+                    "-device".to_string(),
+                    "virtio-serial-pci,id=virtser0".to_string(),
+                    "-device".to_string(),
+                    "virtconsole,chardev=hvc0,id=console0".to_string(),
                 ]);
                 v
             }
