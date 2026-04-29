@@ -17,6 +17,7 @@ fn sample_manifest() -> BuildManifest {
             platform: "snp".to_string(),
         },
         inputs: ManifestInputs {
+            kernel: None,
             initrd: sample_entry("initrd.cpio.gz"),
             firmware: Some(sample_entry("OVMF.fd")),
             base_image: sample_entry("base.raw"),

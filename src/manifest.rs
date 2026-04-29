@@ -34,10 +34,22 @@ pub struct FileEntry {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestInputs {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub kernel: Option<KernelInputs>,
     pub initrd: FileEntry,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub firmware: Option<FileEntry>,
     pub base_image: FileEntry,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KernelInputs {
+    pub linux_version: String,
+    pub vmlinuz_sha256: String,
+    pub required_config_sha256: String,
+    pub hardening_config_sha256: String,
+    pub snapshot_config_sha256: String,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -260,6 +260,13 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             },
         },
         inputs: ManifestInputs {
+            kernel: Some(crate::manifest::KernelInputs {
+                linux_version: kernel.linux_version.clone(),
+                vmlinuz_sha256: kernel.manifest.outputs.vmlinuz_sha256.clone(),
+                required_config_sha256: kernel.manifest.inputs.required_config_sha256.clone(),
+                hardening_config_sha256: kernel.manifest.inputs.hardening_config_sha256.clone(),
+                snapshot_config_sha256: kernel.manifest.inputs.snapshot_config_sha256.clone(),
+            }),
             initrd: FileEntry {
                 path: initrd_path.to_string_lossy().to_string(),
                 sha256: initrd_hash,
