@@ -72,8 +72,27 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         None
     };
 
-    // Step 1: Build the verity initrd via mkosi (declarative)
-    println!("\n=== Step 1/3: Building verity initrd (mkosi) ===");
+    // Phase 1: ensure custom kernel artifact is current
+    println!("\n=== Step 1/4: Ensuring custom kernel ===");
+    let kernel = crate::kernel_cache::ensure_kernel(false)?;
+    println!(
+        "kernel: {} (linux {})",
+        kernel.vmlinuz_path.display(),
+        kernel.linux_version
+    );
+
+    // Pre-stage the custom kernel into mkosi.extra so mkosi finds it during UKI assembly.
+    let staged_kernel_dir = PathBuf::from("mkosi/base/mkosi.extra/usr/lib/modules")
+        .join(&kernel.linux_version);
+    fs_err::create_dir_all(&staged_kernel_dir)?;
+    let staged_kernel = staged_kernel_dir.join("vmlinuz");
+    fs_err::copy(&kernel.vmlinuz_path, &staged_kernel)?;
+    let _kernel_stage_guard = KernelStageCleanup {
+        staged: staged_kernel,
+    };
+
+    // Step 2: Build the verity initrd via mkosi (declarative)
+    println!("\n=== Step 2/4: Building verity initrd (mkosi) ===");
     let initrd_dir = PathBuf::from("mkosi/initrd");
     if !initrd_dir.exists() {
         anyhow::bail!("mkosi initrd config not found: {}", initrd_dir.display());
@@ -96,8 +115,8 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         human_size(&initrd_path)?
     );
 
-    // Step 2: Run mkosi — builds disk with verity, UKI with roothash + our initrd + modules
-    println!("\n=== Step 2/3: Building image with mkosi (verity + UKI) ===");
+    // Step 3: Run mkosi — builds disk with verity, UKI with roothash + our initrd + modules
+    println!("\n=== Step 3/4: Building image with mkosi (verity + UKI) ===");
     let mkosi_dir = PathBuf::from("mkosi/base");
     if !mkosi_dir.exists() {
         anyhow::bail!("mkosi config dir not found: {}", mkosi_dir.display());
@@ -158,10 +177,10 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // Step 3: Build IGVM (optional)
     let igvm_path = output.join("guest.igvm");
     let measurement = if args.skip_igvm {
-        println!("\n=== Step 3/3: Skipping IGVM (--skip-igvm) ===");
+        println!("\n=== Step 4/4: Skipping IGVM (--skip-igvm) ===");
         None
     } else {
-        println!("\n=== Step 3/3: Building IGVM ===");
+        println!("\n=== Step 4/4: Building IGVM ===");
 
         // firmware is guaranteed Some when skip_igvm is false (validated at top)
         let fw_path = firmware
@@ -365,6 +384,28 @@ impl Drop for CloudInitCleanup {
                 break; // not empty or doesn't exist
             }
             dir = parent.to_path_buf();
+        }
+    }
+}
+
+/// RAII guard that removes the pre-staged vmlinuz and prunes empty parent dirs
+/// back up to mkosi.extra/. Mirrors CloudInitCleanup's behavior.
+struct KernelStageCleanup {
+    staged: PathBuf,
+}
+
+impl Drop for KernelStageCleanup {
+    fn drop(&mut self) {
+        let _ = fs_err::remove_file(&self.staged);
+        let mut dir = self.staged.parent().map(|p| p.to_path_buf());
+        while let Some(d) = dir {
+            if d.ends_with("mkosi.extra") {
+                break;
+            }
+            if fs_err::remove_dir(&d).is_err() {
+                break;
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
         }
     }
 }
