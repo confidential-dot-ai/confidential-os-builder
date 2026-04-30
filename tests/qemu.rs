@@ -408,9 +408,15 @@ fn test_qemu_args_uses_virtio_console() {
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
-    assert!(joined.contains("virtio-serial-pci"), "missing virtio-serial-pci");
+    assert!(
+        joined.contains("virtio-serial-pci"),
+        "missing virtio-serial-pci"
+    );
     assert!(joined.contains("virtconsole"), "missing virtconsole device");
-    assert!(joined.contains("chardev=hvc0"), "missing hvc0 chardev hookup");
+    assert!(
+        joined.contains("chardev=hvc0"),
+        "missing hvc0 chardev hookup"
+    );
     // 8250 is gone — the SNP tier no longer uses -serial mon:stdio.
     assert!(!joined.contains("-serial mon:stdio"));
 }

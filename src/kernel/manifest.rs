@@ -50,10 +50,9 @@ impl Fingerprint {
 }
 
 pub fn read(path: &Path) -> Result<KernelManifest> {
-    let s = fs_err::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let m: KernelManifest = serde_json::from_str(&s)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let s = fs_err::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let m: KernelManifest =
+        serde_json::from_str(&s).with_context(|| format!("parsing {}", path.display()))?;
     Ok(m)
 }
 

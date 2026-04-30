@@ -40,8 +40,8 @@ impl KernelVersion {
 
     /// Read and parse `kernel/version` from disk.
     pub fn read(path: &std::path::Path) -> Result<Self> {
-        let content = fs_err::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let content =
+            fs_err::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         Self::parse(&content)
     }
 }
@@ -52,10 +52,8 @@ mod tests {
 
     #[test]
     fn parses_minimal_valid_input() {
-        let v = KernelVersion::parse(
-            "LINUX_VERSION=6.12.7\nLINUX_TARBALL_SHA256=abc123\n",
-        )
-        .unwrap();
+        let v =
+            KernelVersion::parse("LINUX_VERSION=6.12.7\nLINUX_TARBALL_SHA256=abc123\n").unwrap();
         assert_eq!(v.linux_version, "6.12.7");
         assert_eq!(v.tarball_sha256, "abc123");
     }
@@ -84,8 +82,8 @@ mod tests {
 
     #[test]
     fn fails_on_unknown_key() {
-        let err = KernelVersion::parse("LINUX_VERSION=1\nLINUX_TARBALL_SHA256=a\nBOGUS=x\n")
-            .unwrap_err();
+        let err =
+            KernelVersion::parse("LINUX_VERSION=1\nLINUX_TARBALL_SHA256=a\nBOGUS=x\n").unwrap_err();
         assert!(err.to_string().contains("BOGUS"));
     }
 

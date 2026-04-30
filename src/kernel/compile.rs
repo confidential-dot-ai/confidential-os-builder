@@ -64,8 +64,13 @@ pub fn run(
     let mut full_args: Vec<std::ffi::OsString> = vec![nspawn_bin.as_os_str().into()];
     full_args.extend(args);
 
-    crate::tools::run_command_streaming("sudo", &full_args[..])
-        .map_err(|e| anyhow!("kernel compile failed: {}. Full log: {}", e, log_path.display()))?;
+    crate::tools::run_command_streaming("sudo", &full_args[..]).map_err(|e| {
+        anyhow!(
+            "kernel compile failed: {}. Full log: {}",
+            e,
+            log_path.display()
+        )
+    })?;
 
     let bz = kernel_dir_abs.join("arch/x86/boot/bzImage");
     if !bz.exists() {
