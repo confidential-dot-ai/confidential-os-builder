@@ -3,7 +3,15 @@
 //! These run a real kernel build under systemd-nspawn. Mark with `#[ignore]`
 //! so `cargo test` doesn't trigger a 10+ minute build.
 //!
-//! Run with: `cargo test --test kernel -- --ignored`
+//! Run with one of:
+//!   - `cargo nextest run --run-ignored only` — `.config/nextest.toml`
+//!     serializes this binary onto a single thread.
+//!   - `cargo test --test kernel -- --ignored --test-threads=1` — plain cargo
+//!     does not honor nextest config, so the flag is required.
+//!
+//! These tests share project-relative state (`mkosi/kernel-builder/` tools
+//! tree rebuilt by `mkosi --force`, and `kernel/config-x86_64.snapshot`
+//! mutated by the drift test) and fail when run in parallel.
 //!
 //! Requires:
 //!   - `kernel/version`, `kernel/required.config`, `kernel/hardening.config`,

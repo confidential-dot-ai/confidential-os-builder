@@ -11,6 +11,9 @@ const HARDENING_FRAGMENT: &str = "kernel/hardening.config";
 const SNAPSHOT_PATH: &str = "kernel/config-x86_64.snapshot";
 const VERSION_PATH: &str = "kernel/version";
 const TOOLS_TREE_DIR: &str = "mkosi/kernel-builder";
+const TOOLS_TREE_CONF: &str = "mkosi/kernel-builder/mkosi.conf";
+const TOOLS_TREE_IMAGE: &str = "mkosi/kernel-builder/mkosi.output/image";
+const TOOLS_TREE_STAMP: &str = "mkosi/kernel-builder/mkosi.output/.steep-tools-stamp";
 
 pub fn run(args: &KernelArgs) -> Result<()> {
     let version = KernelVersion::read(Path::new(VERSION_PATH))?;
@@ -29,7 +32,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // --update-snapshot both bypass this.
     if !args.force && !args.update_snapshot && manifest_path.exists() && vmlinuz_path.exists() {
         if let Ok(cached) = km::read(&manifest_path) {
-            let tools_tree_path = Path::new("mkosi/kernel-builder/mkosi.output/image");
+            let tools_tree_path = Path::new(TOOLS_TREE_IMAGE);
             if let Ok(live) = compute_fingerprint(&version, tools_tree_path) {
                 if cached.inputs == live {
                     let actual = fetch::sha256_file(&vmlinuz_path)?;
@@ -50,7 +53,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Phase 0a: ensure tools tree
     println!("\n=== Step 0a: Ensuring kernel-builder tools tree (mkosi) ===");
-    let tools_tree = ensure_tools_tree()?;
+    let tools_tree = ensure_tools_tree(args.force)?;
 
     // Phase 0b: fetch tarball
     println!("\n=== Step 0b: Fetching kernel tarball ===");
@@ -119,8 +122,30 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 }
 
 /// Build the kernel-builder tools tree if needed, return its path.
-fn ensure_tools_tree() -> Result<PathBuf> {
-    let tree = Path::new(TOOLS_TREE_DIR).join("mkosi.output/image");
+///
+/// Skips the (slow, sudo-requiring) `mkosi --force` rebuild when a previous
+/// build's stamp file matches the current `mkosi.conf` hash. `force` bypasses
+/// the skip. The stamp lives under `mkosi.output/`, which `mkosi --force`
+/// wipes — so a successful rebuild always lands a fresh stamp, and a failed
+/// rebuild leaves no stamp behind to fool a later cache check.
+fn ensure_tools_tree(force: bool) -> Result<PathBuf> {
+    let tree = Path::new(TOOLS_TREE_IMAGE);
+    let stamp_path = Path::new(TOOLS_TREE_STAMP);
+    let conf_sha = fetch::sha256_file(Path::new(TOOLS_TREE_CONF))?;
+
+    if !force && tree.exists() {
+        if let Ok(stamped) = fs_err::read_to_string(stamp_path) {
+            if stamped.trim() == conf_sha {
+                println!("kernel-builder tools tree cache HIT (mkosi.conf unchanged)");
+                return Ok(tree.canonicalize()?);
+            }
+        }
+    }
+
+    // Wipe stale stamp before rebuild so a half-failed `mkosi --force` can't
+    // be picked up as a cache hit on the next call.
+    let _ = fs_err::remove_file(stamp_path);
+
     let mkosi = tools::resolve_mkosi()?;
     tools::run_command_streaming(
         "sudo",
@@ -129,6 +154,7 @@ fn ensure_tools_tree() -> Result<PathBuf> {
     if !tree.exists() {
         return Err(anyhow!("mkosi did not produce {}", tree.display()));
     }
+    fs_err::write(stamp_path, &conf_sha)?;
     Ok(tree.canonicalize()?)
 }
 
@@ -151,7 +177,7 @@ pub fn compute_fingerprint(version: &KernelVersion, _tools_tree: &Path) -> Resul
 /// Hash the toolchain identity. We use the mkosi.conf bytes as a stable proxy:
 /// the apt mirror snapshot URL is in there, package list is in there.
 fn tools_tree_digest() -> Result<String> {
-    fetch::sha256_file(Path::new("mkosi/kernel-builder/mkosi.conf"))
+    fetch::sha256_file(Path::new(TOOLS_TREE_CONF))
 }
 
 fn extract_tarball(tarball: &Path, dest: &Path) -> Result<()> {
