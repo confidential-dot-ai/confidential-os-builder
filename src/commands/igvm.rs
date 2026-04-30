@@ -35,10 +35,7 @@ pub fn run(args: &IgvmArgs) -> anyhow::Result<()> {
         None
     };
 
-    println!(
-        "Generating IGVM files for SMP counts: {:?}",
-        args.smp
-    );
+    println!("Generating IGVM files for SMP counts: {:?}", args.smp);
 
     for &smp in &args.smp {
         if smp == 0 {
