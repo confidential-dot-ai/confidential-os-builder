@@ -81,7 +81,10 @@ fn kernel_cache_hits_on_second_run() {
         .success();
     let m2 = std::fs::metadata(out.join("vmlinuz")).unwrap();
     let mtime2 = m2.modified().unwrap();
-    assert_eq!(mtime1, mtime2, "vmlinuz was rewritten — cache miss when hit expected");
+    assert_eq!(
+        mtime1, mtime2,
+        "vmlinuz was rewritten — cache miss when hit expected"
+    );
 }
 
 #[test]

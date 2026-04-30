@@ -137,7 +137,7 @@ pub mod commands {
     pub mod build;
     pub mod igvm;
     pub mod kernel;
-    pub mod push;
     pub mod pull;
+    pub mod push;
     pub mod run;
 }

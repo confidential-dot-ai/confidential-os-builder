@@ -76,7 +76,13 @@ make mod2yesconfig
 make olddefconfig
 ";
 
-    nspawn(tools_tree, &kernel_dir_abs, "/build", &[("HOME", "/root")], script)?;
+    nspawn(
+        tools_tree,
+        &kernel_dir_abs,
+        "/build",
+        &[("HOME", "/root")],
+        script,
+    )?;
     fs_err::remove_dir_all(&frag_dir_in_kernel)?;
     Ok(())
 }
@@ -116,8 +122,7 @@ pub fn nspawn(
     // `{ let mut v = ...; &v[..] }` which dangled.
     let mut v: Vec<OsString> = vec![nspawn_bin.as_os_str().into()];
     v.extend(args);
-    tools::run_command_streaming("sudo", &v[..])
-        .map_err(|e| anyhow!("nspawn failed: {}", e))
+    tools::run_command_streaming("sudo", &v[..]).map_err(|e| anyhow!("nspawn failed: {}", e))
 }
 
 #[cfg(test)]

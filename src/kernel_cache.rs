@@ -43,7 +43,11 @@ pub fn ensure_kernel(force: bool) -> Result<KernelArtifact> {
 }
 
 fn require_inputs_exist() -> Result<()> {
-    for f in ["kernel/version", "kernel/required.config", "kernel/hardening.config"] {
+    for f in [
+        "kernel/version",
+        "kernel/required.config",
+        "kernel/hardening.config",
+    ] {
         if !Path::new(f).exists() {
             return Err(anyhow!("required file missing: {}", f));
         }

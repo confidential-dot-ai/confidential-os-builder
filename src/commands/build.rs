@@ -82,8 +82,8 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     );
 
     // Pre-stage the custom kernel into mkosi.extra so mkosi finds it during UKI assembly.
-    let staged_kernel_dir = PathBuf::from("mkosi/base/mkosi.extra/usr/lib/modules")
-        .join(&kernel.linux_version);
+    let staged_kernel_dir =
+        PathBuf::from("mkosi/base/mkosi.extra/usr/lib/modules").join(&kernel.linux_version);
     fs_err::create_dir_all(&staged_kernel_dir)?;
     let staged_kernel = staged_kernel_dir.join("vmlinuz");
     fs_err::copy(&kernel.vmlinuz_path, &staged_kernel)?;
