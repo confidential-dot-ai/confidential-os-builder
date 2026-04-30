@@ -23,16 +23,41 @@
 //! Each test runs in its own temp output dir (no interference with `output/kernel/`).
 
 use assert_cmd::Command;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn binary() -> PathBuf {
     assert_cmd::cargo::cargo_bin("steep")
 }
 
+/// Tempdir that reclaims root ownership (left by `sudo systemd-nspawn` during
+/// the build) before the inner `TempDir`'s `Drop` rms it. Without this, every
+/// test run leaks ~2 GB of root-owned kernel source/objects in tmpfs because
+/// `remove_dir_all` runs as the test user and silently fails on root files.
+struct KernelOut(tempfile::TempDir);
+
+impl KernelOut {
+    fn new() -> Self {
+        Self(tempfile::tempdir().unwrap())
+    }
+    fn path(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+impl Drop for KernelOut {
+    fn drop(&mut self) {
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let _ = std::process::Command::new("sudo")
+            .args(["chown", "-R", &user])
+            .arg(self.0.path())
+            .status();
+    }
+}
+
 #[test]
 #[ignore]
 fn kernel_build_succeeds() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = KernelOut::new();
     let out = tmp.path().join("kernel");
     Command::new(binary())
         .args(["kernel", "--output"])
@@ -46,29 +71,28 @@ fn kernel_build_succeeds() {
 #[test]
 #[ignore]
 fn kernel_build_is_reproducible() {
-    let tmp1 = tempfile::TempDir::new().unwrap();
-    let tmp2 = tempfile::TempDir::new().unwrap();
-
-    Command::new(binary())
-        .args(["kernel", "--output"])
-        .arg(tmp1.path().join("kernel"))
-        .assert()
-        .success();
-    Command::new(binary())
-        .args(["kernel", "--output"])
-        .arg(tmp2.path().join("kernel"))
-        .assert()
-        .success();
-
-    let h1 = sha256(&tmp1.path().join("kernel/vmlinuz"));
-    let h2 = sha256(&tmp2.path().join("kernel/vmlinuz"));
+    // Build sequentially, dropping each tempdir between builds so peak disk
+    // usage is one build tree (~2 GB on tmpfs), not two.
+    let h1 = build_and_hash_vmlinuz();
+    let h2 = build_and_hash_vmlinuz();
     assert_eq!(h1, h2, "vmlinuz not reproducible across builds");
+}
+
+fn build_and_hash_vmlinuz() -> String {
+    let tmp = KernelOut::new();
+    let out = tmp.path().join("kernel");
+    Command::new(binary())
+        .args(["kernel", "--output"])
+        .arg(&out)
+        .assert()
+        .success();
+    sha256(&out.join("vmlinuz"))
 }
 
 #[test]
 #[ignore]
 fn kernel_cache_hits_on_second_run() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = KernelOut::new();
     let out = tmp.path().join("kernel");
     Command::new(binary())
         .args(["kernel", "--output"])
@@ -103,7 +127,7 @@ fn kernel_drift_fails_without_update_snapshot() {
     // to reproduce the failure — a single fresh build dir is enough, and
     // skipping the initial build avoids the root-owned `<out>/build/` files
     // (left by nspawn) that block re-cleanup on a same-output rerun.
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = KernelOut::new();
     let out = tmp.path().join("kernel");
 
     // Mutate the project's snapshot so the resolved config can't match it.
