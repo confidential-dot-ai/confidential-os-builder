@@ -189,7 +189,10 @@ impl QemuArgs {
         args.push(self.smp.to_string());
         args.push("-m".to_string());
         args.push(self.memory.clone());
-        args.push("-nographic".to_string());
+        args.push("-display".to_string());
+        args.push("none".to_string());
+        args.push("-serial".to_string());
+        args.push("none".to_string());
 
         if !self.port_forwards.is_empty() {
             let hostfwds: String = self

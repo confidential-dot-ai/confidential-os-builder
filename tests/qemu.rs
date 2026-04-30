@@ -16,7 +16,8 @@ fn test_qemu_args_basic() {
         port_forwards: vec![],
     };
     let cmd = args.to_args().unwrap();
-    assert!(cmd.contains(&"-nographic".to_string()));
+    assert!(cmd.contains(&"-display".to_string()));
+    assert!(cmd.contains(&"-serial".to_string()));
     assert!(cmd.contains(&"-smp".to_string()));
     assert!(cmd.contains(&"2".to_string()));
     assert!(cmd.contains(&"-m".to_string()));

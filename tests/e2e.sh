@@ -200,7 +200,8 @@ else
         -kernel "$OUT/uki.efi" \
         -drive "file=$OUT/disk.raw,format=raw,if=virtio" \
         -smp 1 -m 4G \
-        -nographic \
+        -display none \
+        -serial none \
         -chardev "stdio,id=hvc0,signal=off" \
         -device "virtio-serial-pci,id=virtser0" \
         -device "virtconsole,chardev=hvc0,id=console0" \
