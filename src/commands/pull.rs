@@ -19,10 +19,7 @@ pub fn run(args: &PullArgs) -> anyhow::Result<()> {
     let image_ref = format!("{}/{}:{}", args.registry, args.name, args.tag);
     println!("Pulling {} into {}", image_ref, output_dir.display());
 
-    let oras_args: Vec<OsString> = vec![
-        "pull".into(),
-        image_ref.into(),
-    ];
+    let oras_args: Vec<OsString> = vec!["pull".into(), image_ref.into()];
 
     let output_dir = output_dir
         .canonicalize()

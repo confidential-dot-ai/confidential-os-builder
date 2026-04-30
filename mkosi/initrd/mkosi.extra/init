@@ -6,17 +6,6 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 
-echo "initrd: loading modules..."
-# depmod to build module dependency map (needed for modprobe in initrd)
-depmod -a
-for mod in dm-verity overlay; do
-    if modprobe "$mod" 2>/dev/null; then
-        echo "initrd: loaded $mod"
-    else
-        echo "initrd: WARNING: $mod not found"
-    fi
-done
-
 # Parse roothash from kernel cmdline (disable globbing to prevent expansion)
 set -f
 ROOTHASH=""
