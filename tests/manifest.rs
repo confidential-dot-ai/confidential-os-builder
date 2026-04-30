@@ -1,9 +1,12 @@
 use steep::manifest::{
-    BuildManifest, BuildConfig, FileEntry, ManifestInputs, ManifestOutputs, Measurement,
+    BuildConfig, BuildManifest, FileEntry, ManifestInputs, ManifestOutputs, Measurement,
 };
 
 fn sample_entry(path: &str) -> FileEntry {
-    FileEntry { path: path.to_string(), sha256: "abc123".to_string() }
+    FileEntry {
+        path: path.to_string(),
+        sha256: "abc123".to_string(),
+    }
 }
 
 fn sample_manifest() -> BuildManifest {
@@ -76,7 +79,10 @@ fn test_sha256_file_hash() {
     let path = dir.path().join("test.bin");
     fs_err::write(&path, b"hello world").unwrap();
     let hash = steep::manifest::sha256_file(&path).unwrap();
-    assert_eq!(hash, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    assert_eq!(
+        hash,
+        "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+    );
 }
 
 #[test]
@@ -130,7 +136,10 @@ fn test_manifest_rejects_unknown_fields() {
         }
     }"#;
     let result: Result<BuildManifest, _> = serde_json::from_str(json);
-    assert!(result.is_err(), "should reject unknown fields in build config");
+    assert!(
+        result.is_err(),
+        "should reject unknown fields in build config"
+    );
 }
 
 #[test]
@@ -181,7 +190,10 @@ fn test_parse_igvm_manifest_incomplete_measurement() {
         }
     }"#;
     let result = steep::manifest::parse_igvm_manifest(json);
-    assert!(result.is_err(), "should reject measurement missing required fields");
+    assert!(
+        result.is_err(),
+        "should reject measurement missing required fields"
+    );
 }
 
 #[test]
@@ -197,7 +209,10 @@ fn test_sha256_file_empty_file() {
     fs_err::write(&path, b"").unwrap();
     let hash = steep::manifest::sha256_file(&path).unwrap();
     // SHA-256 of empty input
-    assert_eq!(hash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    assert_eq!(
+        hash,
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
 }
 
 #[test]
