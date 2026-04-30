@@ -52,7 +52,10 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         QemuTier::SevSnp => {
             let path = args.dir.join("guest.igvm");
             if !path.exists() {
-                anyhow::bail!("guest.igvm not found in {}. Was the image built with --skip-igvm?", args.dir.display());
+                anyhow::bail!(
+                    "guest.igvm not found in {}. Was the image built with --skip-igvm?",
+                    args.dir.display()
+                );
             }
             igvm_path = Some(path);
             uki_path = None;

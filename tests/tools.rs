@@ -30,21 +30,30 @@ fn test_run_command_failure() {
 fn test_run_command_failure_contains_exit_code() {
     let result = tools::run_command("sh", &["-c", "exit 42"]);
     let err = result.unwrap_err();
-    assert!(err.to_string().contains("42"), "error should contain exit code: {err}");
+    assert!(
+        err.to_string().contains("42"),
+        "error should contain exit code: {err}"
+    );
 }
 
 #[test]
 fn test_run_command_captures_stderr() {
     let result = tools::run_command("sh", &["-c", "echo oops >&2; exit 1"]);
     let err = result.unwrap_err();
-    assert!(err.to_string().contains("oops"), "error should contain stderr: {err}");
+    assert!(
+        err.to_string().contains("oops"),
+        "error should contain stderr: {err}"
+    );
 }
 
 #[test]
 fn test_run_command_nonexistent_binary() {
     let result = tools::run_command("nonexistent-binary-xyz", &[]);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("nonexistent-binary-xyz"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("nonexistent-binary-xyz"));
 }
 
 #[test]

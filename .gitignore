@@ -20,3 +20,7 @@ seed.iso
 
 # Progress docs (local working notes)
 PROGRESS*.md
+
+/output/kernel/
+/mkosi/kernel-builder/mkosi.output/
+/mkosi/base/mkosi.extra/usr/lib/modules/

@@ -120,6 +120,19 @@ fn test_igvm_requires_dir_and_smp() {
     cmd.args(["igvm"]).assert().failure();
 }
 
+// --- kernel command tests ---
+
+#[test]
+fn test_kernel_help() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["kernel", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("force"))
+        .stdout(predicates::str::contains("update-snapshot"))
+        .stdout(predicates::str::contains("output"));
+}
+
 // --- build command validation tests ---
 
 #[test]

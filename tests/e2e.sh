@@ -76,7 +76,7 @@ write_files:
 
 runcmd:
   - |
-    exec > /dev/ttyS0 2>&1
+    exec > /dev/hvc0 2>&1
     set -ex
     echo "=== steep e2e: starting ==="
     cat /etc/steep-e2e-marker
@@ -200,7 +200,11 @@ else
         -kernel "$OUT/uki.efi" \
         -drive "file=$OUT/disk.raw,format=raw,if=virtio" \
         -smp 1 -m 4G \
-        -nographic \
+        -display none \
+        -serial none \
+        -chardev "stdio,id=hvc0,signal=off" \
+        -device "virtio-serial-pci,id=virtser0" \
+        -device "virtconsole,chardev=hvc0,id=console0" \
         -no-reboot \
         -netdev "user,id=net0,hostfwd=tcp::${HOST_PORT}-:${GUEST_PORT}" \
         -device virtio-net-pci,netdev=net0 \

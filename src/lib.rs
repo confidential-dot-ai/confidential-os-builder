@@ -1,4 +1,6 @@
 pub mod igvm;
+pub mod kernel;
+pub mod kernel_cache;
 pub mod manifest;
 pub mod qemu;
 pub mod tools;
@@ -7,16 +9,17 @@ use std::path::PathBuf;
 
 #[derive(clap::Args)]
 pub struct KernelArgs {
-    /// Path to kernel source tree
-    #[arg(long)]
-    pub source: PathBuf,
-
-    /// Path to kernel .config (hardening config)
-    #[arg(long)]
-    pub config: PathBuf,
-
-    /// Output directory for kernel + initrd
+    /// Force rebuild even if cache is current
     #[arg(short, long)]
+    pub force: bool,
+
+    /// Regenerate kernel/config-x86_64.snapshot from defconfig + fragments.
+    /// Use after bumping the kernel version or editing the fragments.
+    #[arg(long)]
+    pub update_snapshot: bool,
+
+    /// Output directory.
+    #[arg(short, long, default_value = "output/kernel")]
     pub output: PathBuf,
 }
 
@@ -134,7 +137,7 @@ pub mod commands {
     pub mod build;
     pub mod igvm;
     pub mod kernel;
-    pub mod push;
     pub mod pull;
+    pub mod push;
     pub mod run;
 }
