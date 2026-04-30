@@ -90,31 +90,43 @@ fn kernel_cache_hits_on_second_run() {
 #[test]
 #[ignore]
 fn kernel_drift_fails_without_update_snapshot() {
+    // Snapshot drift is caught at the snapshot-guard step, which runs after
+    // configure but before compile. So we don't need a prior successful build
+    // to reproduce the failure — a single fresh build dir is enough, and
+    // skipping the initial build avoids the root-owned `<out>/build/` files
+    // (left by nspawn) that block re-cleanup on a same-output rerun.
     let tmp = tempfile::TempDir::new().unwrap();
     let out = tmp.path().join("kernel");
-    // First, do a clean build to populate the cache + snapshot.
-    Command::new(binary())
-        .args(["kernel", "--output"])
-        .arg(&out)
-        .assert()
-        .success();
 
-    // Modify the snapshot so the next build's resolved config diverges.
-    let snap = std::fs::read_to_string("kernel/config-x86_64.snapshot").unwrap();
-    let modified = format!("{}\n# DRIFT_TEST_MARKER=1\n", snap);
+    // Mutate the project's snapshot so the resolved config can't match it.
     let backup = std::fs::read("kernel/config-x86_64.snapshot").unwrap();
-    std::fs::write("kernel/config-x86_64.snapshot", modified).unwrap();
+    let snap = std::fs::read_to_string("kernel/config-x86_64.snapshot").unwrap();
+    std::fs::write(
+        "kernel/config-x86_64.snapshot",
+        format!("{}\n# DRIFT_TEST_MARKER=1\n", snap),
+    )
+    .unwrap();
+
     let result = Command::new(binary())
-        .args(["kernel", "--force", "--output"])
+        .args(["kernel", "--output"])
         .arg(&out)
         .output()
         .unwrap();
+
     // Restore the snapshot regardless of test outcome.
     std::fs::write("kernel/config-x86_64.snapshot", backup).unwrap();
 
-    assert!(!result.status.success(), "expected drift to fail");
+    let stdout = String::from_utf8_lossy(&result.stdout);
     let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(stderr.contains(".config drift") || stderr.contains("update-snapshot"));
+
+    assert!(
+        !result.status.success(),
+        "expected drift to fail. stdout:\n{stdout}\nstderr:\n{stderr}",
+    );
+    assert!(
+        stderr.contains(".config drift") || stderr.contains("update-snapshot"),
+        "stderr did not contain expected drift message.\nstdout:\n{stdout}\nstderr:\n{stderr}",
+    );
 }
 
 fn sha256(p: &std::path::Path) -> String {
