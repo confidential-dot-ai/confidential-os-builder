@@ -153,14 +153,11 @@ pub fn force_remove_dir_all(path: &Path) -> std::io::Result<()> {
                 .arg(path)
                 .status()?;
             if !status.success() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!(
-                        "sudo rm -rf {} failed (exit {:?})",
-                        path.display(),
-                        status.code()
-                    ),
-                ));
+                return Err(std::io::Error::other(format!(
+                    "sudo rm -rf {} failed (exit {:?})",
+                    path.display(),
+                    status.code()
+                )));
             }
             Ok(())
         }
