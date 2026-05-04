@@ -38,7 +38,7 @@ jobs:
           key: ${{ runner.os }}-kernel-${{ hashFiles('mkosi/kernel-builder/**/*','kernel/*') }}
 
       - name: Build kernel
-        run: sudo bin/steep kernel
+        run: bin/steep kernel
 
       - name: Cache base image tools
         uses: actions/cache@v5
@@ -47,7 +47,7 @@ jobs:
           key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf') }}
 
       - name: Build base image
-        run: sudo bin/steep build
+        run: bin/steep build
 
       - name: Setup ORAS
         uses: oras-project/setup-oras@v1
