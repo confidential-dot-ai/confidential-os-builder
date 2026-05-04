@@ -127,6 +127,47 @@ pub fn sudo_chmod_readable(path: &Path) -> Result<(), ToolError> {
     Ok(())
 }
 
+/// Recursively remove a directory tree, escalating to `sudo rm -rf` on EPERM.
+///
+/// Kernel build steps run inside `systemd-nspawn` as root and bind-mount host
+/// directories, so the nspawn writes files the host user can't later delete.
+/// Without this fallback, a single interrupted (or completed) build leaves
+/// `output/kernel/build` un-wipeable and every subsequent run fails at the
+/// "extract + configure" step. Trying the plain remove first keeps the no-sudo
+/// path fast for clean trees.
+pub fn force_remove_dir_all(path: &Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    match fs_err::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            tracing::warn!(
+                path = %path.display(),
+                "permission denied removing tree; retrying with sudo (likely root-owned files left by nspawn)"
+            );
+            let status = Command::new("sudo")
+                .arg("rm")
+                .arg("-rf")
+                .arg("--")
+                .arg(path)
+                .status()?;
+            if !status.success() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!(
+                        "sudo rm -rf {} failed (exit {:?})",
+                        path.display(),
+                        status.code()
+                    ),
+                ));
+            }
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Resolve the canonical path of mkosi, following symlinks.
 /// uv-installed mkosi lives at ~/.local/bin/mkosi -> ~/.local/share/uv/tools/mkosi/bin/mkosi
 /// which has a shebang pointing to the venv Python. sudo + env + PATH can't resolve
@@ -139,4 +180,27 @@ pub fn resolve_mkosi() -> Result<String, ToolError> {
             tool: "mkosi".to_string(),
             source: e,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn force_remove_dir_all_removes_user_owned_tree() {
+        let d = TempDir::new().unwrap();
+        let inner = d.path().join("a/b/c");
+        fs_err::create_dir_all(&inner).unwrap();
+        fs_err::write(inner.join("f"), b"hi").unwrap();
+        force_remove_dir_all(d.path()).unwrap();
+        assert!(!d.path().exists());
+    }
+
+    #[test]
+    fn force_remove_dir_all_is_a_noop_for_missing_path() {
+        let d = TempDir::new().unwrap();
+        let missing = d.path().join("does-not-exist");
+        force_remove_dir_all(&missing).unwrap();
+    }
 }
