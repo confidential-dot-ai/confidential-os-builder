@@ -3,5 +3,8 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd $DIR/..
 
+which cargo || source "$HOME/.cargo/env"
+which uv || source "$HOME/.local/bin/env"
+
 set -x
 exec cargo run -q --release -- "$@"

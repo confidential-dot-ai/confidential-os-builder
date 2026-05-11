@@ -25,8 +25,31 @@ jobs:
       - name: Setup mkosi
         uses: systemd/mkosi@v26
 
+      - run: sudo apt install -y systemd-container
+
+      - name: Cache kernel tools
+        uses: actions/cache@v5
+        with:
+          path: mkosi/kernel-builder/mkosi.tools
+          key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/kernel-builder/mkosi.conf') }}
+
+      - name: Cache kernel
+        uses: actions/cache@v5
+        with:
+          path: output/kernel
+          key: ${{ runner.os }}-kernel-${{ hashFiles('mkosi/kernel-builder/**/*','kernel/*') }}
+
+      - name: Build kernel
+        run: bin/steep kernel
+
+      - name: Cache base image tools
+        uses: actions/cache@v5
+        with:
+          path: mkosi/base/mkosi.tools
+          key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf') }}
+
       - name: Build base image
-        run: sudo mkosi -C mkosi/base
+        run: bin/steep build
 
       - name: Setup ORAS
         uses: oras-project/setup-oras@v1

@@ -61,9 +61,10 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Phase 0c: extract + configure
     println!("\n=== Step 0c: Extracting + configuring kernel ===");
-    if build_dir.exists() {
-        fs_err::remove_dir_all(&build_dir)?;
-    }
+    // The compile/configure phases write into this tree as root via nspawn,
+    // so a previous run can leave root-owned files here. force_remove_dir_all
+    // falls back to `sudo rm -rf` on EPERM so re-builds always succeed.
+    tools::force_remove_dir_all(&build_dir)?;
     fs_err::create_dir_all(&build_dir)?;
     extract_tarball(&tarball, &build_dir)?;
     let kernel_src = build_dir.join(format!("linux-{}", version.linux_version));
