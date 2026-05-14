@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::manifest::{self, BuildManifest};
 use crate::qemu::{self, QemuArgs, QemuTier};
 use crate::RunArgs;
@@ -71,12 +69,12 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
                     anyhow::bail!("firmware not found: {}", cli_fw.display());
                 }
                 cli_fw.clone()
-            } else if let Some(ref fw_entry) = manifest.inputs.firmware {
-                let fw = PathBuf::from(&fw_entry.path);
+            } else if manifest.inputs.firmware.is_some() {
+                let fw = args.dir.join("OVMF.fd");
                 if !fw.exists() {
                     anyhow::bail!(
-                        "firmware not found at {} (recorded in manifest)",
-                        fw_entry.path
+                        "firmware not found at {} (build copies firmware into the output directory)",
+                        fw.display()
                     );
                 }
                 fw

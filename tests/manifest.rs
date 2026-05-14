@@ -243,3 +243,20 @@ fn test_read_manifest_invalid_json() {
     let result = steep::manifest::read_manifest(&path);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_basename_of_strips_directories() {
+    use std::path::Path;
+    assert_eq!(
+        steep::manifest::basename_of(Path::new("/abs/path/to/disk.raw")),
+        "disk.raw"
+    );
+    assert_eq!(
+        steep::manifest::basename_of(Path::new("relative/dir/OVMF.fd")),
+        "OVMF.fd"
+    );
+    assert_eq!(
+        steep::manifest::basename_of(Path::new("uki.efi")),
+        "uki.efi"
+    );
+}
