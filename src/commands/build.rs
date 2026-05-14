@@ -268,38 +268,38 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 snapshot_config_sha256: kernel.manifest.inputs.snapshot_config_sha256.clone(),
             }),
             initrd: FileEntry {
-                path: initrd_path.to_string_lossy().to_string(),
+                path: manifest::basename_of(&initrd_path),
                 sha256: initrd_hash,
             },
             firmware: firmware
                 .as_ref()
                 .map(|fw| -> anyhow::Result<FileEntry> {
                     Ok(FileEntry {
-                        path: fw.to_string_lossy().to_string(),
+                        path: manifest::basename_of(fw),
                         sha256: manifest::sha256_file(fw)?,
                     })
                 })
                 .transpose()?,
             base_image: FileEntry {
-                path: base_abs.to_string_lossy().to_string(),
+                path: manifest::basename_of(&base_abs),
                 sha256: disk_checksum.to_owned(),
             },
         },
         outputs: ManifestOutputs {
             disk_image: FileEntry {
-                path: disk_path.to_string_lossy().to_string(),
+                path: manifest::basename_of(&disk_path),
                 sha256: disk_checksum,
             },
             igvm: if args.skip_igvm {
                 None
             } else {
                 Some(FileEntry {
-                    path: igvm_path.to_string_lossy().to_string(),
+                    path: manifest::basename_of(&igvm_path),
                     sha256: igvm_hash,
                 })
             },
             uki: FileEntry {
-                path: output_uki.to_string_lossy().to_string(),
+                path: manifest::basename_of(&output_uki),
                 sha256: uki_hash,
             },
         },
