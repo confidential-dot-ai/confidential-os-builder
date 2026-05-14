@@ -70,6 +70,15 @@ pub struct Measurement {
     pub vmsa_count: u32,
 }
 
+/// Extract the file basename from a path as an owned String.
+/// Manifest entries record only the basename so they're portable across hosts.
+pub fn basename_of(path: &Path) -> String {
+    path.file_name()
+        .expect("manifest paths must have a file name component")
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Compute SHA-256 hash of a file, returned as a hex string.
 /// Uses streaming reads to handle large files (disk images can be multiple GB).
 pub fn sha256_file(path: &Path) -> anyhow::Result<String> {
