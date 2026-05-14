@@ -357,6 +357,28 @@ fn test_qemu_args_accepts_qcow2_format() {
     assert!(joined.contains("format=qcow2"));
 }
 
+#[test]
+fn test_qemu_args_disk_is_readonly() {
+    let args = QemuArgs {
+        tier: QemuTier::SevSnp,
+        qemu_bin: "qemu-system-x86_64".to_string(),
+        igvm: Some(PathBuf::from("/output/guest.igvm")),
+        uki: None,
+        firmware: None,
+        disk: PathBuf::from("/output/disk.raw"),
+        disk_format: "raw".to_string(),
+        smp: 1,
+        memory: "2G".to_string(),
+        port_forwards: vec![],
+    };
+    let cmd = args.to_args().unwrap();
+    let joined = cmd.join(" ");
+    assert!(
+        joined.contains("file=/output/disk.raw,format=raw,if=virtio,readonly=on"),
+        "disk drive should be marked readonly so the same image can back multiple VMs concurrently"
+    );
+}
+
 // --- KVM tier missing firmware ---
 
 #[test]
