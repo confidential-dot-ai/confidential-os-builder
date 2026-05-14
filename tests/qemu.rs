@@ -420,6 +420,16 @@ fn test_qemu_args_uses_virtio_console() {
     );
     // 8250 is gone — the SNP tier no longer uses -serial mon:stdio.
     assert!(!joined.contains("-serial mon:stdio"));
+    // Monitor is multiplexed onto stdio so users can reach it with Ctrl-A C.
+    assert!(joined.contains("mux=on"), "stdio chardev should be muxed");
+    assert!(
+        joined.contains("chardev=hvc0,mode=readline"),
+        "monitor should be attached to the hvc0 mux"
+    );
+    assert!(
+        !joined.contains("-monitor none"),
+        "SNP tier should expose the monitor via the stdio mux"
+    );
 }
 
 #[test]
@@ -440,4 +450,9 @@ fn test_qemu_args_kvm_uses_virtio_console() {
     let joined = cmd.join(" ");
     assert!(joined.contains("virtio-serial-pci"));
     assert!(joined.contains("chardev=hvc0"));
+    assert!(joined.contains("mux=on"), "stdio chardev should be muxed");
+    assert!(
+        joined.contains("chardev=hvc0,mode=readline"),
+        "monitor should be attached to the hvc0 mux"
+    );
 }
