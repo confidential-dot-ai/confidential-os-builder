@@ -417,6 +417,40 @@ impl Drop for KernelStageCleanup {
     }
 }
 
+/// Recursively copy the contents of `src` into `dst`.
+///
+/// - `src` must be an existing directory (caller validates).
+/// - `dst` is created if missing.
+/// - Files preserve their unix mode bits.
+/// - Symlinks are copied as symlinks (target path verbatim, not dereferenced).
+#[allow(dead_code)]
+fn copy_extra(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs_err::create_dir_all(dst)?;
+    for entry in fs_err::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let ft = entry.file_type()?;
+        if ft.is_symlink() {
+            let target = fs_err::read_link(&from)?;
+            // If the destination already exists, remove it so symlink() doesn't fail.
+            if fs_err::symlink_metadata(&to).is_ok() {
+                let _ = fs_err::remove_file(&to);
+            }
+            std::os::unix::fs::symlink(&target, &to)?;
+        } else if ft.is_dir() {
+            copy_extra(&from, &to)?;
+        } else {
+            fs_err::copy(&from, &to)?;
+            let mode = fs_err::metadata(&from)?.permissions().mode();
+            fs_err::set_permissions(&to, std::fs::Permissions::from_mode(mode))?;
+        }
+    }
+    Ok(())
+}
+
 fn human_size(path: &Path) -> anyhow::Result<String> {
     let bytes = fs_err::metadata(path)?.len();
     Ok(humansize::format_size(bytes, humansize::BINARY))
@@ -424,4 +458,93 @@ fn human_size(path: &Path) -> anyhow::Result<String> {
 
 fn chrono_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::TempDir;
+
+    #[test]
+    fn copy_extra_copies_files_at_root() {
+        let src = TempDir::new().unwrap();
+        let dst = TempDir::new().unwrap();
+        fs_err::write(src.path().join("a.txt"), b"hello").unwrap();
+
+        copy_extra(src.path(), dst.path()).unwrap();
+
+        let copied = fs_err::read(dst.path().join("a.txt")).unwrap();
+        assert_eq!(copied, b"hello");
+    }
+
+    #[test]
+    fn copy_extra_copies_nested_directories() {
+        let src = TempDir::new().unwrap();
+        let dst = TempDir::new().unwrap();
+        fs_err::create_dir_all(src.path().join("etc/foo")).unwrap();
+        fs_err::write(src.path().join("etc/foo/bar.conf"), b"x=1").unwrap();
+
+        copy_extra(src.path(), dst.path()).unwrap();
+
+        assert_eq!(
+            fs_err::read(dst.path().join("etc/foo/bar.conf")).unwrap(),
+            b"x=1"
+        );
+    }
+
+    #[test]
+    fn copy_extra_preserves_file_modes() {
+        let src = TempDir::new().unwrap();
+        let dst = TempDir::new().unwrap();
+        let path = src.path().join("script");
+        fs_err::write(&path, b"#!/bin/sh\n").unwrap();
+        fs_err::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        copy_extra(src.path(), dst.path()).unwrap();
+
+        let mode = fs_err::metadata(dst.path().join("script"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o755);
+    }
+
+    #[test]
+    fn copy_extra_preserves_symlinks() {
+        let src = TempDir::new().unwrap();
+        let dst = TempDir::new().unwrap();
+        fs_err::write(src.path().join("target"), b"t").unwrap();
+        std::os::unix::fs::symlink("target", src.path().join("link")).unwrap();
+
+        copy_extra(src.path(), dst.path()).unwrap();
+
+        let link_meta = fs_err::symlink_metadata(dst.path().join("link")).unwrap();
+        assert!(link_meta.file_type().is_symlink());
+        let target = fs_err::read_link(dst.path().join("link")).unwrap();
+        assert_eq!(target, std::path::PathBuf::from("target"));
+    }
+
+    #[test]
+    fn copy_extra_empty_source_is_ok() {
+        let src = TempDir::new().unwrap();
+        let dst = TempDir::new().unwrap();
+        copy_extra(src.path(), dst.path()).unwrap();
+        // dst should exist and be empty
+        assert!(dst.path().exists());
+        assert_eq!(fs_err::read_dir(dst.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn copy_extra_creates_destination_if_missing() {
+        let src = TempDir::new().unwrap();
+        let dst_parent = TempDir::new().unwrap();
+        let dst = dst_parent.path().join("does/not/exist/yet");
+        fs_err::write(src.path().join("f"), b"x").unwrap();
+
+        copy_extra(src.path(), &dst).unwrap();
+
+        assert_eq!(fs_err::read(dst.join("f")).unwrap(), b"x");
+    }
 }
