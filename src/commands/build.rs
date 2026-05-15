@@ -31,6 +31,34 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         }
     }
 
+    // Validate --extra if provided
+    if let Some(ref extra) = args.extra {
+        if !extra.exists() {
+            anyhow::bail!("--extra directory not found: {}", extra.display());
+        }
+        if !extra.is_dir() {
+            anyhow::bail!("--extra path is not a directory: {}", extra.display());
+        }
+    }
+
+    // Prepare the per-build mkosi.local/ overlay. Any debris from a crashed
+    // prior build is wiped so we start from a clean slate. The cleanup guard
+    // is installed *before* anything writes into the overlay so that early
+    // returns still trigger cleanup.
+    let mkosi_local = PathBuf::from("mkosi/base/mkosi.local");
+    if fs_err::exists(&mkosi_local)? {
+        fs_err::remove_dir_all(&mkosi_local)?;
+    }
+    let mkosi_local_extra = mkosi_local.join("mkosi.extra");
+    fs_err::create_dir_all(&mkosi_local_extra)?;
+    let _mkosi_local_guard = MkosiLocalCleanup {
+        dir: mkosi_local.clone(),
+    };
+
+    if let Some(ref extra) = args.extra {
+        copy_extra(extra, &mkosi_local_extra)?;
+    }
+
     // Check required tools — resolve mkosi's full canonical path so sudo can invoke it
     // directly (uv-installed mkosi has a symlink chain that breaks under sudo + env + PATH).
     let mkosi_bin = tools::resolve_mkosi()?;
@@ -54,23 +82,17 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Inject debug autologin if --debug (enables passwordless root on serial console)
     let autologin_dir =
-        PathBuf::from("mkosi/base/mkosi.extra/etc/systemd/system/serial-getty@hvc0.service.d");
-    let _console_guard = if args.console {
+        PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/etc/systemd/system/serial-getty@hvc0.service.d");
+    if args.console {
         println!("WARNING: --console enables passwordless root on serial console. Do not use in production.");
         inject_console_autologin(&autologin_dir)?;
-        Some(ConsoleCleanup { dir: autologin_dir })
-    } else {
-        None
-    };
+    }
 
     // Inject cloud-init user-data into mkosi.extra seed directory (measured in verity root)
-    let seed_dir = PathBuf::from("mkosi/base/mkosi.extra/var/lib/cloud/seed/nocloud");
-    let _cloud_init_guard = if let Some(ref ci) = args.cloud_init {
+    let seed_dir = PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/var/lib/cloud/seed/nocloud");
+    if let Some(ref ci) = args.cloud_init {
         inject_cloud_init(ci, &seed_dir)?;
-        Some(CloudInitCleanup { seed_dir })
-    } else {
-        None
-    };
+    }
 
     // Phase 1: ensure custom kernel artifact is current
     println!("\n=== Step 1/4: Ensuring custom kernel ===");
@@ -83,13 +105,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Pre-stage the custom kernel into mkosi.extra so mkosi finds it during UKI assembly.
     let staged_kernel_dir =
-        PathBuf::from("mkosi/base/mkosi.extra/usr/lib/modules").join(&kernel.linux_version);
+        PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/usr/lib/modules").join(&kernel.linux_version);
     fs_err::create_dir_all(&staged_kernel_dir)?;
-    let staged_kernel = staged_kernel_dir.join("vmlinuz");
-    fs_err::copy(&kernel.vmlinuz_path, &staged_kernel)?;
-    let _kernel_stage_guard = KernelStageCleanup {
-        staged: staged_kernel,
-    };
+    fs_err::copy(&kernel.vmlinuz_path, staged_kernel_dir.join("vmlinuz"))?;
 
     // Step 2: Build the verity initrd via mkosi (declarative)
     println!("\n=== Step 2/4: Building verity initrd (mkosi) ===");
@@ -342,17 +360,6 @@ fn inject_console_autologin(dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// RAII guard to clean up debug autologin drop-in after mkosi build.
-struct ConsoleCleanup {
-    dir: PathBuf,
-}
-
-impl Drop for ConsoleCleanup {
-    fn drop(&mut self) {
-        let _ = fs_err::remove_dir_all(&self.dir);
-    }
-}
-
 /// Inject cloud-init user-data into the mkosi.extra seed directory.
 /// The NoCloud datasource picks up user-data from /var/lib/cloud/seed/nocloud/.
 fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
@@ -372,56 +379,10 @@ fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// RAII guard to clean up injected cloud-init files after mkosi build.
-/// These files are only needed during the build — mkosi copies them into the image.
-struct CloudInitCleanup {
-    seed_dir: PathBuf,
-}
-
-impl Drop for CloudInitCleanup {
-    fn drop(&mut self) {
-        let _ = fs_err::remove_dir_all(&self.seed_dir);
-        // Walk up and remove empty parent dirs (nocloud/seed/cloud/lib/var)
-        let mut dir = self.seed_dir.clone();
-        while let Some(parent) = dir.parent() {
-            if dir.ends_with("mkosi.extra") {
-                break;
-            }
-            if fs_err::remove_dir(parent).is_err() {
-                break; // not empty or doesn't exist
-            }
-            dir = parent.to_path_buf();
-        }
-    }
-}
-
-/// RAII guard that removes the pre-staged vmlinuz and prunes empty parent dirs
-/// back up to mkosi.extra/. Mirrors CloudInitCleanup's behavior.
-struct KernelStageCleanup {
-    staged: PathBuf,
-}
-
-impl Drop for KernelStageCleanup {
-    fn drop(&mut self) {
-        let _ = fs_err::remove_file(&self.staged);
-        let mut dir = self.staged.parent().map(|p| p.to_path_buf());
-        while let Some(d) = dir {
-            if d.ends_with("mkosi.extra") {
-                break;
-            }
-            if fs_err::remove_dir(&d).is_err() {
-                break;
-            }
-            dir = d.parent().map(|p| p.to_path_buf());
-        }
-    }
-}
-
 /// RAII guard that removes the entire per-build `mkosi.local/` overlay after
 /// the mkosi run, including when an error path drops the guard early. All
 /// per-build file injections (extra, kernel, console, cloud-init) live under
 /// this directory, so a single cleanup covers them all.
-#[allow(dead_code)]
 struct MkosiLocalCleanup {
     dir: PathBuf,
 }
@@ -438,7 +399,6 @@ impl Drop for MkosiLocalCleanup {
 /// - `dst` is created if missing.
 /// - Files preserve their unix mode bits.
 /// - Symlinks are copied as symlinks (target path verbatim, not dereferenced).
-#[allow(dead_code)]
 fn copy_extra(src: &Path, dst: &Path) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
