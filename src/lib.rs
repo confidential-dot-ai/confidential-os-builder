@@ -69,6 +69,11 @@ pub struct BuildArgs {
     #[arg(short = 'e', long, value_name = "DIR")]
     pub extra: Option<PathBuf>,
 
+    /// Extra package to install in the base image. Repeatable and
+    /// comma-separated. Passed through to mkosi as `--package`.
+    #[arg(short = 'p', long = "package", value_name = "PKG", value_delimiter = ',')]
+    pub package: Vec<String>,
+
     /// Enable debug console (passwordless root autologin on serial).
     /// WARNING: In the SNP threat model, the host controls the serial port.
     /// This changes the image measurement.
