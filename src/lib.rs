@@ -64,6 +64,11 @@ pub struct BuildArgs {
     #[arg(short, long)]
     pub cloud_init: Option<PathBuf>,
 
+    /// Directory of extra files to bake into the image. Contents are copied
+    /// into the image filesystem root, layered on top of the base image.
+    #[arg(short = 'e', long, value_name = "DIR")]
+    pub extra: Option<PathBuf>,
+
     /// Enable debug console (passwordless root autologin on serial).
     /// WARNING: In the SNP threat model, the host controls the serial port.
     /// This changes the image measurement.
