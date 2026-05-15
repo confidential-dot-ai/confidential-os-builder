@@ -22,6 +22,10 @@ rm -rf "$BUILDROOT/var/cache/man"
 rm -rf "$BUILDROOT/var/cache/apt"
 rm -rf "$BUILDROOT/var/lib/apt/lists"
 
+# Recreate /var/lib/dpkg/ — CleanPackageMetadata=yes wipes it, but apt
+# refuses to open its lock file if the directory is missing.
+mkdir -p "$BUILDROOT/var/lib/dpkg"
+
 # Remove random seeds
 rm -f "$BUILDROOT/var/lib/systemd/random-seed"
 rm -f "$BUILDROOT/boot/efi/loader/random-seed"
