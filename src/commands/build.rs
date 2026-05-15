@@ -417,6 +417,21 @@ impl Drop for KernelStageCleanup {
     }
 }
 
+/// RAII guard that removes the entire per-build `mkosi.local/` overlay after
+/// the mkosi run, including when an error path drops the guard early. All
+/// per-build file injections (extra, kernel, console, cloud-init) live under
+/// this directory, so a single cleanup covers them all.
+#[allow(dead_code)]
+struct MkosiLocalCleanup {
+    dir: PathBuf,
+}
+
+impl Drop for MkosiLocalCleanup {
+    fn drop(&mut self) {
+        let _ = fs_err::remove_dir_all(&self.dir);
+    }
+}
+
 /// Recursively copy the contents of `src` into `dst`.
 ///
 /// - `src` must be an existing directory (caller validates).
@@ -546,5 +561,27 @@ mod tests {
         copy_extra(src.path(), &dst).unwrap();
 
         assert_eq!(fs_err::read(dst.join("f")).unwrap(), b"x");
+    }
+
+    #[test]
+    fn mkosi_local_cleanup_removes_directory_on_drop() {
+        let parent = TempDir::new().unwrap();
+        let dir = parent.path().join("mkosi.local");
+        fs_err::create_dir_all(dir.join("mkosi.extra/etc")).unwrap();
+        fs_err::write(dir.join("mkosi.extra/etc/file"), b"x").unwrap();
+
+        {
+            let _guard = MkosiLocalCleanup { dir: dir.clone() };
+            assert!(dir.exists());
+        }
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn mkosi_local_cleanup_swallows_missing_directory() {
+        let parent = TempDir::new().unwrap();
+        let dir = parent.path().join("never-existed");
+        drop(MkosiLocalCleanup { dir });
+        // No panic == pass.
     }
 }
