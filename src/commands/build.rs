@@ -88,7 +88,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         inject_console_autologin(&autologin_dir)?;
     }
 
-    // Inject cloud-init user-data into mkosi.extra seed directory (measured in verity root)
+    // Inject cloud-init user-data into mkosi.local/mkosi.extra seed directory (measured in verity root)
     let seed_dir = PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/var/lib/cloud/seed/nocloud");
     if let Some(ref ci) = args.cloud_init {
         inject_cloud_init(ci, &seed_dir)?;
@@ -360,7 +360,7 @@ fn inject_console_autologin(dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Inject cloud-init user-data into the mkosi.extra seed directory.
+/// Inject cloud-init user-data into the mkosi.local/mkosi.extra seed directory.
 /// The NoCloud datasource picks up user-data from /var/lib/cloud/seed/nocloud/.
 fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
     fs_err::create_dir_all(seed_dir)?;
@@ -389,7 +389,7 @@ struct MkosiLocalCleanup {
 
 impl Drop for MkosiLocalCleanup {
     fn drop(&mut self) {
-        let _ = fs_err::remove_dir_all(&self.dir);
+        let _ = crate::tools::force_remove_dir_all(&self.dir);
     }
 }
 
@@ -525,8 +525,9 @@ mod tests {
 
     #[test]
     fn copy_extra_fails_on_nonexistent_source() {
+        let parent = TempDir::new().unwrap();
+        let src = parent.path().join("nonexistent-child");
         let dst = TempDir::new().unwrap();
-        let src = std::path::PathBuf::from("/tmp/definitely-not-a-real-path-xyz-12345");
         let result = copy_extra(&src, dst.path());
         assert!(result.is_err());
     }
