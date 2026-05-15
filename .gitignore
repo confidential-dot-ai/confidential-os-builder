@@ -23,4 +23,5 @@ PROGRESS*.md
 
 /output/kernel/
 /mkosi/kernel-builder/mkosi.output/
+/mkosi/base/mkosi.local
 /mkosi/base/mkosi.extra/usr/lib/modules/

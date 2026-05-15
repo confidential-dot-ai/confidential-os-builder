@@ -524,6 +524,24 @@ mod tests {
     }
 
     #[test]
+    fn copy_extra_fails_on_nonexistent_source() {
+        let dst = TempDir::new().unwrap();
+        let src = std::path::PathBuf::from("/tmp/definitely-not-a-real-path-xyz-12345");
+        let result = copy_extra(&src, dst.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn copy_extra_fails_on_file_source() {
+        let parent = TempDir::new().unwrap();
+        let src = parent.path().join("a-file");
+        fs_err::write(&src, b"x").unwrap();
+        let dst = TempDir::new().unwrap();
+        let result = copy_extra(&src, dst.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn mkosi_local_cleanup_removes_directory_on_drop() {
         let parent = TempDir::new().unwrap();
         let dir = parent.path().join("mkosi.local");
