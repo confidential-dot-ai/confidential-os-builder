@@ -70,6 +70,24 @@ pub fn detect_tier_for(qemu_bin: &str) -> anyhow::Result<QemuTier> {
     Ok(select_tier(&object_help, kvm_available))
 }
 
+/// Format an argv as a shell-pasteable string, single-quoting any arg that
+/// contains whitespace or shell metacharacters.
+fn shell_join(argv: &[String]) -> String {
+    argv.iter()
+        .map(|a| {
+            let needs_quote = a.is_empty()
+                || a.bytes()
+                    .any(|b| !(b.is_ascii_alphanumeric() || b"@%_-+=:,./".contains(&b)));
+            if needs_quote {
+                format!("'{}'", a.replace('\'', "'\\''"))
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Reject paths containing commas — QEMU uses comma-delimited key=value in
 /// -object/-drive args, so a comma in a path injects additional properties.
 fn reject_comma_in_path(label: &str, path: &std::path::Path) -> anyhow::Result<()> {
@@ -183,7 +201,7 @@ impl QemuArgs {
         }
         args.push("-drive".to_string());
         args.push(format!(
-            "file={},format={},if=virtio",
+            "file={},format={},if=virtio,readonly=on",
             self.disk.display(),
             self.disk_format
         ));
@@ -239,6 +257,7 @@ pub fn launch(args: &QemuArgs) -> anyhow::Result<()> {
             // SNP requires sudo for /dev/sev
             let mut sudo_args = vec![qemu_bin.to_string()];
             sudo_args.extend(cmd_args);
+            println!("sudo {}", shell_join(&sudo_args));
             let err = Command::new("sudo").args(&sudo_args).exec();
             // exec() only returns on failure
             anyhow::bail!("failed to exec sudo qemu: {err}");
@@ -261,7 +280,9 @@ pub fn launch(args: &QemuArgs) -> anyhow::Result<()> {
                 tier = ?args.tier,
                 "launching VM via QEMU"
             );
-            tracing::debug!("{} {}", &qemu_bin, &cmd_args.join(" "));
+            let mut full = vec![qemu_bin.clone()];
+            full.extend(cmd_args.iter().cloned());
+            println!("{}", shell_join(&full));
             let err = Command::new(qemu_bin).args(&cmd_args).exec();
             anyhow::bail!("failed to exec qemu: {err}");
         }
