@@ -140,17 +140,18 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         anyhow::bail!("mkosi config dir not found: {}", mkosi_dir.display());
     }
 
-    tools::run_command_streaming(
-        "sudo",
-        &[
-            mkosi_bin.as_str(),
-            "--directory",
-            &*mkosi_dir.to_string_lossy(),
-            "--force",
-            "--initrd",
-            &*initrd_path.to_string_lossy(),
-        ],
-    )?;
+    let mut mkosi_args: Vec<String> = vec![
+        mkosi_bin.clone(),
+        "--directory".to_string(),
+        mkosi_dir.to_string_lossy().into_owned(),
+        "--force".to_string(),
+        "--initrd".to_string(),
+        initrd_path.to_string_lossy().into_owned(),
+    ];
+    for pkg in &args.package {
+        mkosi_args.push(format!("--package={pkg}"));
+    }
+    tools::run_command_streaming("sudo", &mkosi_args)?;
 
     let mkosi_output = mkosi_dir.join("mkosi.output");
     // Find the split artifacts mkosi produced
