@@ -1,9 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{
-    self, BuildConfig, BuildManifest, FileEntry, ManifestInputs, ManifestOutputs, Measurement,
-};
-use crate::{tools, BuildArgs};
+use crate::{igvm, kernel_cache, manifest, qemu, tools, BuildArgs};
 
 pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     tracing::info!("sealing base image with dm-verity + UKI");
@@ -22,7 +19,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     };
 
     // Validate memory format before it reaches QEMU arg interpolation
-    crate::qemu::validate_memory(&args.memory)?;
+    qemu::validate_memory(&args.memory)?;
 
     // Validate cloud-init user-data if provided
     if let Some(ref ci) = args.cloud_init {
@@ -81,8 +78,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     let output = dir.canonicalize()?;
 
     // Inject debug autologin if --debug (enables passwordless root on serial console)
-    let autologin_dir =
-        PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/etc/systemd/system/serial-getty@hvc0.service.d");
+    let autologin_dir = PathBuf::from(
+        "mkosi/base/mkosi.local/mkosi.extra/etc/systemd/system/serial-getty@hvc0.service.d",
+    );
     if args.console {
         println!("WARNING: --console enables passwordless root on serial console. Do not use in production.");
         inject_console_autologin(&autologin_dir)?;
@@ -96,7 +94,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Phase 1: ensure custom kernel artifact is current
     println!("\n=== Step 1/4: Ensuring custom kernel ===");
-    let kernel = crate::kernel_cache::ensure_kernel(false)?;
+    let kernel = kernel_cache::ensure_kernel(false)?;
     println!(
         "kernel: {} (linux {})",
         kernel.vmlinuz_path.display(),
@@ -104,8 +102,8 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     );
 
     // Pre-stage the custom kernel into mkosi.extra so mkosi finds it during UKI assembly.
-    let staged_kernel_dir =
-        PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/usr/lib/modules").join(&kernel.linux_version);
+    let staged_kernel_dir = PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/usr/lib/modules")
+        .join(&kernel.linux_version);
     fs_err::create_dir_all(&staged_kernel_dir)?;
     fs_err::copy(&kernel.vmlinuz_path, staged_kernel_dir.join("vmlinuz"))?;
 
@@ -133,7 +131,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         human_size(&initrd_path)?
     );
 
-    // Step 3: Run mkosi — builds disk with verity, UKI with roothash + our initrd + modules
+    // Step 3: Run mkosi — builds disk with verity, UKI with root hash + our initrd + modules
     println!("\n=== Step 3/4: Building image with mkosi (verity + UKI) ===");
     let mkosi_dir = PathBuf::from("mkosi/base");
     if !mkosi_dir.exists() {
@@ -208,7 +206,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         let fw_bytes = fs_err::read(fw_path)?;
         let uki_bytes = fs_err::read(&output_uki)?;
 
-        let result = crate::igvm::invoke::build_snp(&fw_bytes, &uki_bytes, args.smp)?;
+        let result = igvm::invoke::build_snp(&fw_bytes, &uki_bytes, args.smp)?;
 
         fs_err::write(&igvm_path, &result.igvm_bytes)?;
         println!(
@@ -217,7 +215,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             human_size(&igvm_path)?
         );
 
-        Some(Measurement {
+        Some(manifest::Measurement {
             snp_launch_digest: hex::encode(result.measurement.launch_digest),
             algorithm: "sha384".to_string(),
             page_count: result.measurement.page_count,
@@ -265,9 +263,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     println!("\n=== Writing manifest.json ===");
     // Write manifest
-    let build_manifest = BuildManifest {
+    let build_manifest = manifest::BuildManifest {
         version: 1,
-        build: BuildConfig {
+        build: manifest::BuildConfig {
             timestamp: chrono_now(),
             smp: args.smp,
             memory: args.memory.clone(),
@@ -278,46 +276,46 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 "snp".to_string()
             },
         },
-        inputs: ManifestInputs {
-            kernel: Some(crate::manifest::KernelInputs {
+        inputs: manifest::ManifestInputs {
+            kernel: Some(manifest::KernelInputs {
                 linux_version: kernel.linux_version.clone(),
                 vmlinuz_sha256: kernel.manifest.outputs.vmlinuz_sha256.clone(),
                 required_config_sha256: kernel.manifest.inputs.required_config_sha256.clone(),
                 hardening_config_sha256: kernel.manifest.inputs.hardening_config_sha256.clone(),
                 snapshot_config_sha256: kernel.manifest.inputs.snapshot_config_sha256.clone(),
             }),
-            initrd: FileEntry {
+            initrd: manifest::FileEntry {
                 path: manifest::basename_of(&initrd_path),
                 sha256: initrd_hash,
             },
             firmware: firmware
                 .as_ref()
-                .map(|fw| -> anyhow::Result<FileEntry> {
-                    Ok(FileEntry {
+                .map(|fw| -> anyhow::Result<manifest::FileEntry> {
+                    Ok(manifest::FileEntry {
                         path: manifest::basename_of(fw),
                         sha256: manifest::sha256_file(fw)?,
                     })
                 })
                 .transpose()?,
-            base_image: FileEntry {
+            base_image: manifest::FileEntry {
                 path: manifest::basename_of(&base_abs),
                 sha256: disk_checksum.to_owned(),
             },
         },
-        outputs: ManifestOutputs {
-            disk_image: FileEntry {
+        outputs: manifest::ManifestOutputs {
+            disk_image: manifest::FileEntry {
                 path: manifest::basename_of(&disk_path),
                 sha256: disk_checksum,
             },
             igvm: if args.skip_igvm {
                 None
             } else {
-                Some(FileEntry {
+                Some(manifest::FileEntry {
                     path: manifest::basename_of(&igvm_path),
                     sha256: igvm_hash,
                 })
             },
-            uki: FileEntry {
+            uki: manifest::FileEntry {
                 path: manifest::basename_of(&output_uki),
                 sha256: uki_hash,
             },
@@ -390,7 +388,7 @@ struct MkosiLocalCleanup {
 
 impl Drop for MkosiLocalCleanup {
     fn drop(&mut self) {
-        let _ = crate::tools::force_remove_dir_all(&self.dir);
+        let _ = tools::force_remove_dir_all(&self.dir);
     }
 }
 
