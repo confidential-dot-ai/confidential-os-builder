@@ -153,3 +153,23 @@ fn test_build_name_argument() {
         .stdout(predicates::str::contains("--smp"))
         .stdout(predicates::str::contains("--memory"));
 }
+
+#[test]
+fn test_build_extra_flag() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["build", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--extra"))
+        .stdout(predicates::str::contains("-e"));
+}
+
+#[test]
+fn test_build_package_flag() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["build", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--package"))
+        .stdout(predicates::str::contains("-p,"));
+}
