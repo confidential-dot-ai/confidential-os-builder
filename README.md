@@ -48,6 +48,11 @@ Steep uses `mkosi` to build base image for Ubuntu 26.04 (Resolute Raccoon).
 Built images is fully measured (see [Measurement Chain](#measurement-chain)),
 and suitable for booting trusted confidential VMs.
 
+Pass `--console` to enable a passwordless root autologin on the serial console,
+so `steep run` pops a shell. This changes the image measurement and must not be
+used for production images — under the SNP threat model the host controls the
+serial port.
+
 ### 2. Build a VM image
 
 ```bash
@@ -60,16 +65,13 @@ ready to be run with `steep run output/NAME` or pushed to GHCR with `steep push 
 ### 3. Launch the built VM
 
 ```bash
-steep run output/dir [--dev]
+steep run output/dir
 ```
 
 Use qemu to boot the VM image with a software-emulated TPM and the cidata ISO
 attached. After boot, the VM will run cloud-init, if a config file was included
-in the build.
-
-Pass the `--dev` option to make changes persist to disk. Without the `--dev`
-option, changes while the VM is running will be written to a ramdisk instead,
-and discarded when the VM is shut down.
+in the build. To get an interactive shell on boot, build the image with
+`--console` (see above).
 
 ## Measurement Chain
 
