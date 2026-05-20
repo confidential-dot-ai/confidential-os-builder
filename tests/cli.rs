@@ -173,3 +173,13 @@ fn test_build_package_flag() {
         .stdout(predicates::str::contains("--package"))
         .stdout(predicates::str::contains("-p,"));
 }
+
+#[test]
+fn test_build_script_flag() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["build", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--script"))
+        .stdout(predicates::str::contains("-s,"));
+}
