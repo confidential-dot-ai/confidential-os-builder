@@ -38,6 +38,16 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         }
     }
 
+    // Validate --script if provided
+    if let Some(ref script) = args.script {
+        if !script.exists() {
+            anyhow::bail!("--script file not found: {}", script.display());
+        }
+        if !script.is_file() {
+            anyhow::bail!("--script path is not a file: {}", script.display());
+        }
+    }
+
     // Prepare the per-build mkosi.local/ overlay. Any debris from a crashed
     // prior build is wiped so we start from a clean slate. The cleanup guard
     // is installed *before* anything writes into the overlay so that early
@@ -148,6 +158,12 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     ];
     for pkg in &args.package {
         mkosi_args.push(format!("--package={pkg}"));
+    }
+    if let Some(ref script) = args.script {
+        // mkosi resolves --finalize-script relative to --directory, so anchor
+        // the user's path with canonicalize before handing it off.
+        let canonical = script.canonicalize()?;
+        mkosi_args.push(format!("--finalize-script={}", canonical.display()));
     }
     tools::run_command_streaming("sudo", &mkosi_args)?;
 

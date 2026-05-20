@@ -62,6 +62,11 @@ steep build NAME -c path/to/cloud-init/user-data
 This will build and measure a new image, including the cloud-init file. The results will be written to `output/NAME`,
 ready to be run with `steep run output/NAME` or pushed to GHCR with `steep push output/NAME`.
 
+Pass `--script PATH` (or `-s PATH`) to run a custom finalize script during
+the build. The script is forwarded to mkosi as a `--finalize-script` and
+runs in addition to the project's built-in reproducibility cleanup. Inside
+the script, `$BUILDROOT` points at the image filesystem being assembled.
+
 ### 3. Launch the built VM
 
 ```bash

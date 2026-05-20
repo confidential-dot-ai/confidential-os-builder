@@ -74,6 +74,12 @@ pub struct BuildArgs {
     #[arg(short = 'p', long = "package", value_name = "PKG", value_delimiter = ',')]
     pub package: Vec<String>,
 
+    /// Path to a finalize script to run during the build. Passed through to
+    /// mkosi as --finalize-script, in addition to the built-in reproducibility
+    /// cleanup script.
+    #[arg(short = 's', long, value_name = "FILE")]
+    pub script: Option<PathBuf>,
+
     /// Enable debug console (passwordless root autologin on serial).
     /// WARNING: In the SNP threat model, the host controls the serial port.
     /// This changes the image measurement.
