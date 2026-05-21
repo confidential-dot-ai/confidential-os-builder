@@ -24,12 +24,12 @@ pub struct Fingerprint {
     pub tarball_sha256: String,
     pub required_config_sha256: String,
     pub hardening_config_sha256: String,
-    // `default` so older manifests (pre-container.config) still deserialize
-    // as a cache MISS rather than a parse error — the empty default won't
-    // match a current build's hash, so the kernel rebuilds and the manifest
-    // is overwritten with the new field populated.
+    // `default` so a manifest written before this field existed still
+    // deserializes — with an empty value — instead of failing to parse.
+    // An empty hash never matches a real build's, so the kernel rebuilds
+    // and the manifest is rewritten with the field populated.
     #[serde(default)]
-    pub container_config_sha256: String,
+    pub kernel_extra_config_sha256: String,
     pub snapshot_config_sha256: String,
     pub tools_tree_digest: String,
 }
@@ -49,7 +49,10 @@ impl Fingerprint {
         m.insert("tarball_sha256", &self.tarball_sha256);
         m.insert("required_config_sha256", &self.required_config_sha256);
         m.insert("hardening_config_sha256", &self.hardening_config_sha256);
-        m.insert("container_config_sha256", &self.container_config_sha256);
+        m.insert(
+            "kernel_extra_config_sha256",
+            &self.kernel_extra_config_sha256,
+        );
         m.insert("snapshot_config_sha256", &self.snapshot_config_sha256);
         m.insert("tools_tree_digest", &self.tools_tree_digest);
         serde_json::to_string(&m).expect("BTreeMap of strings serializes")
@@ -79,7 +82,7 @@ mod tests {
             tarball_sha256: "a".repeat(64),
             required_config_sha256: "b".repeat(64),
             hardening_config_sha256: "c".repeat(64),
-            container_config_sha256: "f".repeat(64),
+            kernel_extra_config_sha256: "f".repeat(64),
             snapshot_config_sha256: "d".repeat(64),
             tools_tree_digest: "e".repeat(64),
         }
@@ -88,23 +91,23 @@ mod tests {
     #[test]
     fn fingerprint_canonical_json_keys_sorted() {
         let json = sample_fp().to_canonical_json();
-        // BTreeMap renders alphabetically: container, hardening, linux, required,
-        // snapshot, tarball, tools.
-        let c = json.find("container_config_sha256").unwrap();
+        // BTreeMap renders alphabetically: hardening, kernel_extra, linux,
+        // required, snapshot, tarball, tools.
         let h = json.find("hardening_config_sha256").unwrap();
+        let ke = json.find("kernel_extra_config_sha256").unwrap();
         let l = json.find("linux_version").unwrap();
         let r = json.find("required_config_sha256").unwrap();
         let s = json.find("snapshot_config_sha256").unwrap();
         let t = json.find("tarball_sha256").unwrap();
         let tt = json.find("tools_tree_digest").unwrap();
-        assert!(c < h && h < l && l < r && r < s && s < t && t < tt);
+        assert!(h < ke && ke < l && l < r && r < s && s < t && t < tt);
     }
 
     #[test]
-    fn fingerprint_default_container_config_sha_for_legacy_manifests() {
-        // Older manifests written before container.config existed omit the
-        // field. `#[serde(default)]` should let them deserialize with empty,
-        // which then forces a cache MISS rather than a parse error.
+    fn fingerprint_default_kernel_extra_config_sha_for_legacy_manifests() {
+        // A manifest written before the kernel-extra fragment field existed
+        // omits it. `#[serde(default)]` lets it deserialize with an empty
+        // value, which forces a cache MISS rather than a parse error.
         let legacy = r#"{
             "linux_version": "6.12.7",
             "tarball_sha256": "aa",
@@ -114,7 +117,7 @@ mod tests {
             "tools_tree_digest": "ee"
         }"#;
         let fp: Fingerprint = serde_json::from_str(legacy).unwrap();
-        assert_eq!(fp.container_config_sha256, "");
+        assert_eq!(fp.kernel_extra_config_sha256, "");
         assert_eq!(fp.linux_version, "6.12.7");
     }
 

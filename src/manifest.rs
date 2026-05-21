@@ -49,11 +49,11 @@ pub struct KernelInputs {
     pub vmlinuz_sha256: String,
     pub required_config_sha256: String,
     pub hardening_config_sha256: String,
-    // `default` for backwards compat with manifests written before
-    // container.config existed; see Fingerprint in src/kernel/manifest.rs
-    // for the same trade-off explained at the source.
+    // `default` for backwards compat with manifests written before the
+    // kernel-extra fragment field existed; see Fingerprint in
+    // src/kernel/manifest.rs for the same trade-off explained at the source.
     #[serde(default)]
-    pub container_config_sha256: String,
+    pub kernel_extra_config_sha256: String,
     pub snapshot_config_sha256: String,
 }
 

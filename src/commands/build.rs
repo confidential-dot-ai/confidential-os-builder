@@ -104,11 +104,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Phase 1: ensure custom kernel artifact is current
     println!("\n=== Step 1/4: Ensuring custom kernel ===");
-    let kernel = kernel_cache::ensure_kernel(
-        false,
-        args.kernel_config_fragment.clone(),
-        args.kernel_snapshot.clone(),
-    )?;
+    let kernel = kernel_cache::ensure_kernel(false, args.kernel_config_fragment.clone())?;
     println!(
         "kernel: {} (linux {})",
         kernel.vmlinuz_path.display(),
@@ -304,7 +300,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 vmlinuz_sha256: kernel.manifest.outputs.vmlinuz_sha256.clone(),
                 required_config_sha256: kernel.manifest.inputs.required_config_sha256.clone(),
                 hardening_config_sha256: kernel.manifest.inputs.hardening_config_sha256.clone(),
-                container_config_sha256: kernel.manifest.inputs.container_config_sha256.clone(),
+                kernel_extra_config_sha256: kernel
+                    .manifest
+                    .inputs
+                    .kernel_extra_config_sha256
+                    .clone(),
                 snapshot_config_sha256: kernel.manifest.inputs.snapshot_config_sha256.clone(),
             }),
             initrd: manifest::FileEntry {

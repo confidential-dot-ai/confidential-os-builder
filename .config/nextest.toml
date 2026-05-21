@@ -1,7 +1,7 @@
 # Kernel integration tests share `mkosi/kernel-builder/` (rebuilt with
-# `mkosi --force`) and `kernel/config-x86_64.snapshot` (mutated by the drift
-# test), so they cannot run in parallel. Force this binary onto a single
-# thread; everything else still parallelises.
+# `mkosi --force`) and `kernel/config-x86_64.snapshot` (rewritten by every
+# kernel build), so they cannot run in parallel. Force this binary onto a
+# single thread; everything else still parallelises.
 [[profile.default.overrides]]
 filter = 'binary(=kernel)'
 test-group = 'kernel-integration'
