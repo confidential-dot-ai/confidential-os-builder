@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 
 use crate::commands;
-use crate::commands::kernel::DEFAULT_SNAPSHOT;
 use crate::kernel::manifest as km;
 use crate::KernelArgs;
 
@@ -24,21 +23,15 @@ pub struct KernelArtifact {
 /// Ensure a current kernel artifact exists at output/kernel/.
 /// Force=true bypasses the cache (rebuilds from scratch).
 ///
-/// `fragment` / `snapshot` are the caller-supplied kernel inputs threaded
-/// from `steep build --kernel-config-fragment / --kernel-snapshot`.
-pub fn ensure_kernel(
-    force: bool,
-    fragment: Option<PathBuf>,
-    snapshot: Option<PathBuf>,
-) -> Result<KernelArtifact> {
-    require_inputs_exist(fragment.as_deref(), snapshot.as_deref())?;
+/// `fragment` is the caller-supplied `--kernel-config-fragment`, threaded
+/// from `steep build`.
+pub fn ensure_kernel(force: bool, fragment: Option<PathBuf>) -> Result<KernelArtifact> {
+    require_inputs_exist(fragment.as_deref())?;
 
     commands::kernel::run(&KernelArgs {
         force,
-        update_snapshot: false,
         output: PathBuf::from(KERNEL_OUT_DIR),
         kernel_config_fragment: fragment,
-        kernel_snapshot: snapshot,
     })?;
 
     let manifest_path = Path::new(KERNEL_OUT_DIR).join("manifest.json");
@@ -51,7 +44,7 @@ pub fn ensure_kernel(
     })
 }
 
-fn require_inputs_exist(fragment: Option<&Path>, snapshot: Option<&Path>) -> Result<()> {
+fn require_inputs_exist(fragment: Option<&Path>) -> Result<()> {
     for f in [
         "kernel/version",
         "kernel/required.config",
@@ -68,15 +61,6 @@ fn require_inputs_exist(fragment: Option<&Path>, snapshot: Option<&Path>) -> Res
                 frag.display()
             ));
         }
-    }
-    let snap = snapshot
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_SNAPSHOT));
-    if !snap.exists() {
-        return Err(anyhow!(
-            "{} missing. Run `steep kernel --update-snapshot` to generate.",
-            snap.display()
-        ));
     }
     Ok(())
 }
