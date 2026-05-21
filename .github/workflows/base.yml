@@ -1,80 +1,80 @@
 name: Build Base Image
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+    push:
+        branches: [main]
+    workflow_dispatch:
 
 permissions:
-  contents: read
-  packages: write
+    contents: read
+    packages: write
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    build-and-push:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
 
-      - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+            - name: Setup Rust
+              uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
+            - name: Setup uv
+              uses: astral-sh/setup-uv@v6
 
-      - name: Setup mkosi
-        uses: systemd/mkosi@v26
+            - name: Setup mkosi
+              uses: systemd/mkosi@v26
 
-      - run: sudo apt install -y systemd-container
+            - run: sudo apt install -y systemd-container
 
-      - name: Cache kernel tools
-        uses: actions/cache@v5
-        with:
-          path: mkosi/kernel-builder/mkosi.tools
-          key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/kernel-builder/mkosi.conf') }}
+            - name: Cache kernel tools
+              uses: actions/cache@v5
+              with:
+                  path: mkosi/kernel-builder/mkosi.tools
+                  key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/kernel-builder/mkosi.conf') }}
 
-      - name: Cache kernel
-        uses: actions/cache@v5
-        with:
-          path: output/kernel
-          key: ${{ runner.os }}-kernel-${{ hashFiles('mkosi/kernel-builder/**/*','kernel/*') }}
+            - name: Cache kernel
+              uses: actions/cache@v5
+              with:
+                  path: output/kernel
+                  key: ${{ runner.os }}-kernel-${{ hashFiles('mkosi/kernel-builder/{mkosi.conf,mkosi.tools.manifest}','kernel/*') }}
 
-      - name: Build kernel
-        run: bin/steep kernel
+            - name: Build kernel
+              run: bin/steep kernel
 
-      - name: Cache base image tools
-        uses: actions/cache@v5
-        with:
-          path: mkosi/base/mkosi.tools
-          key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf') }}
+            - name: Cache base image tools
+              uses: actions/cache@v5
+              with:
+                  path: mkosi/base/mkosi.tools
+                  key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf') }}
 
-      - name: Build base image
-        run: bin/steep build
+            - name: Build base image
+              run: bin/steep build
 
-      - name: Setup ORAS
-        uses: oras-project/setup-oras@v1
+            - name: Setup ORAS
+              uses: oras-project/setup-oras@v1
 
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+            - name: Login to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push to GHCR
-        run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${REPO}/base"
+            - name: Push to GHCR
+              run: |
+                  SHORT_SHA="${GITHUB_SHA::7}"
+                  REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+                  IMAGE="ghcr.io/${REPO}/base"
 
-          # include the needed OVMF firmware in the published files
-          cp output/OVMF.fd mkosi/base/mkosi.output/OVMF.fd
+                  # include the needed OVMF firmware in the published files
+                  cp output/OVMF.fd mkosi/base/mkosi.output/OVMF.fd
 
-          cd mkosi/base/mkosi.output
+                  cd mkosi/base/mkosi.output
 
-          # prevent symlink from becoming a second copy of the image
-          rm image
+                  # prevent symlink from becoming a second copy of the image
+                  rm image
 
-          oras push "${IMAGE}:${SHORT_SHA},latest" \
-            --artifact-type application/vnd.steep.base.v1 \
-            ./*
+                  oras push "${IMAGE}:${SHORT_SHA},latest" \
+                    --artifact-type application/vnd.steep.base.v1 \
+                    ./*
