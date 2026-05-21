@@ -122,11 +122,7 @@ pub fn sudo_mv(src: &Path, dst: &Path) -> Result<(), ToolError> {
         .unwrap_or_else(|_| "root".to_string());
     run_command_streaming(
         "sudo",
-        &[
-            OsStr::new("chown"),
-            OsStr::new(&user),
-            dst.as_os_str(),
-        ],
+        &[OsStr::new("chown"), OsStr::new(&user), dst.as_os_str()],
     )?;
     Ok(())
 }

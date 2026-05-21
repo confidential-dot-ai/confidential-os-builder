@@ -129,7 +129,7 @@ fn test_kernel_help() {
         .assert()
         .success()
         .stdout(predicates::str::contains("force"))
-        .stdout(predicates::str::contains("update-snapshot"))
+        .stdout(predicates::str::contains("kernel-config-fragment"))
         .stdout(predicates::str::contains("output"));
 }
 
