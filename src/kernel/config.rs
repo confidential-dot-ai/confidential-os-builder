@@ -45,19 +45,29 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<()> {
 ///   make x86_64_defconfig
 ///   scripts/kconfig/merge_config.sh -m .config <required>
 ///   scripts/kconfig/merge_config.sh -m .config <hardening>
+///   scripts/kconfig/merge_config.sh -m .config <container>   (when Some)
 ///   make mod2yesconfig
 ///   make olddefconfig
+///
+/// `container_fragment` is optional. When `Some`, it's merged after
+/// `hardening.config` so `mod2yesconfig` still flattens any tristate
+/// symbols introduced. When `None` the merge sequence is byte-for-byte
+/// what it was before this fragment was added — kept this way so the
+/// kernel snapshot for callers that don't supply a container fragment
+/// is unchanged.
 pub fn run_configure_phase(
     tools_tree: &Path,
     kernel_dir: &Path,
     required_fragment: &Path,
     hardening_fragment: &Path,
+    container_fragment: Option<&Path>,
 ) -> Result<()> {
     let kernel_dir_abs = kernel_dir
         .canonicalize()
         .with_context(|| format!("canonicalizing {}", kernel_dir.display()))?;
     let required_abs = required_fragment.canonicalize()?;
     let hardening_abs = hardening_fragment.canonicalize()?;
+    let container_abs = container_fragment.map(|p| p.canonicalize()).transpose()?;
 
     // Stage fragments inside the kernel dir so merge_config can find them
     // at relative paths under /build inside the nspawn.
@@ -65,23 +75,32 @@ pub fn run_configure_phase(
     fs_err::create_dir_all(&frag_dir_in_kernel)?;
     fs_err::copy(&required_abs, frag_dir_in_kernel.join("required.config"))?;
     fs_err::copy(&hardening_abs, frag_dir_in_kernel.join("hardening.config"))?;
+    if let Some(ref c) = container_abs {
+        fs_err::copy(c, frag_dir_in_kernel.join("container.config"))?;
+    }
 
-    let script = "\
-set -eux
-cd /build
-make x86_64_defconfig
-scripts/kconfig/merge_config.sh -m .config .fragments/required.config
-scripts/kconfig/merge_config.sh -m .config .fragments/hardening.config
-make mod2yesconfig
-make olddefconfig
-";
+    let container_line = if container_abs.is_some() {
+        "scripts/kconfig/merge_config.sh -m .config .fragments/container.config\n"
+    } else {
+        ""
+    };
+    let script = format!(
+        "set -eux\n\
+         cd /build\n\
+         make x86_64_defconfig\n\
+         scripts/kconfig/merge_config.sh -m .config .fragments/required.config\n\
+         scripts/kconfig/merge_config.sh -m .config .fragments/hardening.config\n\
+         {container_line}\
+         make mod2yesconfig\n\
+         make olddefconfig\n",
+    );
 
     nspawn(
         tools_tree,
         &kernel_dir_abs,
         "/build",
         &[("HOME", "/root")],
-        script,
+        &script,
     )?;
     fs_err::remove_dir_all(&frag_dir_in_kernel)?;
     Ok(())

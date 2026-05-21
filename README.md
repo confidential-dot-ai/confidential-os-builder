@@ -9,7 +9,7 @@ SNP hardware.
 | Document | What it covers |
 |----------|---------------|
 | [Concepts](docs/CONCEPTS.md) | Architecture, boot steps, image structure to ensure security |
-| [Reproducibility](docs/REPRODUCIBILITY.md.md) | Changes needed, prior art, comparisons to other work |
+| [Reproducibility](docs/REPRODUCIBILITY.md) | Changes needed, prior art, comparisons to other work |
 
 ## Running steep-built VMs
 
@@ -28,13 +28,20 @@ qemu-system-x86_64 \
 
 ## Installation
 
-Steep runs on Ubuntu Linux. Clone the steep repo and run `bin/setup` to install everything you'll need.
+Steep runs on Ubuntu Linux. Clone the steep repo and run `bin/setup` to install everything you'll need (mkosi v26, qemu utils, swtpm, rust, cargo-nextest).
 
 ```bash
 git clone https://github.com/confidential-ai/steep.git
 cd steep
 bin/setup
+cargo build --release
 ```
+
+The build host needs to be a real Linux system with `sudo` and the kernel/userns capabilities to run mkosi's sandbox. Most rootless dev containers can't — their nested user namespace can't `chown` to arbitrary uids/gids during package extraction, which mkosi requires.
+
+## Scope
+
+Steep builds **SEV-SNP guest images** — measurable, dm-verity-protected, attestable VM images that boot inside an L0 hypervisor. It is **not** a builder for host/hypervisor images that themselves run other VMs: steep's guest-oriented kernel, IGVM measurement, and verity initrd are all designed for the guest side of the trust boundary. For a plain host or hypervisor image, use a general-purpose image builder such as mkosi directly.
 
 ## Usage
 
@@ -84,8 +91,10 @@ in the build. To get an interactive shell on boot, build the image with
 The attestation model rests on a deterministic chain from source configuration to hardware-signed measurement.
 
 ```
-cloud-init YAML
-    |  injected into image as static file
+cloud-init YAML            (-c flag)
+    |
+extra/ contents            (-e flag)
+    |  copied into image filesystem
     v
 erofs root filesystem
     |  dm-verity hash tree
@@ -102,14 +111,20 @@ IGVM (measured by SNP hardware on launch)
 SNP launch digest (hardware-signed, unforgeable)
 ```
 
-Change one file in the root filesystem and the roothash changes, which changes the UKI, which changes the IGVM measurement. A remote verifier checks the launch digest against a published expected value and can trust the entire stack.
+Change one file in `--extra`, one byte of the cloud-init payload, the kernel cmdline, or the kernel binary — and the roothash changes, which changes the UKI, which changes the IGVM measurement. A remote verifier checks the launch digest against a published expected value and can trust the entire stack.
 
 ## Output Artifacts
 
 ```
-disk.raw         GPT disk image (ESP + root + verity partitions)
-uki.efi          Unified Kernel Image
-roothash         SHA-256 hex string of the root filesystem
-manifest.json    Build metadata with hashes, platform, measurement
-guest.igvm       IGVM file (optional)
+output/<name>/
+├── disk.raw         GPT disk image (ESP + erofs root + verity hash partitions)
+├── uki.efi          Unified Kernel Image (kernel + initrd + cmdline)
+├── roothash         SHA-256 hex string of the verity root
+├── manifest.json    Build metadata: input hashes, output hashes, smp/memory,
+│                    per-fragment shas, optional SNP measurement
+├── OVMF.fd          Firmware (copy of the --firmware input; bundled here so the
+│                    output dir is self-contained for `steep run` and `steep push`)
+└── guest.igvm       IGVM file (absent when --skip-igvm)
 ```
+
+The manifest is the authoritative description of what's in the build. To verify an image you got from elsewhere, compare `manifest.json`'s `outputs.uki.sha256` and (with IGVM) `measurement.snp_launch_digest` against the published expected values for the build inputs you trust.
