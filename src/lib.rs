@@ -74,9 +74,9 @@ pub struct BuildArgs {
     #[arg(short = 'p', long = "package", value_name = "PKG", value_delimiter = ',')]
     pub package: Vec<String>,
 
-    /// Path to a finalize script to run during the build. Passed through to
-    /// mkosi as --finalize-script, in addition to the built-in reproducibility
-    /// cleanup script.
+    /// Path to a post-install script to run during the build. Passed through
+    /// to mkosi as --postinst-script, with --with-network=yes so the script
+    /// can download resources from the network.
     #[arg(short = 's', long, value_name = "FILE")]
     pub script: Option<PathBuf>,
 

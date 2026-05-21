@@ -160,10 +160,12 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         mkosi_args.push(format!("--package={pkg}"));
     }
     if let Some(ref script) = args.script {
-        // mkosi resolves --finalize-script relative to --directory, so anchor
-        // the user's path with canonicalize before handing it off.
+        // mkosi resolves --postinst-script relative to --directory, so anchor
+        // the user's path with canonicalize before handing it off. Enable
+        // network access so the script can fetch resources from the internet.
         let canonical = script.canonicalize()?;
-        mkosi_args.push(format!("--finalize-script={}", canonical.display()));
+        mkosi_args.push(format!("--postinst-script={}", canonical.display()));
+        mkosi_args.push("--with-network=yes".to_string());
     }
     tools::run_command_streaming("sudo", &mkosi_args)?;
 
