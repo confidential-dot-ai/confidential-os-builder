@@ -14,6 +14,7 @@ fn test_qemu_args_basic() {
         smp: 2,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     assert!(cmd.contains(&"-display".to_string()));
@@ -37,6 +38,7 @@ fn test_qemu_args_contains_sev_snp() {
         smp: 1,
         memory: "4G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
@@ -58,6 +60,7 @@ fn test_qemu_args_snp_missing_igvm_errors() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     assert!(args.to_args().is_err());
 }
@@ -75,6 +78,7 @@ fn test_qemu_args_kvm_missing_uki_errors() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     assert!(args.to_args().is_err());
 }
@@ -92,6 +96,7 @@ fn test_qemu_args_no_port_forwards_has_no_netdev() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
@@ -112,6 +117,7 @@ fn test_qemu_args_single_port_forward() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![(8080, 80)],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
@@ -132,6 +138,7 @@ fn test_qemu_args_multiple_port_forwards() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![(8080, 80), (8443, 443)],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
@@ -154,6 +161,7 @@ fn test_qemu_args_kvm_tier() {
         smp: 2,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
@@ -176,6 +184,7 @@ fn test_qemu_args_emulated_tier() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
@@ -259,6 +268,7 @@ fn test_qemu_args_rejects_comma_in_disk_path() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let err = args.to_args().unwrap_err();
     assert!(err.to_string().contains("comma"));
@@ -277,6 +287,7 @@ fn test_qemu_args_rejects_comma_in_igvm_path() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let err = args.to_args().unwrap_err();
     assert!(err.to_string().contains("comma"));
@@ -295,6 +306,7 @@ fn test_qemu_args_rejects_comma_in_uki_path() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let err = args.to_args().unwrap_err();
     assert!(err.to_string().contains("comma"));
@@ -313,6 +325,7 @@ fn test_qemu_args_rejects_comma_in_firmware_path() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let err = args.to_args().unwrap_err();
     assert!(err.to_string().contains("comma"));
@@ -333,6 +346,7 @@ fn test_qemu_args_rejects_unsupported_disk_format() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let err = args.to_args().unwrap_err();
     assert!(err.to_string().contains("unsupported disk format"));
@@ -351,6 +365,7 @@ fn test_qemu_args_accepts_qcow2_format() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
@@ -370,6 +385,7 @@ fn test_qemu_args_disk_is_readonly() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
@@ -394,6 +410,7 @@ fn test_qemu_args_kvm_missing_firmware_errors() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     assert!(args.to_args().is_err());
 }
@@ -411,6 +428,7 @@ fn test_qemu_args_emulated_missing_firmware_errors() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     assert!(args.to_args().is_err());
 }
@@ -428,6 +446,7 @@ fn test_qemu_args_uses_virtio_console() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
@@ -467,6 +486,7 @@ fn test_qemu_args_kvm_uses_virtio_console() {
         smp: 1,
         memory: "2G".to_string(),
         port_forwards: vec![],
+        scratch: None,
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
