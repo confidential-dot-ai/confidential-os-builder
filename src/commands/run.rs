@@ -129,6 +129,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         smp: manifest.build.smp,
         memory: manifest.build.memory,
         port_forwards,
+        scratch: None,
     };
 
     println!(

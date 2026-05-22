@@ -136,6 +136,8 @@ pub struct QemuArgs {
     pub smp: u32,
     pub memory: String,
     pub port_forwards: Vec<(u16, u16)>,
+    /// Optional writable ephemeral scratch disk (already labeled `scratch`).
+    pub scratch: Option<PathBuf>,
 }
 
 impl QemuArgs {
@@ -229,6 +231,11 @@ impl QemuArgs {
             self.disk.display(),
             self.disk_format
         ));
+        if let Some(ref scratch) = self.scratch {
+            reject_comma_in_path("scratch", scratch)?;
+            args.push("-drive".to_string());
+            args.push(format!("file={},format=raw,if=virtio", scratch.display()));
+        }
         args.push("-smp".to_string());
         args.push(self.smp.to_string());
         args.push("-m".to_string());
