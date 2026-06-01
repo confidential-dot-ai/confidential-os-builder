@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# steep-safe — invoke `bin/steep` with build temp dirs forced onto disk
+# instead of the host's tmpfs-backed /tmp.
+#
+# Why this exists:
+#   On a standard Ubuntu host, /tmp is tmpfs sized at ~50% of physical RAM.
+#   Writes there consume RAM, not disk. A clean steep build can shovel
+#   8–15 GiB of intermediate state through tmp paths (parallel kernel
+#   compile, mkosi sandbox staging, debootstrap, systemd-nspawn
+#   --ephemeral overlay upper). On a host that is already running other
+#   workloads — KubeVirt VMs, control plane, monitoring — this is enough
+#   to OOM-kill the build, or worse, evict unrelated processes.
+#
+#   This wrapper redirects everything that honors TMPDIR / XDG_RUNTIME_DIR
+#   onto disk-backed scratch under /var/tmp/steep-safe-<pid>/. Mkosi,
+#   debootstrap, gcc, rustc, mktemp, Python tempfile, Go's TempDir, and
+#   systemd-nspawn's ephemeral overlay all pick this up. Things that
+#   hard-code "/tmp" in paths still hit tmpfs, but that's a small tail.
+#
+# Caveats:
+#   - The kernel compile still runs `make -j$(nproc)` (24 jobs on this
+#     box). That's a RAM cost of its own (cc processes, not tmp files)
+#     and is independent of TMPDIR. Cap with `MAKEFLAGS=-j8` if you want
+#     to bound it; not all of steep honors that, so a code-level cap in
+#     src/kernel/compile.rs is the proper fix.
+#   - /var/tmp must have a few GiB free. Typically fine — it's the
+#     root filesystem on this host (340 GB free as of writing).
+#
+# Usage:
+#   bin/steep-safe base
+#   bin/steep-safe kernel
+#   bin/steep-safe build --cloud-init ./cloud-init.yaml
+#
+# Exit code is forwarded from `bin/steep`. Scratch is removed on exit
+# (success or failure) unless STEEP_SAFE_KEEP=1 is set.
+
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$DIR/.." && pwd)"
+
+# Pick a per-invocation scratch dir on disk. /var/tmp survives reboots
+# on most systems, which is the right choice here (mkosi can resume
+# partial builds from cache if Incremental=true). We don't want /tmp
+# (tmpfs) or /run (also tmpfs).
+SCRATCH="${STEEP_SAFE_SCRATCH:-/var/tmp/steep-safe-$$}"
+mkdir -p "$SCRATCH/tmp" "$SCRATCH/run"
+
+cleanup() {
+  if [[ "${STEEP_SAFE_KEEP:-0}" != "1" ]]; then
+    rm -rf "$SCRATCH"
+  else
+    printf '[steep-safe] scratch retained at %s\n' "$SCRATCH" >&2
+  fi
+}
+trap cleanup EXIT
+
+# Show the user what we did so the behaviour isn't magic.
+printf '[steep-safe] redirecting temp to %s (disk-backed)\n' "$SCRATCH" >&2
+df -h --output=target,size,used,avail "$SCRATCH" 2>&1 | tail -n +1 | sed 's/^/[steep-safe] /' >&2
+
+# TMPDIR — honored by libc, mkosi, gcc, rustc, debootstrap, mktemp, etc.
+# XDG_RUNTIME_DIR — honored by systemd-nspawn for its --ephemeral
+#                   overlay upper layer; redirects the container-side
+#                   writable tmpfs onto our disk scratch.
+export TMPDIR="$SCRATCH/tmp"
+export XDG_RUNTIME_DIR="$SCRATCH/run"
+chmod 0700 "$XDG_RUNTIME_DIR"
+
+# Don't `exec` — that replaces the bash process and the EXIT trap never
+# fires, leaking the scratch dir. Run as a child so the trap cleans up.
+"$DIR/steep" "$@"
