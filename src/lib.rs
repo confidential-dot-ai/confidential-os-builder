@@ -150,6 +150,13 @@ pub struct PushArgs {
     /// Image tag
     #[arg(long, default_value = "latest")]
     pub tag: String,
+
+    /// Build a CDI-compatible single-layer tar+gzip image (for KubeVirt CDI importer).
+    ///
+    /// When set, all files are packed into one `application/vnd.oci.image.layer.v1.tar+gzip`
+    /// layer where `disk.raw` lives under `disk/` and other files sit at the tar root.
+    #[arg(long, default_value_t = false)]
+    pub cdi: bool,
 }
 
 #[derive(clap::Args)]
