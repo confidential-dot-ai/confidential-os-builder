@@ -8,6 +8,9 @@ use crate::KernelArgs;
 
 const REQUIRED_FRAGMENT: &str = "kernel/required.config";
 const HARDENING_FRAGMENT: &str = "kernel/hardening.config";
+/// Resolved-config snapshot lockfile. Every kernel build rewrites this with
+/// the freshly-resolved `.config`; it's committed to git so `git diff` shows
+/// when a fragment edit or kernel bump changed the merged config.
 const SNAPSHOT_PATH: &str = "kernel/config-x86_64.snapshot";
 const VERSION_PATH: &str = "kernel/version";
 const TOOLS_TREE_DIR: &str = "mkosi/kernel-builder";
@@ -19,6 +22,11 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     let version = KernelVersion::read(Path::new(VERSION_PATH))?;
     tracing::info!(linux_version = %version.linux_version, "building hardened kernel");
 
+    // Optional caller-supplied config fragment merged after required +
+    // hardening. No flag = steep's bare required + hardening baseline.
+    let fragment = args.kernel_config_fragment.as_deref();
+    let snapshot = Path::new(SNAPSHOT_PATH);
+
     fs_err::create_dir_all(&args.output)?;
     let out_dir = args.output.canonicalize()?;
     let cache_dir = out_dir.join("cache");
@@ -28,12 +36,12 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     let manifest_path = out_dir.join("manifest.json");
 
     // Cache short-circuit: skip the entire build if all inputs match and the
-    // existing vmlinuz still hashes to what the manifest claims. --force and
-    // --update-snapshot both bypass this.
-    if !args.force && !args.update_snapshot && manifest_path.exists() && vmlinuz_path.exists() {
+    // existing vmlinuz still hashes to what the manifest claims. --force
+    // bypasses this.
+    if !args.force && manifest_path.exists() && vmlinuz_path.exists() {
         if let Ok(cached) = km::read(&manifest_path) {
             let tools_tree_path = Path::new(TOOLS_TREE_IMAGE);
-            if let Ok(live) = compute_fingerprint(&version, tools_tree_path) {
+            if let Ok(live) = compute_fingerprint(&version, tools_tree_path, fragment, snapshot) {
                 if cached.inputs == live {
                     let actual = fetch::sha256_file(&vmlinuz_path)?;
                     if actual.eq_ignore_ascii_case(&cached.outputs.vmlinuz_sha256) {
@@ -75,27 +83,33 @@ pub fn run(args: &KernelArgs) -> Result<()> {
         ));
     }
 
+    if let Some(f) = fragment {
+        if !f.exists() {
+            return Err(anyhow!(
+                "--kernel-config-fragment path not found: {}",
+                f.display()
+            ));
+        }
+    }
     config::run_configure_phase(
         &tools_tree,
         &kernel_src,
         Path::new(REQUIRED_FRAGMENT),
         Path::new(HARDENING_FRAGMENT),
+        fragment,
     )?;
 
-    // Phase 0c.5: snapshot guard
-    println!("\n=== Step 0c.5: Snapshot guard ===");
+    // Phase 0c.5: refresh the snapshot lockfile. The snapshot auto-updates
+    // on every build and never fails it; git tracks the resolved config.
+    println!("\n=== Step 0c.5: Updating kernel config snapshot ===");
     let resolved = kernel_src.join(".config");
-    let snapshot = Path::new(SNAPSHOT_PATH);
-    if args.update_snapshot {
-        config::update_snapshot(&resolved, snapshot)?;
-        println!("snapshot updated: {}", snapshot.display());
-    } else if !snapshot.exists() {
-        return Err(anyhow!(
-            "{} does not exist. Generate it with `steep kernel --update-snapshot`.",
+    if config::update_snapshot(&resolved, snapshot)? {
+        println!(
+            "snapshot {} updated — review `git diff` and commit it",
             snapshot.display()
-        ));
+        );
     } else {
-        config::check_snapshot(&resolved, snapshot)?;
+        println!("snapshot {} unchanged", snapshot.display());
     }
 
     // Phase 0d: compile
@@ -105,7 +119,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Phase 0e: finalize manifest
     println!("\n=== Step 0e: Writing manifest ===");
-    let inputs = compute_fingerprint(&version, &tools_tree)?;
+    let inputs = compute_fingerprint(&version, &tools_tree, fragment, snapshot)?;
     let outputs = km::Outputs {
         vmlinuz_sha256: fetch::sha256_file(&vmlinuz_path)?,
     };
@@ -160,14 +174,30 @@ fn ensure_tools_tree(force: bool) -> Result<PathBuf> {
 }
 
 /// Compute the fingerprint over all inputs that determine kernel build output.
-pub fn compute_fingerprint(version: &KernelVersion, _tools_tree: &Path) -> Result<km::Fingerprint> {
+///
+/// `fragment` is the caller-supplied `--kernel-config-fragment` (None when
+/// building steep's bare baseline). `snapshot` is the committed snapshot
+/// lockfile; hashing it into the fingerprint means a deleted or hand-edited
+/// snapshot invalidates the cache and forces a rebuild that regenerates it.
+pub fn compute_fingerprint(
+    version: &KernelVersion,
+    _tools_tree: &Path,
+    fragment: Option<&Path>,
+    snapshot: &Path,
+) -> Result<km::Fingerprint> {
     Ok(km::Fingerprint {
         linux_version: version.linux_version.clone(),
         tarball_sha256: version.tarball_sha256.clone(),
         required_config_sha256: fetch::sha256_file(Path::new(REQUIRED_FRAGMENT))?,
         hardening_config_sha256: fetch::sha256_file(Path::new(HARDENING_FRAGMENT))?,
-        snapshot_config_sha256: if Path::new(SNAPSHOT_PATH).exists() {
-            fetch::sha256_file(Path::new(SNAPSHOT_PATH))?
+        // Hash of the caller's --kernel-config-fragment, empty when none was
+        // passed — keeps the fingerprint identical to a bare baseline build.
+        kernel_extra_config_sha256: match fragment {
+            Some(f) => fetch::sha256_file(f)?,
+            None => String::new(),
+        },
+        snapshot_config_sha256: if snapshot.exists() {
+            fetch::sha256_file(snapshot)?
         } else {
             String::new()
         },

@@ -1,8 +1,9 @@
-//! Kernel `.config` resolution and snapshot guard.
+//! Kernel `.config` resolution and snapshot lockfile.
 //!
 //! The "configure phase" runs `make x86_64_defconfig`, applies fragments,
-//! then `mod2yesconfig`, then `olddefconfig`. After that, the resolved
-//! `.config` is compared against the committed snapshot via [`check_snapshot`].
+//! then `mod2yesconfig`, then `olddefconfig`. The resolved `.config` is
+//! then written back to the committed snapshot via [`update_snapshot`],
+//! which steep tracks in git like a lockfile.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -11,32 +12,21 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::tools;
 
-/// Read two files and assert byte-equality. Returns Ok(()) on match.
-/// On mismatch, error includes both paths so the caller can suggest a diff.
-pub fn check_snapshot(resolved: &Path, snapshot: &Path) -> Result<()> {
-    let a = fs_err::read(resolved)
+/// Overwrite `snapshot` with the freshly-resolved `.config`, returning
+/// whether the content changed (`true` if the snapshot was absent or
+/// differed). steep calls this on every kernel build, so the snapshot
+/// tracks the resolved config like a lockfile; `git diff` on the snapshot
+/// is what surfaces unexpected drift — the build itself never fails on it.
+pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
+    let new = fs_err::read(resolved)
         .with_context(|| format!("reading resolved config {}", resolved.display()))?;
-    let b = fs_err::read(snapshot)
-        .with_context(|| format!("reading snapshot {}", snapshot.display()))?;
-    if a == b {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "kernel .config drift: {} differs from {}.\n\
-             Review the diff and re-run with `steep kernel --update-snapshot` if intended.",
-            resolved.display(),
-            snapshot.display()
-        ))
-    }
-}
-
-/// Replace `snapshot` with the contents of `resolved`. Used by --update-snapshot.
-pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<()> {
-    let bytes = fs_err::read(resolved)
-        .with_context(|| format!("reading resolved config {}", resolved.display()))?;
-    fs_err::write(snapshot, bytes)
+    let changed = match fs_err::read(snapshot) {
+        Ok(old) => old != new,
+        Err(_) => true,
+    };
+    fs_err::write(snapshot, &new)
         .with_context(|| format!("writing snapshot {}", snapshot.display()))?;
-    Ok(())
+    Ok(changed)
 }
 
 /// Orchestrate the configure phase inside systemd-nspawn against the kernel-builder tools tree.
@@ -45,19 +35,29 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<()> {
 ///   make x86_64_defconfig
 ///   scripts/kconfig/merge_config.sh -m .config <required>
 ///   scripts/kconfig/merge_config.sh -m .config <hardening>
+///   scripts/kconfig/merge_config.sh -m .config <extra>      (when Some)
 ///   make mod2yesconfig
 ///   make olddefconfig
+///
+/// `extra_fragment` is the optional caller-supplied `--kernel-config-fragment`.
+/// When `Some`, it's merged after `hardening.config` so `mod2yesconfig` still
+/// flattens any tristate symbols it introduces. When `None` the merge sequence
+/// is byte-for-byte what it was before this fragment was added — kept this way
+/// so the resolved config for callers that don't supply an extra fragment is
+/// unchanged.
 pub fn run_configure_phase(
     tools_tree: &Path,
     kernel_dir: &Path,
     required_fragment: &Path,
     hardening_fragment: &Path,
+    extra_fragment: Option<&Path>,
 ) -> Result<()> {
     let kernel_dir_abs = kernel_dir
         .canonicalize()
         .with_context(|| format!("canonicalizing {}", kernel_dir.display()))?;
     let required_abs = required_fragment.canonicalize()?;
     let hardening_abs = hardening_fragment.canonicalize()?;
+    let extra_abs = extra_fragment.map(|p| p.canonicalize()).transpose()?;
 
     // Stage fragments inside the kernel dir so merge_config can find them
     // at relative paths under /build inside the nspawn.
@@ -65,23 +65,32 @@ pub fn run_configure_phase(
     fs_err::create_dir_all(&frag_dir_in_kernel)?;
     fs_err::copy(&required_abs, frag_dir_in_kernel.join("required.config"))?;
     fs_err::copy(&hardening_abs, frag_dir_in_kernel.join("hardening.config"))?;
+    if let Some(ref e) = extra_abs {
+        fs_err::copy(e, frag_dir_in_kernel.join("extra.config"))?;
+    }
 
-    let script = "\
-set -eux
-cd /build
-make x86_64_defconfig
-scripts/kconfig/merge_config.sh -m .config .fragments/required.config
-scripts/kconfig/merge_config.sh -m .config .fragments/hardening.config
-make mod2yesconfig
-make olddefconfig
-";
+    let extra_line = if extra_abs.is_some() {
+        "scripts/kconfig/merge_config.sh -m .config .fragments/extra.config\n"
+    } else {
+        ""
+    };
+    let script = format!(
+        "set -eux\n\
+         cd /build\n\
+         make x86_64_defconfig\n\
+         scripts/kconfig/merge_config.sh -m .config .fragments/required.config\n\
+         scripts/kconfig/merge_config.sh -m .config .fragments/hardening.config\n\
+         {extra_line}\
+         make mod2yesconfig\n\
+         make olddefconfig\n",
+    );
 
     nspawn(
         tools_tree,
         &kernel_dir_abs,
         "/build",
         &[("HOME", "/root")],
-        script,
+        &script,
     )?;
     fs_err::remove_dir_all(&frag_dir_in_kernel)?;
     Ok(())
@@ -137,38 +146,31 @@ mod tests {
     }
 
     #[test]
-    fn check_snapshot_passes_on_match() {
-        let d = TempDir::new().unwrap();
-        let a = write(&d, "a", "CONFIG_X=y\n");
-        let b = write(&d, "b", "CONFIG_X=y\n");
-        assert!(check_snapshot(&a, &b).is_ok());
-    }
-
-    #[test]
-    fn check_snapshot_fails_on_diff_with_helpful_message() {
+    fn update_snapshot_overwrites_and_reports_change() {
         let d = TempDir::new().unwrap();
         let a = write(&d, "a", "CONFIG_X=y\n");
         let b = write(&d, "b", "CONFIG_X=n\n");
-        let err = check_snapshot(&a, &b).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains(".config drift"));
-        assert!(msg.contains("--update-snapshot"));
-    }
-
-    #[test]
-    fn update_snapshot_overwrites_target() {
-        let d = TempDir::new().unwrap();
-        let a = write(&d, "a", "CONFIG_X=y\n");
-        let b = write(&d, "b", "CONFIG_X=n\n");
-        update_snapshot(&a, &b).unwrap();
+        let changed = update_snapshot(&a, &b).unwrap();
+        assert!(changed);
         assert_eq!(fs_err::read_to_string(&b).unwrap(), "CONFIG_X=y\n");
     }
 
     #[test]
-    fn check_snapshot_errors_on_missing_file() {
+    fn update_snapshot_reports_unchanged_when_identical() {
         let d = TempDir::new().unwrap();
-        let a = write(&d, "a", "x");
-        let b = d.path().join("does-not-exist");
-        assert!(check_snapshot(&a, &b).is_err());
+        let a = write(&d, "a", "CONFIG_X=y\n");
+        let b = write(&d, "b", "CONFIG_X=y\n");
+        let changed = update_snapshot(&a, &b).unwrap();
+        assert!(!changed);
+    }
+
+    #[test]
+    fn update_snapshot_creates_missing_snapshot_and_reports_change() {
+        let d = TempDir::new().unwrap();
+        let a = write(&d, "a", "CONFIG_X=y\n");
+        let b = d.path().join("new-snapshot");
+        let changed = update_snapshot(&a, &b).unwrap();
+        assert!(changed);
+        assert_eq!(fs_err::read_to_string(&b).unwrap(), "CONFIG_X=y\n");
     }
 }

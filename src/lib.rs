@@ -13,14 +13,15 @@ pub struct KernelArgs {
     #[arg(short, long)]
     pub force: bool,
 
-    /// Regenerate kernel/config-x86_64.snapshot from defconfig + fragments.
-    /// Use after bumping the kernel version or editing the fragments.
-    #[arg(long)]
-    pub update_snapshot: bool,
-
     /// Output directory.
     #[arg(short, long, default_value = "output/kernel")]
     pub output: PathBuf,
+
+    /// Optional kernel config fragment, merged after required + hardening.
+    /// Omitted: steep builds only its hardened required + hardening baseline.
+    /// Lets a project enable extra kernel symbols without modifying steep.
+    #[arg(long, value_name = "PATH")]
+    pub kernel_config_fragment: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -71,8 +72,18 @@ pub struct BuildArgs {
 
     /// Extra package to install in the base image. Repeatable and
     /// comma-separated. Passed through to mkosi as `--package`.
-    #[arg(short = 'p', long = "package", value_name = "PKG", value_delimiter = ',')]
+    #[arg(
+        short = 'p',
+        long = "package",
+        value_name = "PKG",
+        value_delimiter = ','
+    )]
     pub package: Vec<String>,
+
+    /// Optional kernel config fragment, merged after required + hardening
+    /// when building the custom kernel. Omitted: steep's hardened baseline.
+    #[arg(long, value_name = "PATH")]
+    pub kernel_config_fragment: Option<PathBuf>,
 
     /// Path to a post-install script to run during the build. Passed through
     /// to mkosi as --postinst-script, with --with-network=yes so the script

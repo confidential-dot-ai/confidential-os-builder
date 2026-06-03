@@ -12,7 +12,6 @@ use crate::commands;
 use crate::kernel::manifest as km;
 use crate::KernelArgs;
 
-const SNAPSHOT_PATH: &str = "kernel/config-x86_64.snapshot";
 const KERNEL_OUT_DIR: &str = "output/kernel";
 
 pub struct KernelArtifact {
@@ -23,13 +22,16 @@ pub struct KernelArtifact {
 
 /// Ensure a current kernel artifact exists at output/kernel/.
 /// Force=true bypasses the cache (rebuilds from scratch).
-pub fn ensure_kernel(force: bool) -> Result<KernelArtifact> {
-    require_inputs_exist()?;
+///
+/// `fragment` is the caller-supplied `--kernel-config-fragment`, threaded
+/// from `steep build`.
+pub fn ensure_kernel(force: bool, fragment: Option<PathBuf>) -> Result<KernelArtifact> {
+    require_inputs_exist(fragment.as_deref())?;
 
     commands::kernel::run(&KernelArgs {
         force,
-        update_snapshot: false,
         output: PathBuf::from(KERNEL_OUT_DIR),
+        kernel_config_fragment: fragment,
     })?;
 
     let manifest_path = Path::new(KERNEL_OUT_DIR).join("manifest.json");
@@ -42,7 +44,7 @@ pub fn ensure_kernel(force: bool) -> Result<KernelArtifact> {
     })
 }
 
-fn require_inputs_exist() -> Result<()> {
+fn require_inputs_exist(fragment: Option<&Path>) -> Result<()> {
     for f in [
         "kernel/version",
         "kernel/required.config",
@@ -52,11 +54,13 @@ fn require_inputs_exist() -> Result<()> {
             return Err(anyhow!("required file missing: {}", f));
         }
     }
-    if !Path::new(SNAPSHOT_PATH).exists() {
-        return Err(anyhow!(
-            "{} missing. Run `steep kernel --update-snapshot` to generate.",
-            SNAPSHOT_PATH
-        ));
+    if let Some(frag) = fragment {
+        if !frag.exists() {
+            return Err(anyhow!(
+                "--kernel-config-fragment path not found: {}",
+                frag.display()
+            ));
+        }
     }
     Ok(())
 }

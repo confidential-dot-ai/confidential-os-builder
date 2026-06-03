@@ -11,11 +11,11 @@
 //!
 //! These tests share project-relative state (`mkosi/kernel-builder/` tools
 //! tree rebuilt by `mkosi --force`, and `kernel/config-x86_64.snapshot`
-//! mutated by the drift test) and fail when run in parallel.
+//! rewritten by every kernel build) and fail when run in parallel.
 //!
 //! Requires:
-//!   - `kernel/version`, `kernel/required.config`, `kernel/hardening.config`,
-//!     `kernel/config-x86_64.snapshot` checked in
+//!   - `kernel/version`, `kernel/required.config`, `kernel/hardening.config`
+//!     checked in
 //!   - `mkosi/kernel-builder/` config in place
 //!   - sudo + systemd-nspawn available
 //!   - network access to cdn.kernel.org
@@ -121,23 +121,21 @@ fn kernel_cache_hits_on_second_run() {
 
 #[test]
 #[ignore]
-fn kernel_drift_fails_without_update_snapshot() {
-    // Snapshot drift is caught at the snapshot-guard step, which runs after
-    // configure but before compile. So we don't need a prior successful build
-    // to reproduce the failure — a single fresh build dir is enough, and
-    // skipping the initial build avoids the root-owned `<out>/build/` files
-    // (left by nspawn) that block re-cleanup on a same-output rerun.
+fn kernel_build_rewrites_snapshot() {
+    // The snapshot is an auto-updating lockfile: a build always rewrites it
+    // with the freshly-resolved `.config` and never fails on drift. Mutating
+    // the snapshot beforehand must not break the build, and the injected
+    // marker must be gone afterwards.
     let tmp = KernelOut::new();
     let out = tmp.path().join("kernel");
 
-    // Mutate the project's snapshot so the resolved config can't match it.
-    let backup = std::fs::read("kernel/config-x86_64.snapshot").unwrap();
-    let snap = std::fs::read_to_string("kernel/config-x86_64.snapshot").unwrap();
-    std::fs::write(
-        "kernel/config-x86_64.snapshot",
-        format!("{}\n# DRIFT_TEST_MARKER=1\n", snap),
-    )
-    .unwrap();
+    let snapshot = "kernel/config-x86_64.snapshot";
+    let backup = std::fs::read(snapshot).unwrap();
+    let mutated = format!(
+        "{}\n# DRIFT_TEST_MARKER=1\n",
+        String::from_utf8_lossy(&backup)
+    );
+    std::fs::write(snapshot, mutated).unwrap();
 
     let result = Command::new(binary())
         .args(["kernel", "--output"])
@@ -145,19 +143,20 @@ fn kernel_drift_fails_without_update_snapshot() {
         .output()
         .unwrap();
 
+    let after = std::fs::read_to_string(snapshot).unwrap_or_default();
     // Restore the snapshot regardless of test outcome.
-    std::fs::write("kernel/config-x86_64.snapshot", backup).unwrap();
+    std::fs::write(snapshot, &backup).unwrap();
 
     let stdout = String::from_utf8_lossy(&result.stdout);
     let stderr = String::from_utf8_lossy(&result.stderr);
 
     assert!(
-        !result.status.success(),
-        "expected drift to fail. stdout:\n{stdout}\nstderr:\n{stderr}",
+        result.status.success(),
+        "expected build to succeed despite snapshot drift. stdout:\n{stdout}\nstderr:\n{stderr}",
     );
     assert!(
-        stderr.contains(".config drift") || stderr.contains("update-snapshot"),
-        "stderr did not contain expected drift message.\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        !after.contains("DRIFT_TEST_MARKER"),
+        "snapshot was not rewritten — marker still present. stdout:\n{stdout}\nstderr:\n{stderr}",
     );
 }
 
