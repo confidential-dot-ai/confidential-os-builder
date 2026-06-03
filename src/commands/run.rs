@@ -1,5 +1,6 @@
 use crate::manifest::{self, BuildManifest};
 use crate::qemu::{self, QemuArgs, QemuTier};
+use crate::tools;
 use crate::RunArgs;
 
 const ALLOWED_DISK_FORMATS: &[&str] = &["raw", "qcow2"];
@@ -117,6 +118,26 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
+    // Optional ephemeral scratch disk: create a sparse raw file of the requested
+    // size, label it `scratch` so the initrd detects it, and attach it writable.
+    let scratch_path = match args.scratch {
+        Some(ref size) => {
+            let bytes = qemu::parse_size_to_bytes(size)?;
+            let path = args.dir.join("scratch.raw");
+            let f = fs_err::File::create(&path)?;
+            f.set_len(bytes)?;
+            drop(f);
+            let path_str = path.to_string_lossy().to_string();
+            tools::run_command("mkfs.ext4", &["-F", "-q", "-L", "scratch", &path_str])?;
+            println!(
+                "Created ephemeral scratch disk ({size}) at {}",
+                path.display()
+            );
+            Some(path)
+        }
+        None => None,
+    };
+
     // Launch
     let qemu_args = QemuArgs {
         tier,
@@ -129,7 +150,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         smp: manifest.build.smp,
         memory: manifest.build.memory,
         port_forwards,
-        scratch: None,
+        scratch: scratch_path,
     };
 
     println!(

@@ -66,6 +66,15 @@ fn test_run_port_forward_flag() {
         .stdout(predicates::str::contains("port-forward"));
 }
 
+#[test]
+fn test_run_help_shows_scratch() {
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--scratch"));
+}
+
 // --- push command tests ---
 
 #[test]
