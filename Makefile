@@ -8,14 +8,14 @@
 
 # Base image — no profile. Produces output/base/{disk.raw, uki.efi, guest.igvm, ...}.
 build:
-	bin/steep-safe build
+	bin/steep build
 
 # Base image + attest profile: pulls the attestation-api binary first,
 # then builds with --profile attest. The systemd unit + config live in
 # mkosi/base/mkosi.profiles/attest/; the binary is staged into
 # mkosi.local/ by bin/steep-fetch-attest.
 build-attest: fetch-attest
-	bin/steep-safe build --profile attest
+	bin/steep build --profile attest
 
 # Stage the attestation-api binary into mkosi.local/ for the attest profile.
 # Idempotent — re-runs are cheap (one nerdctl pull, cached locally).
