@@ -180,6 +180,28 @@ After a build, review the snapshot:
 
 The snapshot reflects the most recent build's inputs. Building with `--kernel-config-fragment` resolves a different `.config` than steep's bare baseline, so the snapshot will show that fragment's effect; revert it with `git checkout kernel/config-x86_64.snapshot` if that build was a one-off.
 
+#### Ephemeral scratch space
+
+A booted CVM's writable root is an overlay whose upper layer defaults to a 2G
+RAM tmpfs, so build tasks that need more room run out of space. Attach an
+**ephemeral encrypted scratch disk** to expand it:
+
+```bash
+steep run output/NAME --scratch 20G
+```
+
+This creates a fresh `scratch.raw` labeled `scratch` and attaches it writable.
+The initrd detects any whole-device `LABEL=scratch` disk, encrypts it with a
+random key generated in-guest at boot (never persisted), formats it, and uses
+it as the overlay upper layer — so the entire root filesystem gains the space
+transparently.
+
+The disk is **ephemeral**: the key is discarded on shutdown, so contents do not
+survive a reboot, and the host (untrusted on SNP) only ever sees ciphertext. In
+production, attach your own `LABEL=scratch` block device instead of using
+`--scratch`. A persistent `LABEL=data` disk continues to take the existing
+plaintext path mounted at `/data`.
+
 ## Measurement Chain
 
 The attestation model rests on a deterministic chain from source configuration to hardware-signed measurement.

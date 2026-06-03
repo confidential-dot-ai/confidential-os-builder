@@ -54,21 +54,43 @@ mkdir -p /sysroot-lower /sysroot-upper /sysroot
 mount -o ro /dev/mapper/root /sysroot-lower
 echo "initrd: verified root mounted (read-only)"
 
-# Try to mount a persistent data disk for the overlay upper layer.
-# Look for a virtio disk with LABEL=data (typically vdb).
-# Fall back to tmpfs if no data disk is found (writes lost on reboot).
+# Pick overlay upper-layer backing. Scan virtio disks by whole-device label:
+#   LABEL=scratch -> ephemeral, encrypted with a random in-RAM key (this boot)
+#   LABEL=data    -> persistent, plaintext, also bind-mounted at /data
+#   neither       -> 2G RAM tmpfs (writes lost on reboot)
+SCRATCH_DEV=""
 DATA_DEV=""
 for dev in /dev/vdb /dev/vdc /dev/vdd; do
     if [ -e "$dev" ]; then
         LABEL=$(blkid -s LABEL -o value "$dev" 2>/dev/null || true)
-        if [ "$LABEL" = "data" ]; then
-            DATA_DEV="$dev"
-            break
-        fi
+        case "$LABEL" in
+            scratch) [ -z "$SCRATCH_DEV" ] && SCRATCH_DEV="$dev" ;;
+            data)    [ -z "$DATA_DEV" ] && DATA_DEV="$dev" ;;
+        esac
     fi
 done
 
-if [ -n "$DATA_DEV" ]; then
+if [ -n "$SCRATCH_DEV" ]; then
+    echo "initrd: found scratch disk at $SCRATCH_DEV — ephemeral encrypted overlay"
+    # Random per-boot key, kept only in (SEV-encrypted) RAM, never persisted.
+    mkdir -p /run
+    head -c 64 /dev/urandom > /run/scratch.key
+    # --batch-mode: the disk carries an ext4 LABEL=scratch marker (written by the
+    # host so we can find it via blkid); without -q cryptsetup detects that
+    # signature and blocks on an interactive "Are you sure?" prompt the stdin-less
+    # initrd can never answer. The mapping is plain-mode over a random per-boot key,
+    # so the marker is meaningless to clobber and mkfs.ext4 rewrites it immediately.
+    cryptsetup open --batch-mode --type plain --cipher aes-xts-plain64 --key-size 512 \
+        -d /run/scratch.key "$SCRATCH_DEV" scratch
+    # Reformat every boot: prior contents are unrecoverable (key is gone) anyway.
+    mkfs.ext4 -q /dev/mapper/scratch
+    mount /dev/mapper/scratch /sysroot-upper
+    mkdir -p /sysroot-upper/upper /sysroot-upper/work
+    mount -t overlay overlay \
+        -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
+        /sysroot
+    echo "initrd: overlayfs mounted (ephemeral encrypted, backed by $SCRATCH_DEV)"
+elif [ -n "$DATA_DEV" ]; then
     echo "initrd: found data disk at $DATA_DEV"
     mkdir -p /mnt/data
     mount "$DATA_DEV" /mnt/data
@@ -81,7 +103,7 @@ if [ -n "$DATA_DEV" ]; then
     mount --bind /mnt/data /sysroot/data
     echo "initrd: overlayfs mounted (persistent, backed by $DATA_DEV at /data)"
 else
-    echo "initrd: WARNING: no data disk found, using tmpfs (writes lost on reboot)"
+    echo "initrd: WARNING: no data/scratch disk found, using tmpfs (writes lost on reboot)"
     mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
     mkdir -p /sysroot-upper/upper /sysroot-upper/work
     mount -t overlay overlay \

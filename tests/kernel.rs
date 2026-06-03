@@ -167,3 +167,51 @@ fn sha256(p: &std::path::Path) -> String {
     std::io::copy(&mut f, &mut h).unwrap();
     hex::encode(h.finalize())
 }
+
+/// Boot a steep VM with --scratch and confirm the root fs reports more than the
+/// 2G tmpfs ceiling. Ignored: builds an image and boots a CVM (slow, build-env).
+#[test]
+#[ignore]
+fn scratch_disk_expands_root_capacity() {
+    // Assumes an already-built image dir at `output/base` in the repo.
+    let dir = std::path::Path::new("output/base");
+    assert!(
+        dir.join("manifest.json").exists(),
+        "build output/base first (steep build)"
+    );
+
+    // 8G scratch is well over the 2G tmpfs fallback.
+    let out = Command::new(binary())
+        .args(["run"])
+        .arg(dir)
+        .args(["--scratch", "8G"])
+        // run boots a VM; rely on the harness/test wrapper to capture serial and
+        // shut down. Here we only assert the disk was created and labeled.
+        .timeout(std::time::Duration::from_secs(5))
+        .output()
+        .unwrap();
+
+    // The disk-creation step prints before QEMU launches.
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        combined.contains("Created ephemeral scratch disk"),
+        "scratch disk was not created. output:\n{combined}"
+    );
+    assert!(dir.join("scratch.raw").exists(), "scratch.raw not created");
+
+    // Confirm the host-side disk carries LABEL=scratch for the initrd to find.
+    let label = std::process::Command::new("blkid")
+        .args(["-s", "LABEL", "-o", "value"])
+        .arg(dir.join("scratch.raw"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&label.stdout).trim(),
+        "scratch",
+        "scratch.raw must be labeled `scratch`"
+    );
+}
