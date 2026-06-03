@@ -37,9 +37,15 @@ pub fn run(
         ("KCONFIG_NOTIMESTAMP", "1"),
     ];
 
+    // Run the prepare phase serially first: kernel parallel builds can race
+    // generating arch headers + fixdep when many gcc jobs start before
+    // `archprepare` completes (observed on linux 6.12.84 under nspawn
+    // --ephemeral). Splitting into a serial `make prepare` then `make -j bzImage`
+    // is the canonical workaround and adds only a few seconds.
     let script = format!(
         "set -eux\n\
          cd /build\n\
+         make prepare 2>&1 | tee -a /build.log\n\
          make -j{parallelism} bzImage 2>&1 | tee -a /build.log\n\
          test -f arch/x86/boot/bzImage\n",
         parallelism = parallelism,
