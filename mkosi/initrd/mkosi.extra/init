@@ -75,7 +75,12 @@ if [ -n "$SCRATCH_DEV" ]; then
     # Random per-boot key, kept only in (SEV-encrypted) RAM, never persisted.
     mkdir -p /run
     head -c 64 /dev/urandom > /run/scratch.key
-    cryptsetup open --type plain --cipher aes-xts-plain64 --key-size 512 \
+    # --batch-mode: the disk carries an ext4 LABEL=scratch marker (written by the
+    # host so we can find it via blkid); without -q cryptsetup detects that
+    # signature and blocks on an interactive "Are you sure?" prompt the stdin-less
+    # initrd can never answer. The mapping is plain-mode over a random per-boot key,
+    # so the marker is meaningless to clobber and mkfs.ext4 rewrites it immediately.
+    cryptsetup open --batch-mode --type plain --cipher aes-xts-plain64 --key-size 512 \
         -d /run/scratch.key "$SCRATCH_DEV" scratch
     # Reformat every boot: prior contents are unrecoverable (key is gone) anyway.
     mkfs.ext4 -q /dev/mapper/scratch
