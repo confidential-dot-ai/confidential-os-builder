@@ -95,6 +95,14 @@ pub struct BuildArgs {
     /// Number of vCPUs
     #[arg(long, default_value = "2")]
     pub smp: u32,
+
+    /// Enable an mkosi profile from `mkosi/base/mkosi.profiles/<NAME>/`.
+    /// Repeatable. Profiles compose extra config (packages, systemd units,
+    /// files) into the base image at build time. Each enabled profile may
+    /// also trigger pre-build hooks (e.g. fetching binaries from GHCR).
+    /// Currently supported: `attest` (bakes the attestation-api HTTP service).
+    #[arg(long = "profile", value_name = "NAME")]
+    pub profiles: Vec<String>,
 }
 
 #[derive(clap::Args)]
