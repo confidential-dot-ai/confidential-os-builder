@@ -122,6 +122,14 @@ pub struct BuildArgs {
     /// `steep igvm` is then only needed for unusual SMP values or repair.
     #[arg(long, num_args = 1.., default_values_t = [2u32, 4, 8, 16])]
     pub smp: Vec<u32>,
+
+    /// Enable an mkosi profile from `mkosi/base/mkosi.profiles/<NAME>/`.
+    /// Repeatable. Profiles compose extra config (packages, systemd units,
+    /// files) into the base image at build time. Each enabled profile may
+    /// also trigger pre-build hooks (e.g. fetching binaries from GHCR).
+    /// Currently supported: `attest` (bakes the attestation-api HTTP service).
+    #[arg(long = "profile", value_name = "NAME")]
+    pub profiles: Vec<String>,
 }
 
 #[derive(clap::Args)]

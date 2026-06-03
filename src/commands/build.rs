@@ -1,6 +1,13 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::{igvm, kernel_cache, manifest, qemu, tools, BuildArgs};
+
+/// Pinned digest of the SNP-only `attestation-api` container. The binary is
+/// extracted from this image when --profile attest is enabled. Bumping this
+/// digest changes the launch measurement of any `--profile attest` build.
+const ATTESTATION_API_IMAGE: &str =
+    "ghcr.io/lunal-dev/attestation-api@sha256:64468157f4cdcc549846edbe973a15d6c30aa90f5dac193ad324d6df238ee89c";
 
 pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     tracing::info!("sealing base image with dm-verity + UKI");
@@ -105,6 +112,23 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         inject_cloud_init(ci, &seed_dir)?;
     }
 
+    // Per-profile pre-build hooks. Each profile may need a host-side step that
+    // can't be expressed declaratively in mkosi.conf — typically fetching a
+    // binary from a registry. The static files (systemd units, configs) live
+    // in `mkosi/base/mkosi.profiles/<NAME>/` and are merged automatically by
+    // mkosi when --profile NAME is passed.
+    for profile in &args.profiles {
+        match profile.as_str() {
+            "attest" => {
+                fetch_attestation_api_binary(&mkosi_local_extra)?;
+            }
+            _ => {
+                // No host-side hook for this profile; mkosi will just apply the
+                // profile dir's mkosi.conf + mkosi.extra/ if it exists.
+            }
+        }
+    }
+
     // Phase 1: ensure custom kernel artifact is current
     println!("\n=== Step 1/4: Ensuring custom kernel ===");
     let kernel = kernel_cache::ensure_kernel(false, args.kernel_config_fragment.clone())?;
@@ -172,6 +196,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         let canonical = script.canonicalize()?;
         mkosi_args.push(format!("--postinst-script={}", canonical.display()));
         mkosi_args.push("--with-network=yes".to_string());
+    }
+    for profile in &args.profiles {
+        mkosi_args.push(format!("--profile={profile}"));
     }
     tools::run_command_streaming("sudo", &mkosi_args)?;
 
@@ -485,6 +512,72 @@ fn copy_extra(src: &Path, dst: &Path) -> anyhow::Result<()> {
 fn human_size(path: &Path) -> anyhow::Result<String> {
     let bytes = fs_err::metadata(path)?.len();
     Ok(humansize::format_size(bytes, humansize::BINARY))
+}
+
+/// Pull the attestation-api binary from its pinned container image and stage
+/// it in `<mkosi_local_extra>/usr/local/bin/`. Run when `--profile attest` is
+/// enabled. Uses `nerdctl` (already a steep dependency for QEMU/OVMF/IGVM
+/// artifacts). The binary ends up in the measured rootfs because mkosi merges
+/// `mkosi.local/mkosi.extra/` with the base + any profile's `mkosi.extra/`.
+fn fetch_attestation_api_binary(mkosi_local_extra: &Path) -> anyhow::Result<()> {
+    println!("=== Profile attest: fetching attestation-api binary ===");
+    let target_dir = mkosi_local_extra.join("usr/local/bin");
+    fs_err::create_dir_all(&target_dir)?;
+    let target = target_dir.join("attestation-api");
+
+    // nerdctl create + cp pattern — same as roles/build-artifacts uses for
+    // OVMF / IGVM artifacts. We don't run the container, just extract the file.
+    let nerdctl_path = which::which("nerdctl")
+        .map_err(|_| anyhow::anyhow!(
+            "nerdctl required to fetch attestation-api binary for --profile attest"
+        ))?;
+
+    // create a stopped container from the pinned image
+    let create = Command::new("sudo")
+        .arg(&nerdctl_path)
+        .args(["--address", "/run/k3s/containerd/containerd.sock"])
+        .args(["create", "--net=none", ATTESTATION_API_IMAGE, "true"])
+        .output()?;
+    if !create.status.success() {
+        anyhow::bail!(
+            "nerdctl create {} failed: {}",
+            ATTESTATION_API_IMAGE,
+            String::from_utf8_lossy(&create.stderr)
+        );
+    }
+    let cid = String::from_utf8_lossy(&create.stdout).trim().to_string();
+
+    // copy the binary out
+    let cp = Command::new("sudo")
+        .arg(&nerdctl_path)
+        .args(["--address", "/run/k3s/containerd/containerd.sock"])
+        .args(["cp", &format!("{cid}:/usr/local/bin/attestation-api")])
+        .arg(&target)
+        .output()?;
+
+    // best-effort remove the container regardless of cp outcome
+    let _ = Command::new("sudo")
+        .arg(&nerdctl_path)
+        .args(["--address", "/run/k3s/containerd/containerd.sock"])
+        .args(["rm", &cid])
+        .output();
+
+    if !cp.status.success() {
+        anyhow::bail!(
+            "nerdctl cp attestation-api binary failed: {}",
+            String::from_utf8_lossy(&cp.stderr)
+        );
+    }
+
+    // make it executable
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs_err::metadata(&target)?.permissions();
+    perms.set_mode(0o755);
+    fs_err::set_permissions(&target, perms)?;
+
+    println!("Staged attestation-api at {}", target.display());
+    println!("Source: {}", ATTESTATION_API_IMAGE);
+    Ok(())
 }
 
 fn chrono_now() -> String {
