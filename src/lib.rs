@@ -53,6 +53,12 @@ pub struct RunArgs {
     /// Path to OVMF firmware (overrides manifest; needed for --skip-igvm images on KVM)
     #[arg(long, env = "STEEP_FIRMWARE")]
     pub firmware: Option<PathBuf>,
+
+    /// Attach an ephemeral encrypted scratch disk of this size (e.g. "20G") as
+    /// the writable overlay upper layer. Creates a fresh LABEL=scratch raw disk
+    /// in the output directory on each run; contents do not survive a reboot.
+    #[arg(long, value_name = "SIZE")]
+    pub scratch: Option<String>,
 }
 
 #[derive(clap::Args)]
