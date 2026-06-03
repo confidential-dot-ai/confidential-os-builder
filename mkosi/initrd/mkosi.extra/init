@@ -1,10 +1,18 @@
 #!/bin/bash
-set -eu
+set -u
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
+
+# Mirror all initrd output to ttyS0 (KubeVirt + most cloud QEMU bridge isa-serial
+# to a host-visible log; hvc0 is not always wired up). Echoes still go to
+# /dev/console too via stdio fan-out from the kernel.
+if [ -e /dev/ttyS0 ]; then
+    exec >/dev/ttyS0 2>&1
+fi
+echo "initrd: starting (output mirrored to ttyS0)"
 
 # Parse roothash from kernel cmdline (disable globbing to prevent expansion)
 set -f
@@ -55,38 +63,78 @@ mount -o ro /dev/mapper/root /sysroot-lower
 echo "initrd: verified root mounted (read-only)"
 
 # Try to mount a persistent data disk for the overlay upper layer.
-# Look for a virtio disk with LABEL=data (typically vdb).
-# Fall back to tmpfs if no data disk is found (writes lost on reboot).
+# Look for a virtio disk with LABEL=data (typically vdb). If we find a
+# virtio disk that is entirely unformatted (no detectable filesystem
+# signature), format it ext4 with LABEL=data so confai-launched VMs can
+# arrive with a blank PVC and persist on first boot.
+# Fall back to tmpfs if no usable disk is found (writes lost on reboot).
 DATA_DEV=""
 for dev in /dev/vdb /dev/vdc /dev/vdd; do
-    if [ -e "$dev" ]; then
-        LABEL=$(blkid -s LABEL -o value "$dev" 2>/dev/null || true)
-        if [ "$LABEL" = "data" ]; then
-            DATA_DEV="$dev"
-            break
-        fi
+    [ -e "$dev" ] || continue
+    LABEL=$(blkid -s LABEL -o value "$dev" 2>/dev/null || true)
+    echo "initrd: examining $dev (label=${LABEL:-<none>})"
+    if [ "$LABEL" = "data" ]; then
+        DATA_DEV="$dev"
+        echo "initrd: $dev already has LABEL=data — using it"
+        break
     fi
+    if [ -n "$LABEL" ]; then
+        # Some other recognized label (e.g. cidata for cloud-init NoCloud).
+        # Leave it alone — not ours to touch.
+        continue
+    fi
+    # Either truly unformatted, OR has signatures we can't parse but no label.
+    # confai's contract is: this device is the per-VM datadisk PVC, so we own
+    # it. Wipe any partial signatures and format. wipefs+mkfs are belt-and-
+    # suspenders: blkid's exit-code is unreliable on sparse PVCs.
+    echo "initrd: claiming $dev for data (wipefs + mkfs.ext4 -L data)"
+    wipefs -a "$dev" >/dev/null 2>&1 || true
+    if mkfs.ext4 -q -F -L data "$dev"; then
+        DATA_DEV="$dev"
+        break
+    fi
+    echo "initrd: WARNING: mkfs.ext4 on $dev failed; trying next device"
 done
 
-if [ -n "$DATA_DEV" ]; then
-    echo "initrd: found data disk at $DATA_DEV"
-    mkdir -p /mnt/data
-    mount "$DATA_DEV" /mnt/data
-    mkdir -p /mnt/data/overlay/upper /mnt/data/overlay/work
-    mount -t overlay overlay \
-        -o lowerdir=/sysroot-lower,upperdir=/mnt/data/overlay/upper,workdir=/mnt/data/overlay/work \
-        /sysroot
-    # Bind-mount data disk into the final root so it's at /data after switch_root
-    mkdir -p /sysroot/data
-    mount --bind /mnt/data /sysroot/data
-    echo "initrd: overlayfs mounted (persistent, backed by $DATA_DEV at /data)"
-else
-    echo "initrd: WARNING: no data disk found, using tmpfs (writes lost on reboot)"
+# Robust mount + overlay setup. Any failure here falls back to tmpfs so the
+# guest can still boot — losing persistence is preferable to a kernel panic.
+use_tmpfs_overlay() {
+    echo "initrd: setting up tmpfs overlay (writes lost on reboot)"
     mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
     mkdir -p /sysroot-upper/upper /sysroot-upper/work
     mount -t overlay overlay \
         -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
         /sysroot
+}
+
+setup_persistent_overlay() {
+    local dev="$1"
+    mkdir -p /mnt/data
+    if ! mount "$dev" /mnt/data; then
+        echo "initrd: WARNING: mount $dev /mnt/data failed; falling back to tmpfs"
+        return 1
+    fi
+    mkdir -p /mnt/data/overlay/upper /mnt/data/overlay/work
+    if ! mount -t overlay overlay \
+        -o lowerdir=/sysroot-lower,upperdir=/mnt/data/overlay/upper,workdir=/mnt/data/overlay/work \
+        /sysroot; then
+        echo "initrd: WARNING: overlay mount on $dev failed; falling back to tmpfs"
+        umount /mnt/data 2>/dev/null || true
+        return 1
+    fi
+    mkdir -p /sysroot/data
+    mount --bind /mnt/data /sysroot/data || true
+    echo "initrd: overlayfs mounted (persistent, backed by $dev, also at /data)"
+    return 0
+}
+
+if [ -n "$DATA_DEV" ]; then
+    if ! setup_persistent_overlay "$DATA_DEV"; then
+        use_tmpfs_overlay
+    fi
+else
+    echo "initrd: no data disk available"
+    use_tmpfs_overlay
 fi
 echo "initrd: overlayfs ready"
 
