@@ -51,14 +51,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // Redirect TMPDIR onto disk so mkosi's staging doesn't OOM tmpfs /tmp.
     let _tmpdir_guard = tools::prepare_safe_tmpdir()?;
 
-    // Prepare the per-build mkosi.local/ overlay. Any debris from a crashed
-    // prior build is wiped so we start from a clean slate. The cleanup guard
-    // is installed *before* anything writes into the overlay so that early
-    // returns still trigger cleanup.
+    // Don't wipe mkosi.local at start: operator prep (e.g. bin/steep-fetch-attest
+    // staging a binary into mkosi.local/mkosi.extra/) must survive into mkosi.
+    // The MkosiLocalCleanup guard below removes mkosi.local on normal exit; hard
+    // kills are recoverable via `make clean`.
     let mkosi_local = PathBuf::from("mkosi/base/mkosi.local");
-    if fs_err::exists(&mkosi_local)? {
-        fs_err::remove_dir_all(&mkosi_local)?;
-    }
     let mkosi_local_extra = mkosi_local.join("mkosi.extra");
     fs_err::create_dir_all(&mkosi_local_extra)?;
     let _mkosi_local_guard = MkosiLocalCleanup {
