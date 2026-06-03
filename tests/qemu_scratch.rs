@@ -1,6 +1,28 @@
 use std::path::PathBuf;
 use steep::qemu::{QemuArgs, QemuTier};
 
+/// The scratch disk is found via an ext4 `LABEL=scratch` marker, so `cryptsetup`
+/// sees an existing signature when it opens the device. Without `--batch-mode`
+/// it blocks on an interactive "Are you sure?" confirmation that the stdin-less
+/// initrd can never answer, hanging the boot. Guard against that regression.
+#[test]
+fn initrd_opens_scratch_non_interactively() {
+    let init = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/mkosi/initrd/mkosi.extra/init"
+    ))
+    .unwrap();
+    let open_line = init
+        .lines()
+        .find(|l| l.contains("cryptsetup open"))
+        .expect("init must open the scratch device with cryptsetup");
+    assert!(
+        open_line.contains("--batch-mode") || open_line.contains("-q"),
+        "cryptsetup open must be non-interactive (--batch-mode), else boot hangs \
+         on the ext4-signature confirmation prompt. Got: {open_line}"
+    );
+}
+
 #[test]
 fn test_qemu_args_scratch_adds_writable_drive() {
     let args = QemuArgs {
