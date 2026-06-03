@@ -115,9 +115,13 @@ pub struct BuildArgs {
     #[arg(long, default_value = "4G")]
     pub memory: String,
 
-    /// Number of vCPUs
-    #[arg(long, default_value = "2")]
-    pub smp: u32,
+    /// SMP counts to generate IGVM variants for. Each value produces one
+    /// `guest-smp{N}.igvm` file alongside a manifest entry under
+    /// `variants[]`. Defaults to the standard powers-of-two set so a
+    /// single `steep build` is enough to serve any common vCPU topology;
+    /// `steep igvm` is then only needed for unusual SMP values or repair.
+    #[arg(long, num_args = 1.., default_values_t = [2u32, 4, 8, 16])]
+    pub smp: Vec<u32>,
 }
 
 #[derive(clap::Args)]

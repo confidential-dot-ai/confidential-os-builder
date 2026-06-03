@@ -209,16 +209,20 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         human_size(&output_uki)?
     );
 
-    // Step 3: Build IGVM (optional). Produces one variant for `args.smp`; use
-    // `steep igvm --smp N M ...` afterwards to add variants for additional SMP
-    // counts. The per-SMP filename (`guest-smp{N}.igvm`) matches the convention
-    // used by `steep igvm`, so variants written by either path are uniformly
-    // addressable.
-    let igvm_variant = if args.skip_igvm {
+    // Step 3: Build IGVM variants (optional). Emits one `guest-smp{N}.igvm`
+    // per value in `args.smp` (default [2, 4, 8, 16] — the standard
+    // powers-of-two), each as its own entry in manifest.variants[]. The
+    // firmware + UKI bytes are read once and reused; the per-variant cost
+    // is just the measurement pass, so building the default set adds
+    // sub-second to the overall build.
+    let igvm_variants: Vec<manifest::IgvmVariant> = if args.skip_igvm {
         println!("\n=== Step 4/4: Skipping IGVM (--skip-igvm) ===");
-        None
+        Vec::new()
     } else {
-        println!("\n=== Step 4/4: Building IGVM ===");
+        println!(
+            "\n=== Step 4/4: Building IGVM variants (smp = {:?}) ===",
+            args.smp
+        );
 
         // firmware is guaranteed Some when skip_igvm is false (validated at top)
         let fw_path = firmware
@@ -227,31 +231,52 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         let fw_bytes = fs_err::read(fw_path)?;
         let uki_bytes = fs_err::read(&output_uki)?;
 
-        let result = igvm::invoke::build_snp(&fw_bytes, &uki_bytes, args.smp)?;
+        // Sort + dedup so the on-disk manifest has a canonical ordering
+        // regardless of how the operator listed --smp.
+        let mut smps = args.smp.clone();
+        smps.sort_unstable();
+        smps.dedup();
+        if smps.is_empty() {
+            anyhow::bail!("--smp must list at least one vCPU count");
+        }
 
-        let igvm_name = format!("guest-smp{}.igvm", args.smp);
-        let igvm_path = output.join(&igvm_name);
-        fs_err::write(&igvm_path, &result.igvm_bytes)?;
-        println!(
-            "IGVM: {} ({})",
-            igvm_path.display(),
-            human_size(&igvm_path)?
-        );
+        let mut out = Vec::with_capacity(smps.len());
+        for smp in smps {
+            if smp == 0 {
+                anyhow::bail!("SMP count must be >= 1, got 0");
+            }
+            print!("  smp={smp} ... ");
+            let result = igvm::invoke::build_snp(&fw_bytes, &uki_bytes, smp)?;
 
-        let igvm_sha256 = manifest::sha256_file(&igvm_path)?;
-        Some(manifest::IgvmVariant {
-            smp: args.smp,
-            igvm: manifest::FileEntry {
-                path: igvm_name,
-                sha256: igvm_sha256,
-            },
-            measurement: manifest::Measurement {
-                snp_launch_digest: hex::encode(result.measurement.launch_digest),
-                algorithm: "sha384".to_string(),
-                page_count: result.measurement.page_count,
-                vmsa_count: result.measurement.vmsa_count,
-            },
-        })
+            let igvm_name = format!("guest-smp{smp}.igvm");
+            let igvm_path = output.join(&igvm_name);
+            fs_err::write(&igvm_path, &result.igvm_bytes)?;
+
+            let digest = hex::encode(result.measurement.launch_digest);
+            println!(
+                "{} ({}, digest: {}...{})",
+                igvm_name,
+                human_size(&igvm_path)?,
+                &digest[..8],
+                &digest[digest.len() - 8..],
+            );
+
+            let igvm_sha256 = manifest::sha256_file(&igvm_path)?;
+            out.push(manifest::IgvmVariant {
+                smp,
+                igvm: manifest::FileEntry {
+                    path: igvm_name,
+                    sha256: igvm_sha256,
+                },
+                measurement: manifest::Measurement {
+                    snp_launch_digest: digest,
+                    algorithm: "sha384".to_string(),
+                    page_count: result.measurement.page_count,
+                    vmsa_count: result.measurement.vmsa_count,
+                },
+            });
+        }
+        out
     };
 
     // Copy firmware into output so the directory is self-contained for publish/run
@@ -282,7 +307,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // calculate the other checksums
     let initrd_hash = manifest::sha256_file(&initrd_path)?;
     println!("initrd   {}", initrd_hash);
-    if let Some(ref v) = igvm_variant {
+    for v in &igvm_variants {
         println!("igvm     {} ({})", v.igvm.sha256, v.igvm.path);
     }
     let uki_hash = manifest::sha256_file(&output_uki)?;
@@ -343,7 +368,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 sha256: uki_hash,
             },
         },
-        variants: igvm_variant.into_iter().collect(),
+        variants: igvm_variants,
     };
     let manifest_path = output.join("manifest.json");
     manifest::write_manifest(&build_manifest, &manifest_path)?;
