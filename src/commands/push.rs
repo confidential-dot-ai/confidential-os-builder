@@ -92,9 +92,21 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
     println!("Staging tarball at {}", tarball_path.display());
     build_cdi_tarball(dir, files, &tarball_path)?;
 
+    // Run from the tarball's parent so the layer's "filename" in the manifest
+    // is just the basename, matching the historical CDI-compatible layout.
+    // oras also rejects absolute paths as layer args (path validation), so the
+    // layer must be referenced by its basename relative to the cwd.
+    let cwd = tarball_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap());
+    let tarball_basename = tarball_path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("tarball path has no basename: {}", tarball_path.display()))?;
+
     // oras push <ref> --artifact-type ... <file>:<media-type>
     let layer_arg = {
-        let mut s = OsString::from(&tarball_path);
+        let mut s = OsString::from(tarball_basename);
         s.push(":application/vnd.oci.image.layer.v1.tar+gzip");
         s
     };
@@ -105,13 +117,6 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
         "application/vnd.steep.image.v1".into(),
         layer_arg,
     ];
-
-    // Run from the tarball's parent so the layer's "filename" in the manifest
-    // is just the basename, matching the historical CDI-compatible layout.
-    let cwd = tarball_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::current_dir().unwrap());
     tools::run_command_streaming_in("oras", &oras_args, cwd)?;
 
     println!("Pushed successfully.");
