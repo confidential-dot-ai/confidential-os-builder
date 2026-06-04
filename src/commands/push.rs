@@ -104,7 +104,23 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("tarball path has no basename: {}", tarball_path.display()))?;
 
-    // oras push <ref> --artifact-type ... <file>:<media-type>
+    // Stage a minimal OCI image config alongside the tarball. CDI's
+    // registry importer rejects artifacts whose top-level `artifactType`
+    // is set (it only accepts standard OCI image manifests), so we push
+    // a real image config blob and skip `--artifact-type`. Body matches
+    // what containerd would produce for an empty rootfs.
+    let config_path = cwd.join("steep-cdi-config.json");
+    fs_err::write(
+        &config_path,
+        br#"{"architecture":"amd64","os":"linux","config":{},"rootfs":{"type":"layers","diff_ids":[]}}"#,
+    )?;
+    let config_basename = config_path.file_name().unwrap().to_owned();
+    let config_arg = {
+        let mut s = OsString::from(&config_basename);
+        s.push(":application/vnd.oci.image.config.v1+json");
+        s
+    };
+
     let layer_arg = {
         let mut s = OsString::from(tarball_basename);
         s.push(":application/vnd.oci.image.layer.v1.tar+gzip");
@@ -113,11 +129,13 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
     let oras_args: Vec<OsString> = vec![
         "push".into(),
         image_ref.into(),
-        "--artifact-type".into(),
-        "application/vnd.steep.image.v1".into(),
+        "--config".into(),
+        config_arg,
         layer_arg,
     ];
-    tools::run_command_streaming_in("oras", &oras_args, cwd)?;
+    let push_res = tools::run_command_streaming_in("oras", &oras_args, cwd.clone());
+    let _ = fs_err::remove_file(&config_path);
+    push_res?;
 
     println!("Pushed successfully.");
     Ok(())
