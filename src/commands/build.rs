@@ -89,7 +89,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Inject debug autologin if --debug (enables passwordless root on serial console)
     let autologin_dir = PathBuf::from(
-        "mkosi/base/mkosi.local/mkosi.extra/etc/systemd/system/serial-getty@hvc0.service.d",
+        "mkosi/base/mkosi.local/mkosi.extra/etc/systemd/system/serial-getty@.service.d",
     );
     if args.console {
         println!("WARNING: --console enables passwordless root on serial console. Do not use in production.");
