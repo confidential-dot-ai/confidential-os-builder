@@ -27,8 +27,8 @@ jobs:
 
       - name: Install systemd-container
         run: |
-          sudo apt update -y
-          sudo apt install -y systemd-container
+          sudo apt-get update -y
+          sudo apt-get install -y systemd-container
 
       - name: Cache kernel tools
         uses: actions/cache@v5
