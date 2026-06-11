@@ -48,10 +48,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Don't wipe mkosi.local at start: operator prep (e.g. bin/steep-fetch-attest
-    // staging a binary into mkosi.local/mkosi.extra/) must survive into mkosi.
-    // The MkosiLocalCleanup guard below removes mkosi.local on normal exit; hard
-    // kills are recoverable via `make clean`.
+    // Don't wipe mkosi.local at start: profile sync hooks (e.g.
+    // mkosi/base/mkosi.profiles/attest/mkosi.sync staging a binary into
+    // mkosi.local/mkosi.extra/) must survive into the rest of the mkosi run.
+    // The MkosiLocalCleanup guard below removes mkosi.local on normal exit;
+    // hard kills are recoverable via `make clean`.
     let mkosi_local = PathBuf::from("mkosi/base/mkosi.local");
     let mkosi_local_extra = mkosi_local.join("mkosi.extra");
     fs_err::create_dir_all(&mkosi_local_extra)?;

@@ -1,26 +1,15 @@
 # steep — composable build entry points.
 #
-# Underlying commands live in bin/. The Makefile chains together host-side
-# prep (e.g. fetching binaries from registries for `--profile` builds) with
-# the actual mkosi build, so day-to-day use is a single `make <target>`.
+# Underlying commands live in bin/. Profile-specific host-side prep is wired
+# through mkosi lifecycle hooks (e.g. `mkosi/base/mkosi.profiles/attest/
+# mkosi.sync` pulls the attestation-api binary from GHCR before the build),
+# so single `bin/steep build --profile ...` invocations are self-contained.
 
-.PHONY: build build-attest fetch-attest clean
+.PHONY: build clean
 
 # Base image — no profile. Produces output/base/{disk.raw, uki.efi, guest.igvm, ...}.
 build:
 	bin/steep build
-
-# Base image + attest profile: pulls the attestation-api binary first,
-# then builds with --profile attest. The systemd unit + config live in
-# mkosi/base/mkosi.profiles/attest/; the binary is staged into
-# mkosi.local/ by bin/steep-fetch-attest.
-build-attest: fetch-attest
-	bin/steep build --profile attest
-
-# Stage the attestation-api binary into mkosi.local/ for the attest profile.
-# Idempotent — re-runs are cheap (one nerdctl pull, cached locally).
-fetch-attest:
-	bin/steep-fetch-attest
 
 # Wipe per-build staging + the output directory. Safe to run any time.
 clean:
