@@ -85,14 +85,6 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     let output = dir.canonicalize()?;
 
     // Inject debug autologin if --debug (enables passwordless root on serial console)
-    let autologin_dir = PathBuf::from(
-        "mkosi/base/mkosi.local/mkosi.extra/etc/systemd/system/serial-getty@hvc0.service.d",
-    );
-    if args.console {
-        println!("WARNING: --console enables passwordless root on serial console. Do not use in production.");
-        inject_console_autologin(&autologin_dir)?;
-    }
-
     // Inject cloud-init user-data into mkosi.local/mkosi.extra seed directory (measured in verity root)
     let seed_dir = PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/var/lib/cloud/seed/nocloud");
     if let Some(ref ci) = args.cloud_init {
@@ -373,22 +365,8 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     if args.cloud_init.is_some() {
         println!("  Cloud-init: measured in verity root");
     }
-    if args.console {
-        println!("  Debug:      autologin enabled (NOT for production)");
-    }
     println!("===============================");
 
-    Ok(())
-}
-
-/// Inject a systemd drop-in that enables passwordless root autologin on ttyS0.
-/// Only used with --debug; changes the image measurement.
-fn inject_console_autologin(dir: &Path) -> anyhow::Result<()> {
-    fs_err::create_dir_all(dir)?;
-    fs_err::write(
-        dir.join("autologin.conf"),
-        "[Service]\nExecStart=\nExecStart=-/sbin/agetty -o '-p -f -- \\\\u' --noclear --autologin root --keep-baud 115200,57600,38400,9600 %I $TERM\n",
-    )?;
     Ok(())
 }
 

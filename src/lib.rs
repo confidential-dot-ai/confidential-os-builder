@@ -91,12 +91,6 @@ pub struct BuildArgs {
     #[arg(short = 's', long, value_name = "FILE")]
     pub script: Option<PathBuf>,
 
-    /// Enable debug console (passwordless root autologin on serial).
-    /// WARNING: In the SNP threat model, the host controls the serial port.
-    /// This changes the image measurement.
-    #[arg(long, verbatim_doc_comment)]
-    pub console: bool,
-
     /// Skip IGVM generation (produce only disk + UKI, no SNP measurement)
     #[arg(long)]
     pub skip_igvm: bool,
