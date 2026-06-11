@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# mkosi sync script for the attest profile.
+#
+# Runs on the host before the image build (see mkosi(1) "EXECUTION FLOW":
+# sync scripts run before base trees / packages / extra trees are copied in).
+# We use this phase rather than mkosi.prepare/postinst/finalize because those
+# run inside the image chroot and don't have access to the host container
+# runtime we need to pull the attestation-api binary from a registry.
+#
+# Pulls the pinned attestation-api binary from GHCR and stages it into
+# mkosi.local/mkosi.extra/ so mkosi picks it up automatically when copying
+# extra trees into the image. mkosi.local is gitignored and is wiped between
+# builds by the steep Rust driver (see MkosiLocalCleanup in src/commands/build.rs).
+#
+# Bumping the pinned IMAGE digest below changes the launch measurement of any
+# `--profile attest` build — that's the intended behaviour.
+
+set -euo pipefail
+
+# This script lives at mkosi/base/mkosi.profiles/attest/mkosi.sync.
+# Resolve mkosi/base/ (two levels up) so we can write to its mkosi.local/.
+PROFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MKOSI_BASE="$(cd "$PROFILE_DIR/../.." && pwd)"
+TARGET="$MKOSI_BASE/mkosi.local/mkosi.extra/usr/local/bin/attestation-api"
+
+# Pinned digest of the SNP-only attestation-api container.
+IMAGE="ghcr.io/lunal-dev/attestation-api@sha256:64468157f4cdcc549846edbe973a15d6c30aa90f5dac193ad324d6df238ee89c"
+NERDCTL_ADDR="${NERDCTL_ADDR:-/run/k3s/containerd/containerd.sock}"
+
+# steep invokes mkosi under sudo so this script normally runs as root, but
+# invoke sudo explicitly if not — useful when debugging the script standalone.
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO="sudo"
+fi
+
+$SUDO mkdir -p "$(dirname "$TARGET")"
+
+CID=$($SUDO nerdctl --address "$NERDCTL_ADDR" create --net=none "$IMAGE" true)
+trap '$SUDO nerdctl --address "$NERDCTL_ADDR" rm "$CID" >/dev/null 2>&1 || true' EXIT
+
+$SUDO nerdctl --address "$NERDCTL_ADDR" cp "$CID:/usr/local/bin/attestation-api" "$TARGET"
+$SUDO chmod 0755 "$TARGET"
+
+echo "Staged attestation-api -> $TARGET"
+echo "Source: $IMAGE"
