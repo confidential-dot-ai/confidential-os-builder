@@ -78,6 +78,47 @@ for dev in /dev/vdb /dev/vdc /dev/vdd; do
     fi
 done
 
+# Robust overlay setup. The LABEL=data branch is wrapped in a function that
+# falls back to tmpfs on any failure, so a transient mount glitch can't kernel-
+# panic the boot. The LABEL=scratch branch is left as a straight sequence: its
+# cryptsetup+mkfs+mount steps have tight ordering dependencies that are awkward
+# to unwind partially, and a failure there is fatal anyway (no key material
+# survives to retry). The "drop LABEL detection entirely" design (see
+# docs/superpowers/specs/2026-06-confidential-by-default-scratch.md) will
+# rewrite this whole block; this commit banks the universally-good resilience
+# improvement on the data path without restructuring scratch.
+use_tmpfs_overlay() {
+    echo "initrd: setting up tmpfs overlay (writes lost on reboot)"
+    mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
+    mkdir -p /sysroot-upper/upper /sysroot-upper/work
+    mount -t overlay overlay \
+        -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
+        /sysroot
+}
+
+setup_persistent_overlay() {
+    local dev="$1"
+    echo "initrd: found data disk at $dev"
+    mkdir -p /mnt/data
+    if ! mount "$dev" /mnt/data; then
+        echo "initrd: WARNING: mount $dev /mnt/data failed; falling back to tmpfs"
+        return 1
+    fi
+    mkdir -p /mnt/data/overlay/upper /mnt/data/overlay/work
+    if ! mount -t overlay overlay \
+        -o lowerdir=/sysroot-lower,upperdir=/mnt/data/overlay/upper,workdir=/mnt/data/overlay/work \
+        /sysroot; then
+        echo "initrd: WARNING: overlay mount on $dev failed; falling back to tmpfs"
+        umount /mnt/data 2>/dev/null || true
+        return 1
+    fi
+    # Bind-mount data disk into the final root so it's at /data after switch_root
+    mkdir -p /sysroot/data
+    mount --bind /mnt/data /sysroot/data || true
+    echo "initrd: overlayfs mounted (persistent, backed by $dev at /data)"
+    return 0
+}
+
 if [ -n "$SCRATCH_DEV" ]; then
     echo "initrd: found scratch disk at $SCRATCH_DEV — ephemeral encrypted overlay"
     # Random per-boot key, kept only in (SEV-encrypted) RAM, never persisted.
@@ -99,24 +140,12 @@ if [ -n "$SCRATCH_DEV" ]; then
         /sysroot
     echo "initrd: overlayfs mounted (ephemeral encrypted, backed by $SCRATCH_DEV)"
 elif [ -n "$DATA_DEV" ]; then
-    echo "initrd: found data disk at $DATA_DEV"
-    mkdir -p /mnt/data
-    mount "$DATA_DEV" /mnt/data
-    mkdir -p /mnt/data/overlay/upper /mnt/data/overlay/work
-    mount -t overlay overlay \
-        -o lowerdir=/sysroot-lower,upperdir=/mnt/data/overlay/upper,workdir=/mnt/data/overlay/work \
-        /sysroot
-    # Bind-mount data disk into the final root so it's at /data after switch_root
-    mkdir -p /sysroot/data
-    mount --bind /mnt/data /sysroot/data
-    echo "initrd: overlayfs mounted (persistent, backed by $DATA_DEV at /data)"
+    if ! setup_persistent_overlay "$DATA_DEV"; then
+        use_tmpfs_overlay
+    fi
 else
-    echo "initrd: WARNING: no data/scratch disk found, using tmpfs (writes lost on reboot)"
-    mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
-    mkdir -p /sysroot-upper/upper /sysroot-upper/work
-    mount -t overlay overlay \
-        -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
-        /sysroot
+    echo "initrd: no data/scratch disk found"
+    use_tmpfs_overlay
 fi
 echo "initrd: overlayfs ready"
 
