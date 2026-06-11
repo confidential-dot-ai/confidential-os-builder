@@ -19,6 +19,8 @@ tempfile = "3"
 fs-err = "3"
 humansize = "2"
 chrono = "0.4"
+tar = "0.4"
+flate2 = "1"
 igvm-tools = { default-features = false, path = "crates/igvm-tools", version = "0.2.0" }
 
 [dev-dependencies]
