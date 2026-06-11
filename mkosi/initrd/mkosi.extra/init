@@ -1,10 +1,18 @@
 #!/bin/bash
-set -eu
+set -u
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
+
+# Mirror all initrd output to ttyS0 (KubeVirt + most cloud QEMU bridge isa-serial
+# to a host-visible log; hvc0 is not always wired up). Echoes still go to
+# /dev/console too via stdio fan-out from the kernel.
+if [ -e /dev/ttyS0 ]; then
+    exec >/dev/ttyS0 2>&1
+fi
+echo "initrd: starting (output mirrored to ttyS0)"
 
 # Parse roothash from kernel cmdline (disable globbing to prevent expansion)
 set -f
