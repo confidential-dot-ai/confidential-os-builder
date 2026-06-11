@@ -74,6 +74,35 @@ pub fn run_configure_phase(
     } else {
         ""
     };
+    // After olddefconfig, verify every `CONFIG_X=y` the EXTRA (caller) fragment
+    // requested actually survived into .config. olddefconfig silently drops any
+    // option with an unmet Kconfig dependency — no error, the symbol just isn't
+    // in the built kernel (e.g. NETFILTER_XT_MATCH_OWNER dropped because
+    // NETFILTER_ADVANCED was unset, surfacing only as a runtime failure much
+    // later). Catch it here at config time — before the long rootfs build — so a
+    // dropped option fails the build with the exact symbol named, not a mystery
+    // downstream. Scoped to the caller's fragment: required/hardening are
+    // steep's own, already consistent; the caller's is where unmet-dep mistakes
+    // land. (`=m` collapses to `=y` via mod2yesconfig, so checking `=y` is
+    // sufficient for this kernel's module-less build.)
+    let verify_extra = if extra_abs.is_some() {
+        "echo '=== verifying requested extra-fragment options survived ==='\n\
+         missing=\"\"\n\
+         while IFS= read -r line; do\n\
+           case \"$line\" in CONFIG_*=y) ;; *) continue ;; esac\n\
+           sym=\"${line%%=*}\"\n\
+           grep -qxF \"${sym}=y\" .config || missing=\"$missing $sym\"\n\
+         done < .fragments/extra.config\n\
+         if [ -n \"$missing\" ]; then\n\
+           echo \"FATAL: kernel options requested in the config fragment were dropped by\" >&2\n\
+           echo \"olddefconfig (unmet Kconfig dependency or removed symbol):\" >&2\n\
+           for s in $missing; do echo \"  - $s\" >&2; done\n\
+           echo \"Add the missing dependency to the fragment and rebuild.\" >&2\n\
+           exit 1\n\
+         fi\n"
+    } else {
+        ""
+    };
     let script = format!(
         "set -eux\n\
          cd /build\n\
@@ -82,7 +111,8 @@ pub fn run_configure_phase(
          scripts/kconfig/merge_config.sh -m .config .fragments/hardening.config\n\
          {extra_line}\
          make mod2yesconfig\n\
-         make olddefconfig\n",
+         make olddefconfig\n\
+         {verify_extra}",
     );
 
     nspawn(
