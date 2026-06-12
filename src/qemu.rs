@@ -236,8 +236,19 @@ impl QemuArgs {
         if let Some(ref scratch) = self.scratch {
             reject_comma_in_path("scratch", scratch)?;
             args.push("-drive".to_string());
-            // serial=confai-scratch surfaces at /sys/block/<dev>/serial inside
-            // the guest; the initrd uses it to gate the encrypted-overlay path.
+            // `serial=` here is NOT a serial port — it's the virtio block
+            // device's serial-number attribute, an arbitrary identifier string
+            // QEMU exposes to the guest via virtio's device descriptor. Linux
+            // surfaces it at /sys/block/<dev>/serial the moment the device is
+            // enumerated, before any block I/O.
+            //
+            // We abuse this as a side-channel signal from cluster→guest: the
+            // initrd reads the serial and gates the encrypted-overlay path on
+            // serial == "confai-scratch", which lets us skip having to read
+            // a filesystem LABEL off the disk (which would require pre-mkfs'ing
+            // the disk cluster-side, ~5-7s of orchestration latency per launch).
+            // KubeVirt exposes the same attribute via `Disk.serial` in the VM
+            // spec; confai sets that on its datadisk emission.
             args.push(format!(
                 "file={},format=raw,if=virtio,serial=confai-scratch",
                 scratch.display()
