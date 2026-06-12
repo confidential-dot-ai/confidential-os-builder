@@ -78,35 +78,6 @@ pub fn run_configure_phase(
     } else {
         ""
     };
-    // After olddefconfig, verify every `CONFIG_X=y` requested by ANY merged
-    // fragment actually survived into .config. olddefconfig silently drops any
-    // option with an unmet Kconfig dependency — no error, the symbol just isn't
-    // in the built kernel (e.g. NETFILTER_XT_MATCH_OWNER dropped because
-    // NETFILTER_ADVANCED was unset, surfacing only as a runtime failure much
-    // later). Catch it here at config time — before the long rootfs build — so a
-    // dropped option fails the build with the exact symbol named, not a mystery
-    // downstream. Always runs, over all staged fragments: the caller's extra
-    // fragment is where unmet-dep mistakes usually land, but steep's own
-    // required/hardening fragments can break just as silently on a kernel
-    // version bump that renames or re-gates a symbol. (`=m` collapses to `=y`
-    // via mod2yesconfig, so checking `=y` is sufficient for this kernel's
-    // module-less build.)
-    let verify_fragments = "echo '=== verifying requested fragment options survived ==='\n\
-         missing=\"\"\n\
-         for frag in .fragments/*.config; do\n\
-           while IFS= read -r line; do\n\
-             case \"$line\" in CONFIG_*=y) ;; *) continue ;; esac\n\
-             sym=\"${line%%=*}\"\n\
-             grep -qxF \"${sym}=y\" .config || missing=\"$missing ${frag##*/}:$sym\"\n\
-           done < \"$frag\"\n\
-         done\n\
-         if [ -n \"$missing\" ]; then\n\
-           echo \"FATAL: kernel options requested in a config fragment were dropped by\" >&2\n\
-           echo \"olddefconfig (unmet Kconfig dependency or removed symbol):\" >&2\n\
-           for s in $missing; do echo \"  - $s\" >&2; done\n\
-           echo \"Add the missing dependency to the fragment and rebuild.\" >&2\n\
-           exit 1\n\
-         fi\n";
     let script = format!(
         "set -eux\n\
          cd /build\n\
@@ -115,8 +86,7 @@ pub fn run_configure_phase(
          scripts/kconfig/merge_config.sh -m .config .fragments/hardening.config\n\
          {extra_line}\
          make mod2yesconfig\n\
-         make olddefconfig\n\
-         {verify_fragments}",
+         make olddefconfig\n",
     );
 
     nspawn(
@@ -127,7 +97,44 @@ pub fn run_configure_phase(
         &script,
     )?;
     fs_err::remove_dir_all(&frag_dir_in_kernel)?;
-    Ok(())
+
+    let mut fragments: Vec<&Path> = vec![&required_abs, &hardening_abs];
+    if let Some(ref e) = extra_abs {
+        fragments.push(e);
+    }
+    verify_fragment_options(&fragments, &kernel_dir_abs.join(".config"))
+}
+
+/// Fail if any `CONFIG_X=y` requested by a fragment is absent from the
+/// resolved `.config`. `olddefconfig` drops an option whose Kconfig
+/// dependency is unmet (or whose symbol no longer exists) without any error
+/// — the miss otherwise surfaces only as runtime misbehavior, long after the
+/// expensive build (e.g. NETFILTER_XT_MATCH_OWNER silently dropped because
+/// NETFILTER_ADVANCED was unset). (`=m` collapses to `=y` via mod2yesconfig
+/// before olddefconfig, so checking `=y` is sufficient for this module-less
+/// build.)
+fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
+    let config = fs_err::read_to_string(resolved)?;
+    let enabled: std::collections::HashSet<&str> = config.lines().collect();
+    let mut missing = Vec::new();
+    for frag in fragments {
+        let name = frag.file_name().unwrap_or_default().to_string_lossy();
+        for line in fs_err::read_to_string(frag)?.lines() {
+            if line.starts_with("CONFIG_") && line.ends_with("=y") && !enabled.contains(line) {
+                missing.push(format!("  - {}: {}", name, line.trim_end_matches("=y")));
+            }
+        }
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "kernel options requested in a config fragment were dropped by olddefconfig \
+             (unmet Kconfig dependency or removed symbol):\n{}\n\
+             Add the missing dependency to the fragment and rebuild.",
+            missing.join("\n")
+        ))
+    }
 }
 
 /// Run a shell script inside `tools_tree` with `host_dir` bind-mounted at `mount_at`.
@@ -196,6 +203,34 @@ mod tests {
         let b = write(&d, "b", "CONFIG_X=y\n");
         let changed = update_snapshot(&a, &b).unwrap();
         assert!(!changed);
+    }
+
+    #[test]
+    fn verify_fragment_options_passes_when_all_requested_options_present() {
+        let d = TempDir::new().unwrap();
+        let frag = write(&d, "frag.config", "# comment\nCONFIG_A=y\nCONFIG_B=m\n");
+        let resolved = write(&d, "resolved", "CONFIG_A=y\nCONFIG_C=y\n");
+        verify_fragment_options(&[frag.as_path()], &resolved).unwrap();
+    }
+
+    #[test]
+    fn verify_fragment_options_names_dropped_symbol_and_fragment() {
+        let d = TempDir::new().unwrap();
+        let frag = write(&d, "extra.config", "CONFIG_A=y\nCONFIG_B=y\n");
+        let resolved = write(&d, "resolved", "CONFIG_A=y\n");
+        let err = verify_fragment_options(&[frag.as_path()], &resolved)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("extra.config: CONFIG_B"));
+        assert!(!err.contains("CONFIG_A"));
+    }
+
+    #[test]
+    fn verify_fragment_options_ignores_not_set_and_comment_lines() {
+        let d = TempDir::new().unwrap();
+        let frag = write(&d, "frag.config", "# CONFIG_A is not set\n# CONFIG_B=y\n");
+        let resolved = write(&d, "resolved", "CONFIG_C=y\n");
+        verify_fragment_options(&[frag.as_path()], &resolved).unwrap();
     }
 
     #[test]
