@@ -55,8 +55,9 @@ pub struct RunArgs {
     pub firmware: Option<PathBuf>,
 
     /// Attach an ephemeral encrypted scratch disk of this size (e.g. "20G") as
-    /// the writable overlay upper layer. Creates a fresh LABEL=scratch raw disk
-    /// in the output directory on each run; contents do not survive a reboot.
+    /// the writable overlay upper layer. Creates a fresh raw disk in the
+    /// output directory and attaches it with serial=confai-scratch so the
+    /// guest initrd encrypts it; contents do not survive a reboot.
     #[arg(long, value_name = "SIZE")]
     pub scratch: Option<String>,
 }

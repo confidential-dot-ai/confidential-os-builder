@@ -54,32 +54,51 @@ mkdir -p /sysroot-lower /sysroot-upper /sysroot
 mount -o ro /dev/mapper/root /sysroot-lower
 echo "initrd: verified root mounted (read-only)"
 
-# Pick overlay upper-layer backing. Scan virtio disks by whole-device label:
-#   LABEL=scratch -> ephemeral, encrypted with a random in-RAM key (this boot)
-#   LABEL=data    -> persistent, plaintext, also bind-mounted at /data
-#   neither       -> 2G RAM tmpfs (writes lost on reboot)
+# Pick overlay upper-layer backing. Scan virtio disks by their virtio-block
+# device serial number (NOT a serial port — this is the per-device identifier
+# string QEMU exposes via the virtio descriptor, surfaced by Linux at
+# /sys/block/<dev>/serial the moment the device is enumerated, before any
+# block I/O):
+#   serial=confai-scratch -> ephemeral, encrypted with a random in-RAM key
+#   anything else / none  -> 2G RAM tmpfs (writes lost on reboot)
+#
+# Using the serial (vs. a filesystem LABEL written by mkfs) is what lets the
+# guest gate on the cluster operator's intent without requiring any pre-format
+# step on the PVC. KubeVirt plumbs Disk.serial in the VM spec through to
+# QEMU's virtio device attribute, so the cluster declares intent in YAML and
+# the guest sees it pre-boot. See src/qemu.rs for the matching steep-run path.
 SCRATCH_DEV=""
-DATA_DEV=""
 for dev in /dev/vdb /dev/vdc /dev/vdd; do
-    if [ -e "$dev" ]; then
-        LABEL=$(blkid -s LABEL -o value "$dev" 2>/dev/null || true)
-        case "$LABEL" in
-            scratch) [ -z "$SCRATCH_DEV" ] && SCRATCH_DEV="$dev" ;;
-            data)    [ -z "$DATA_DEV" ] && DATA_DEV="$dev" ;;
-        esac
+    [ -e "$dev" ] || continue
+    SERIAL=$(cat "/sys/block/$(basename "$dev")/serial" 2>/dev/null || true)
+    echo "initrd: examining $dev (serial=${SERIAL:-<none>})"
+    if [ "$SERIAL" = "confai-scratch" ]; then
+        SCRATCH_DEV="$dev"
+        break
     fi
 done
 
+# Robust overlay setup. tmpfs is the safe fallback for any path that doesn't
+# end up on the encrypted scratch disk.
+use_tmpfs_overlay() {
+    echo "initrd: setting up tmpfs overlay (writes lost on reboot)"
+    mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
+    mkdir -p /sysroot-upper/upper /sysroot-upper/work
+    mount -t overlay overlay \
+        -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
+        /sysroot
+}
+
 if [ -n "$SCRATCH_DEV" ]; then
-    echo "initrd: found scratch disk at $SCRATCH_DEV — ephemeral encrypted overlay"
+    echo "initrd: found confai-scratch disk at $SCRATCH_DEV — ephemeral encrypted overlay"
     # Random per-boot key, kept only in (SEV-encrypted) RAM, never persisted.
     mkdir -p /run
     head -c 64 /dev/urandom > /run/scratch.key
-    # --batch-mode: the disk carries an ext4 LABEL=scratch marker (written by the
-    # host so we can find it via blkid); without -q cryptsetup detects that
-    # signature and blocks on an interactive "Are you sure?" prompt the stdin-less
-    # initrd can never answer. The mapping is plain-mode over a random per-boot key,
-    # so the marker is meaningless to clobber and mkfs.ext4 rewrites it immediately.
+    # --batch-mode: the raw PVC may carry stale filesystem signatures from a
+    # previous boot (cryptsetup detects those and would otherwise block on an
+    # interactive "Are you sure?" prompt the stdin-less initrd can never answer).
+    # The mapping is plain-mode over a random per-boot key, so any prior bytes
+    # are unreadable and mkfs.ext4 rewrites them immediately.
     cryptsetup open --batch-mode --type plain --cipher aes-xts-plain64 --key-size 512 \
         -d /run/scratch.key "$SCRATCH_DEV" scratch
     # Reformat every boot: prior contents are unrecoverable (key is gone) anyway.
@@ -90,25 +109,9 @@ if [ -n "$SCRATCH_DEV" ]; then
         -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
         /sysroot
     echo "initrd: overlayfs mounted (ephemeral encrypted, backed by $SCRATCH_DEV)"
-elif [ -n "$DATA_DEV" ]; then
-    echo "initrd: found data disk at $DATA_DEV"
-    mkdir -p /mnt/data
-    mount "$DATA_DEV" /mnt/data
-    mkdir -p /mnt/data/overlay/upper /mnt/data/overlay/work
-    mount -t overlay overlay \
-        -o lowerdir=/sysroot-lower,upperdir=/mnt/data/overlay/upper,workdir=/mnt/data/overlay/work \
-        /sysroot
-    # Bind-mount data disk into the final root so it's at /data after switch_root
-    mkdir -p /sysroot/data
-    mount --bind /mnt/data /sysroot/data
-    echo "initrd: overlayfs mounted (persistent, backed by $DATA_DEV at /data)"
 else
-    echo "initrd: WARNING: no data/scratch disk found, using tmpfs (writes lost on reboot)"
-    mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
-    mkdir -p /sysroot-upper/upper /sysroot-upper/work
-    mount -t overlay overlay \
-        -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
-        /sysroot
+    echo "initrd: no confai-scratch disk found"
+    use_tmpfs_overlay
 fi
 echo "initrd: overlayfs ready"
 
