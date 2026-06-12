@@ -31,5 +31,11 @@ rm -f "$BUILDROOT/var/lib/systemd/random-seed"
 rm -f "$BUILDROOT/boot/efi/loader/random-seed"
 rm -f "$BUILDROOT/efi/loader/random-seed"
 
+# Remove SSH host keys — openssh-server's postinst generates them with random
+# bytes at install time, breaking image reproducibility (different bytes per
+# build). ssh.service regenerates them on first boot inside the guest, so each
+# VM still gets unique keys. Standard cloud-image practice.
+rm -f "$BUILDROOT"/etc/ssh/ssh_host_*
+
 # Remove cargo cache if present (non-deterministic)
 rm -rf "$BUILDROOT/root/.cargo"
