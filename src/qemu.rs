@@ -136,7 +136,9 @@ pub struct QemuArgs {
     pub smp: u32,
     pub memory: String,
     pub port_forwards: Vec<(u16, u16)>,
-    /// Optional writable ephemeral scratch disk (already labeled `scratch`).
+    /// Optional writable ephemeral scratch disk. Attached with
+    /// `serial=confai-scratch` so the guest initrd recognizes it as the
+    /// encrypted-overlay backing disk via /sys/block/<dev>/serial.
     pub scratch: Option<PathBuf>,
 }
 
@@ -234,7 +236,12 @@ impl QemuArgs {
         if let Some(ref scratch) = self.scratch {
             reject_comma_in_path("scratch", scratch)?;
             args.push("-drive".to_string());
-            args.push(format!("file={},format=raw,if=virtio", scratch.display()));
+            // serial=confai-scratch surfaces at /sys/block/<dev>/serial inside
+            // the guest; the initrd uses it to gate the encrypted-overlay path.
+            args.push(format!(
+                "file={},format=raw,if=virtio,serial=confai-scratch",
+                scratch.display()
+            ));
         }
         args.push("-smp".to_string());
         args.push(self.smp.to_string());

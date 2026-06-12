@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 use steep::qemu::{QemuArgs, QemuTier};
 
-/// The scratch disk is found via an ext4 `LABEL=scratch` marker, so `cryptsetup`
-/// sees an existing signature when it opens the device. Without `--batch-mode`
-/// it blocks on an interactive "Are you sure?" confirmation that the stdin-less
-/// initrd can never answer, hanging the boot. Guard against that regression.
+/// The PVC may carry stale filesystem signatures from a previous boot's
+/// ciphertext that happen to overlap with ext4 magic bytes. cryptsetup detects
+/// those signatures and, without `--batch-mode`, blocks on an interactive
+/// "Are you sure?" confirmation the stdin-less initrd can never answer, hanging
+/// the boot. Guard against that regression.
 #[test]
 fn initrd_opens_scratch_non_interactively() {
     let init = std::fs::read_to_string(concat!(
@@ -19,7 +20,31 @@ fn initrd_opens_scratch_non_interactively() {
     assert!(
         open_line.contains("--batch-mode") || open_line.contains("-q"),
         "cryptsetup open must be non-interactive (--batch-mode), else boot hangs \
-         on the ext4-signature confirmation prompt. Got: {open_line}"
+         on the stale-signature confirmation prompt. Got: {open_line}"
+    );
+}
+
+/// The initrd gates the encrypted-scratch path on the virtio device serial
+/// (`/sys/block/<dev>/serial == "confai-scratch"`). Guard against accidental
+/// regression to LABEL-based or always-encrypt gating.
+#[test]
+fn initrd_gates_scratch_on_serial() {
+    let init = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/mkosi/initrd/mkosi.extra/init"
+    ))
+    .unwrap();
+    assert!(
+        init.contains("/sys/block/") && init.contains("/serial"),
+        "init must read /sys/block/<dev>/serial to gate the scratch path"
+    );
+    assert!(
+        init.contains("confai-scratch"),
+        "init must compare against the confai-scratch serial value"
+    );
+    assert!(
+        !init.contains("blkid"),
+        "init must not use blkid LABEL detection (replaced by serial gate)"
     );
 }
 
@@ -41,12 +66,16 @@ fn test_qemu_args_scratch_adds_writable_drive() {
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
     assert!(
-        joined.contains("file=/output/scratch.raw,format=raw,if=virtio"),
-        "scratch drive missing: {joined}"
+        joined.contains("file=/output/scratch.raw,format=raw,if=virtio,serial=confai-scratch"),
+        "scratch drive missing or missing serial=confai-scratch: {joined}"
     );
+    let scratch_drive = cmd
+        .iter()
+        .find(|s| s.contains("scratch.raw"))
+        .expect("scratch drive must be present in args");
     assert!(
-        !joined.contains("file=/output/scratch.raw,format=raw,if=virtio,readonly=on"),
-        "scratch drive must be writable"
+        !scratch_drive.contains("readonly=on"),
+        "scratch drive must be writable: {scratch_drive}"
     );
 }
 
