@@ -156,6 +156,15 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         anyhow::bail!("mkosi config dir not found: {}", mkosi_dir.display());
     }
 
+    // mkosi v27 picks its OutputDirectory by checking for `mkosi.output/`
+    // under the config dir: present → write artifacts there; absent → drop
+    // them next to `mkosi.conf`. Steep's downstream code (and the `image.efi`
+    // lookup below) assumes the `mkosi.output/` layout, so create it before
+    // mkosi is invoked. Otherwise the build succeeds but the UKI / disk /
+    // roothash artifacts land at the wrong path and steep errors out with
+    // "UKI .efi not found in mkosi output."
+    fs_err::create_dir_all(mkosi_dir.join("mkosi.output"))?;
+
     let mut mkosi_args: Vec<String> = vec![
         mkosi_bin.clone(),
         "--directory".to_string(),
