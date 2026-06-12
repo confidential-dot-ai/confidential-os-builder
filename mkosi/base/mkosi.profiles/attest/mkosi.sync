@@ -1,46 +1,75 @@
 #!/usr/bin/env bash
 # mkosi sync script for the attest profile.
 #
-# Runs on the host before the image build (see mkosi(1) "EXECUTION FLOW":
-# sync scripts run before base trees / packages / extra trees are copied in).
-# We use this phase rather than mkosi.prepare/postinst/finalize because those
-# run inside the image chroot and don't have access to the host container
-# runtime we need to pull the attestation-api binary from a registry.
+# Runs inside mkosi's tools tree sandbox before extra trees are copied into
+# the image (per mkosi(1) "Execution Flow"). Uses `oras` (added to the
+# tools tree via this profile's mkosi.conf `ToolsTreePackages=oras`) to
+# pull the pinned attestation-api OCI image directly from GHCR over the
+# standard OCI Distribution Spec HTTP API. No container runtime daemon
+# required.
 #
-# Pulls the pinned attestation-api binary from GHCR and stages it into
-# mkosi.local/mkosi.extra/ so mkosi picks it up automatically when copying
-# extra trees into the image. mkosi.local is gitignored and is wiped between
-# builds by the steep Rust driver (see MkosiLocalCleanup in src/commands/build.rs).
+# Stages the binary into mkosi.local/mkosi.extra/usr/local/bin/ so mkosi
+# picks it up automatically when copying extra trees into the image.
+# mkosi.local is gitignored and is wiped between builds by the steep Rust
+# driver (see MkosiLocalCleanup in src/commands/build.rs).
 #
-# Bumping the pinned IMAGE digest below changes the launch measurement of any
-# `--profile attest` build — that's the intended behaviour.
+# Bumping the pinned IMAGE digest below changes the launch measurement of
+# any `--profile attest` build — that is the intended behaviour.
 
 set -euo pipefail
 
-# This script lives at mkosi/base/mkosi.profiles/attest/mkosi.sync.
-# Resolve mkosi/base/ (two levels up) so we can write to its mkosi.local/.
-PROFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MKOSI_BASE="$(cd "$PROFILE_DIR/../.." && pwd)"
-TARGET="$MKOSI_BASE/mkosi.local/mkosi.extra/usr/local/bin/attestation-api"
+# `$SRCDIR` is set by mkosi to the directory mkosi was invoked from
+# (mkosi/base/ on the host, bind-mounted to a sandbox path here). Writing
+# under `$SRCDIR/mkosi.local/mkosi.extra/` lands on the host's mkosi.local
+# tree, which mkosi picks up as an extra tree when copying into the image.
+# BASH_SOURCE[0]-relative resolution would not work because mkosi mounts
+# this script at `/work/sync` inside the sandbox, with no relation to the
+# host directory structure above it.
+STAGE_DIR="$SRCDIR/mkosi.local/mkosi.extra/usr/local/bin"
+TARGET="$STAGE_DIR/attestation-api"
 
 # Pinned digest of the SNP-only attestation-api container.
 IMAGE="ghcr.io/lunal-dev/attestation-api@sha256:64468157f4cdcc549846edbe973a15d6c30aa90f5dac193ad324d6df238ee89c"
-NERDCTL_ADDR="${NERDCTL_ADDR:-/run/k3s/containerd/containerd.sock}"
 
-# steep invokes mkosi under sudo so this script normally runs as root, but
-# invoke sudo explicitly if not — useful when debugging the script standalone.
-SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
-    SUDO="sudo"
+mkdir -p "$STAGE_DIR"
+
+# The attestation-api OCI image is a standard multi-layer Docker image
+# (built via `docker build`, not `oras push`), so its layers have no
+# `org.opencontainers.image.title` annotations and `oras pull` skips them.
+# Instead we fetch the manifest, then fetch every rootfs layer blob
+# directly and extract them in order into a single staging directory.
+# Tar's default behavior (later entries overwrite earlier ones) gives us
+# the correct flattened rootfs view, the same way containerd reconstructs
+# it. We then pluck the binary out of `usr/local/bin/`.
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+EXTRACT_DIR="$TMPDIR/rootfs"
+mkdir -p "$EXTRACT_DIR"
+
+MANIFEST=$(oras manifest fetch "$IMAGE")
+# Repository part of the image ref, without the @digest. Used to fetch
+# blobs by their layer digest (oras blob fetch needs <repo>@<blob-digest>).
+REPO="${IMAGE%@*}"
+
+# Pull every gzipped tar layer (covers both
+# vnd.docker.image.rootfs.diff.tar.gzip and
+# vnd.oci.image.layer.v1.tar+gzip media types) in manifest order, extract
+# into EXTRACT_DIR so later layers shadow earlier ones.
+echo "$MANIFEST" | jq -r '.layers[] | select(.mediaType | test("tar.?gzip$")) | .digest' | \
+while read -r layer; do
+    echo "Fetching layer $layer" >&2
+    oras blob fetch --output "$TMPDIR/layer.tar.gz" "${REPO}@${layer}"
+    tar -xzf "$TMPDIR/layer.tar.gz" -C "$EXTRACT_DIR" 2>/dev/null || true
+    rm -f "$TMPDIR/layer.tar.gz"
+done
+
+FOUND="$EXTRACT_DIR/usr/local/bin/attestation-api"
+if [ ! -f "$FOUND" ]; then
+    echo "ERROR: usr/local/bin/attestation-api not found after extracting layers" >&2
+    find "$EXTRACT_DIR" -name attestation-api -print >&2
+    exit 1
 fi
 
-$SUDO mkdir -p "$(dirname "$TARGET")"
-
-CID=$($SUDO nerdctl --address "$NERDCTL_ADDR" create --net=none "$IMAGE" true)
-trap '$SUDO nerdctl --address "$NERDCTL_ADDR" rm "$CID" >/dev/null 2>&1 || true' EXIT
-
-$SUDO nerdctl --address "$NERDCTL_ADDR" cp "$CID:/usr/local/bin/attestation-api" "$TARGET"
-$SUDO chmod 0755 "$TARGET"
-
+install -m 0755 "$FOUND" "$TARGET"
 echo "Staged attestation-api -> $TARGET"
 echo "Source: $IMAGE"
