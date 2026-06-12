@@ -22,6 +22,12 @@ pub struct KernelArgs {
     /// Lets a project enable extra kernel symbols without modifying steep.
     #[arg(long, value_name = "PATH")]
     pub kernel_config_fragment: Option<PathBuf>,
+
+    /// Extra packages for the kernel-builder tools tree (build-time tools a
+    /// fragment needs, e.g. `dwarves` for CONFIG_DEBUG_INFO_BTF). Repeatable
+    /// and comma-separated.
+    #[arg(long = "kernel-builder-package", value_name = "PKG", value_delimiter = ',')]
+    pub kernel_builder_package: Vec<String>,
 }
 
 #[derive(clap::Args)]
@@ -86,6 +92,14 @@ pub struct BuildArgs {
         value_delimiter = ','
     )]
     pub package: Vec<String>,
+
+    /// Extra package to install in the kernel-builder tools tree (where the
+    /// custom kernel is compiled), not the final image. Repeatable and
+    /// comma-separated. Use for build-time tools a fragment needs — e.g.
+    /// `dwarves` (pahole) when the fragment enables CONFIG_DEBUG_INFO_BTF.
+    /// Twin of `--package`, routed to the kernel-builder mkosi run.
+    #[arg(long = "kernel-builder-package", value_name = "PKG", value_delimiter = ',')]
+    pub kernel_builder_package: Vec<String>,
 
     /// Optional kernel config fragment, merged after required + hardening
     /// when building the custom kernel. Omitted: steep's hardened baseline.
