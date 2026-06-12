@@ -1,6 +1,5 @@
 use crate::manifest::{self, BuildManifest};
 use crate::qemu::{self, QemuArgs, QemuTier};
-use crate::tools;
 use crate::RunArgs;
 
 const ALLOWED_DISK_FORMATS: &[&str] = &["raw", "qcow2"];
