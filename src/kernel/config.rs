@@ -39,6 +39,10 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 ///   make mod2yesconfig
 ///   make olddefconfig
 ///
+/// then verifies every `CONFIG_X=y` requested by the merged fragments is
+/// present in the resolved `.config`, failing the build if `olddefconfig`
+/// silently dropped any (unmet Kconfig dependency or removed symbol).
+///
 /// `extra_fragment` is the optional caller-supplied `--kernel-config-fragment`.
 /// When `Some`, it's merged after `hardening.config` so `mod2yesconfig` still
 /// flattens any tristate symbols it introduces. When `None` the merge sequence
@@ -74,35 +78,35 @@ pub fn run_configure_phase(
     } else {
         ""
     };
-    // After olddefconfig, verify every `CONFIG_X=y` the EXTRA (caller) fragment
-    // requested actually survived into .config. olddefconfig silently drops any
+    // After olddefconfig, verify every `CONFIG_X=y` requested by ANY merged
+    // fragment actually survived into .config. olddefconfig silently drops any
     // option with an unmet Kconfig dependency — no error, the symbol just isn't
     // in the built kernel (e.g. NETFILTER_XT_MATCH_OWNER dropped because
     // NETFILTER_ADVANCED was unset, surfacing only as a runtime failure much
     // later). Catch it here at config time — before the long rootfs build — so a
     // dropped option fails the build with the exact symbol named, not a mystery
-    // downstream. Scoped to the caller's fragment: required/hardening are
-    // steep's own, already consistent; the caller's is where unmet-dep mistakes
-    // land. (`=m` collapses to `=y` via mod2yesconfig, so checking `=y` is
-    // sufficient for this kernel's module-less build.)
-    let verify_extra = if extra_abs.is_some() {
-        "echo '=== verifying requested extra-fragment options survived ==='\n\
+    // downstream. Always runs, over all staged fragments: the caller's extra
+    // fragment is where unmet-dep mistakes usually land, but steep's own
+    // required/hardening fragments can break just as silently on a kernel
+    // version bump that renames or re-gates a symbol. (`=m` collapses to `=y`
+    // via mod2yesconfig, so checking `=y` is sufficient for this kernel's
+    // module-less build.)
+    let verify_fragments = "echo '=== verifying requested fragment options survived ==='\n\
          missing=\"\"\n\
-         while IFS= read -r line; do\n\
-           case \"$line\" in CONFIG_*=y) ;; *) continue ;; esac\n\
-           sym=\"${line%%=*}\"\n\
-           grep -qxF \"${sym}=y\" .config || missing=\"$missing $sym\"\n\
-         done < .fragments/extra.config\n\
+         for frag in .fragments/*.config; do\n\
+           while IFS= read -r line; do\n\
+             case \"$line\" in CONFIG_*=y) ;; *) continue ;; esac\n\
+             sym=\"${line%%=*}\"\n\
+             grep -qxF \"${sym}=y\" .config || missing=\"$missing ${frag##*/}:$sym\"\n\
+           done < \"$frag\"\n\
+         done\n\
          if [ -n \"$missing\" ]; then\n\
-           echo \"FATAL: kernel options requested in the config fragment were dropped by\" >&2\n\
+           echo \"FATAL: kernel options requested in a config fragment were dropped by\" >&2\n\
            echo \"olddefconfig (unmet Kconfig dependency or removed symbol):\" >&2\n\
            for s in $missing; do echo \"  - $s\" >&2; done\n\
            echo \"Add the missing dependency to the fragment and rebuild.\" >&2\n\
            exit 1\n\
-         fi\n"
-    } else {
-        ""
-    };
+         fi\n";
     let script = format!(
         "set -eux\n\
          cd /build\n\
@@ -112,7 +116,7 @@ pub fn run_configure_phase(
          {extra_line}\
          make mod2yesconfig\n\
          make olddefconfig\n\
-         {verify_extra}",
+         {verify_fragments}",
     );
 
     nspawn(
