@@ -1,0 +1,28 @@
+# attestation-api config baked by steep build --profile attest.
+# Override at runtime by mounting / writing /etc/attestation-api/config.toml.
+# Note: /etc lives on the overlay upper, so runtime overrides do persist
+# (when a datadisk is attached) but don't change the IGVM launch measurement.
+
+[server]
+bind = "0.0.0.0:8400"
+
+[server.tls]
+enabled = false
+
+[auth]
+api_keys = []
+
+[certs]
+cache_max_entries = 1024
+vcek_ttl_hours = 24
+chain_ttl_hours = 168
+crl_refresh_hours = 6
+tdx_collateral_ttl_hours = 24
+prefetch_chains = ["milan", "genoa"]
+
+[token]
+enabled = false
+
+[attestation]
+enabled = true
+platforms = ["snp"]

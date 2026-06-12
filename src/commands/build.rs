@@ -48,14 +48,12 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Prepare the per-build mkosi.local/ overlay. Any debris from a crashed
-    // prior build is wiped so we start from a clean slate. The cleanup guard
-    // is installed *before* anything writes into the overlay so that early
-    // returns still trigger cleanup.
+    // Don't wipe mkosi.local at start: profile sync hooks (e.g.
+    // mkosi/base/mkosi.profiles/attest/mkosi.sync staging a binary into
+    // mkosi.local/mkosi.extra/) must survive into the rest of the mkosi run.
+    // The MkosiLocalCleanup guard below removes mkosi.local on normal exit;
+    // hard kills are recoverable via `make clean`.
     let mkosi_local = PathBuf::from("mkosi/base/mkosi.local");
-    if fs_err::exists(&mkosi_local)? {
-        fs_err::remove_dir_all(&mkosi_local)?;
-    }
     let mkosi_local_extra = mkosi_local.join("mkosi.extra");
     fs_err::create_dir_all(&mkosi_local_extra)?;
     let _mkosi_local_guard = MkosiLocalCleanup {
@@ -100,6 +98,16 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     let seed_dir = PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/var/lib/cloud/seed/nocloud");
     if let Some(ref ci) = args.cloud_init {
         inject_cloud_init(ci, &seed_dir)?;
+    }
+
+    // Profiles are applied by mkosi automatically via `--profile=NAME` passed
+    // through below. Static profile content (mkosi.conf + mkosi.extra/) lives
+    // in `mkosi/base/mkosi.profiles/<NAME>/`. Any host-side prep a profile
+    // needs (e.g. pulling a binary from a registry into mkosi.local/) is the
+    // operator's responsibility — see `bin/steep-fetch-<NAME>` helpers and
+    // `make build-<NAME>` targets that chain prep + build.
+    for profile in &args.profiles {
+        tracing::debug!("profile enabled: {profile}");
     }
 
     // Phase 1: ensure custom kernel artifact is current
@@ -148,6 +156,15 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         anyhow::bail!("mkosi config dir not found: {}", mkosi_dir.display());
     }
 
+    // mkosi v27 picks its OutputDirectory by checking for `mkosi.output/`
+    // under the config dir: present → write artifacts there; absent → drop
+    // them next to `mkosi.conf`. Steep's downstream code (and the `image.efi`
+    // lookup below) assumes the `mkosi.output/` layout, so create it before
+    // mkosi is invoked. Otherwise the build succeeds but the UKI / disk /
+    // roothash artifacts land at the wrong path and steep errors out with
+    // "UKI .efi not found in mkosi output."
+    fs_err::create_dir_all(mkosi_dir.join("mkosi.output"))?;
+
     let mut mkosi_args: Vec<String> = vec![
         mkosi_bin.clone(),
         "--directory".to_string(),
@@ -166,6 +183,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         let canonical = script.canonicalize()?;
         mkosi_args.push(format!("--postinst-script={}", canonical.display()));
         mkosi_args.push("--with-network=yes".to_string());
+    }
+    for profile in &args.profiles {
+        mkosi_args.push(format!("--profile={profile}"));
     }
     tools::run_command_streaming("sudo", &mkosi_args)?;
 
@@ -480,6 +500,11 @@ fn human_size(path: &Path) -> anyhow::Result<String> {
     let bytes = fs_err::metadata(path)?.len();
     Ok(humansize::format_size(bytes, humansize::BINARY))
 }
+
+// Per-profile fetchers live in bin/steep-fetch-<NAME> shell scripts; the
+// `make build-<NAME>` Makefile targets chain fetch + build. Keeping this Rust
+// code unaware of registries and pinned digests means the steep CLI stays
+// focused on the image-build pipeline.
 
 fn chrono_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)

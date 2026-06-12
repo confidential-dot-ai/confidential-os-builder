@@ -1,0 +1,15 @@
+[Unit]
+Description=TEE Attestation REST API
+Documentation=https://github.com/lunal-dev/attestation-rs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/attestation-api -c /etc/attestation-api/config.toml
+Restart=on-failure
+RestartSec=3
+DeviceAllow=/dev/sev-guest rwm
+
+[Install]
+WantedBy=multi-user.target
