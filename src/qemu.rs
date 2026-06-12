@@ -25,6 +25,30 @@ pub fn validate_memory(s: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Parse a human/QEMU-style size string (e.g. "20G", "512M") into bytes.
+/// Suffixes K/M/G/T are powers of 1024 (case-insensitive); no suffix = bytes.
+pub fn parse_size_to_bytes(s: &str) -> anyhow::Result<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        anyhow::bail!("empty size");
+    }
+    let last = s.as_bytes()[s.len() - 1];
+    let (num, mult): (&str, u64) = match last {
+        b'K' | b'k' => (&s[..s.len() - 1], 1024),
+        b'M' | b'm' => (&s[..s.len() - 1], 1024 * 1024),
+        b'G' | b'g' => (&s[..s.len() - 1], 1024 * 1024 * 1024),
+        b'T' | b't' => (&s[..s.len() - 1], 1024u64 * 1024 * 1024 * 1024),
+        b'0'..=b'9' => (s, 1),
+        _ => anyhow::bail!("invalid size suffix in {s:?} (use K/M/G/T or plain bytes)"),
+    };
+    let value: u64 = num
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid size number in {s:?}"))?;
+    value
+        .checked_mul(mult)
+        .ok_or_else(|| anyhow::anyhow!("size too large: {s:?}"))
+}
+
 /// The detected QEMU capability tier.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum QemuTier {
@@ -112,6 +136,8 @@ pub struct QemuArgs {
     pub smp: u32,
     pub memory: String,
     pub port_forwards: Vec<(u16, u16)>,
+    /// Optional writable ephemeral scratch disk (already labeled `scratch`).
+    pub scratch: Option<PathBuf>,
 }
 
 impl QemuArgs {
@@ -205,6 +231,11 @@ impl QemuArgs {
             self.disk.display(),
             self.disk_format
         ));
+        if let Some(ref scratch) = self.scratch {
+            reject_comma_in_path("scratch", scratch)?;
+            args.push("-drive".to_string());
+            args.push(format!("file={},format=raw,if=virtio", scratch.display()));
+        }
         args.push("-smp".to_string());
         args.push(self.smp.to_string());
         args.push("-m".to_string());
