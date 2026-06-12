@@ -1,5 +1,6 @@
 use crate::manifest::{self, BuildManifest};
 use crate::qemu::{self, QemuArgs, QemuTier};
+use crate::tools;
 use crate::RunArgs;
 
 const ALLOWED_DISK_FORMATS: &[&str] = &["raw", "qcow2"];
@@ -46,13 +47,27 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     let uki_path;
     let firmware_path;
 
+    // Default to the first variant (smallest SMP after sort, or the build-time
+    // default if `steep igvm` was never run). A future change can add a `--smp`
+    // selector to `steep run`; for now this matches v1 behaviour of "one IGVM
+    // per output dir."
+    let variant = manifest.variants.first();
+
     match tier {
         QemuTier::SevSnp => {
-            let path = args.dir.join("guest.igvm");
+            let v = variant.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no IGVM variants in manifest at {}. Was the image built with --skip-igvm?",
+                    args.dir.display()
+                )
+            })?;
+            let path = args.dir.join(&v.igvm.path);
             if !path.exists() {
                 anyhow::bail!(
-                    "guest.igvm not found in {}. Was the image built with --skip-igvm?",
-                    args.dir.display()
+                    "{} not found in {} (referenced by manifest variant smp={})",
+                    v.igvm.path,
+                    args.dir.display(),
+                    v.smp,
                 );
             }
             igvm_path = Some(path);
@@ -117,6 +132,30 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
+    // Optional ephemeral scratch disk: create a sparse raw file of the requested
+    // size, label it `scratch` so the initrd detects it, and attach it writable.
+    let scratch_path = match args.scratch {
+        Some(ref size) => {
+            let bytes = qemu::parse_size_to_bytes(size)?;
+            let path = args.dir.join("scratch.raw");
+            let f = fs_err::File::create(&path)?;
+            f.set_len(bytes)?;
+            drop(f);
+            let path_str = path.to_string_lossy().to_string();
+            tools::run_command("mkfs.ext4", &["-F", "-q", "-L", "scratch", &path_str])?;
+            println!(
+                "Created ephemeral scratch disk ({size}) at {}",
+                path.display()
+            );
+            Some(path)
+        }
+        None => None,
+    };
+
+    // SMP comes from the selected variant; if no variants exist (skip_igvm
+    // builds running on KVM/emulated), fall back to a sensible default.
+    let smp = variant.map(|v| v.smp).unwrap_or(2);
+
     // Launch
     let qemu_args = QemuArgs {
         tier,
@@ -126,17 +165,18 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         firmware: firmware_path,
         disk: disk_path,
         disk_format: manifest.build.format,
-        smp: manifest.build.smp,
+        smp,
         memory: manifest.build.memory,
         port_forwards,
+        scratch: scratch_path,
     };
 
     println!(
         "Launching VM (smp={}, memory={}, tier={:?})",
         qemu_args.smp, qemu_args.memory, qemu_args.tier
     );
-    if let Some(ref m) = manifest.measurement {
-        println!("Launch digest: {}", m.snp_launch_digest);
+    if let Some(v) = variant {
+        println!("Launch digest: {}", v.measurement.snp_launch_digest);
     }
 
     qemu::launch(&qemu_args)?;
@@ -161,11 +201,13 @@ fn validate_manifest_fields(manifest: &BuildManifest) -> anyhow::Result<()> {
         );
     }
     qemu::validate_memory(&manifest.build.memory)?;
-    if manifest.build.smp == 0 || manifest.build.smp > 1024 {
-        anyhow::bail!(
-            "invalid smp count in manifest: {} (must be 1-1024)",
-            manifest.build.smp
-        );
+    for v in &manifest.variants {
+        if v.smp == 0 || v.smp > 1024 {
+            anyhow::bail!(
+                "invalid smp count in manifest variant: {} (must be 1-1024)",
+                v.smp
+            );
+        }
     }
     Ok(())
 }

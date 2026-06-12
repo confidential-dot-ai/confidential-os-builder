@@ -229,13 +229,20 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         human_size(&output_uki)?
     );
 
-    // Step 3: Build IGVM (optional)
-    let igvm_path = output.join("guest.igvm");
-    let measurement = if args.skip_igvm {
+    // Step 3: Build IGVM variants (optional). Emits one `guest-smp{N}.igvm`
+    // per value in `args.smp` (default [2, 4, 8, 16] — the standard
+    // powers-of-two), each as its own entry in manifest.variants[]. The
+    // firmware + UKI bytes are read once and reused; the per-variant cost
+    // is just the measurement pass, so building the default set adds
+    // sub-second to the overall build.
+    let igvm_variants: Vec<manifest::IgvmVariant> = if args.skip_igvm {
         println!("\n=== Step 4/4: Skipping IGVM (--skip-igvm) ===");
-        None
+        Vec::new()
     } else {
-        println!("\n=== Step 4/4: Building IGVM ===");
+        println!(
+            "\n=== Step 4/4: Building IGVM variants (smp = {:?}) ===",
+            args.smp
+        );
 
         // firmware is guaranteed Some when skip_igvm is false (validated at top)
         let fw_path = firmware
@@ -244,21 +251,52 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         let fw_bytes = fs_err::read(fw_path)?;
         let uki_bytes = fs_err::read(&output_uki)?;
 
-        let result = igvm::invoke::build_snp(&fw_bytes, &uki_bytes, args.smp)?;
+        // Sort + dedup so the on-disk manifest has a canonical ordering
+        // regardless of how the operator listed --smp.
+        let mut smps = args.smp.clone();
+        smps.sort_unstable();
+        smps.dedup();
+        if smps.is_empty() {
+            anyhow::bail!("--smp must list at least one vCPU count");
+        }
 
-        fs_err::write(&igvm_path, &result.igvm_bytes)?;
-        println!(
-            "IGVM: {} ({})",
-            igvm_path.display(),
-            human_size(&igvm_path)?
-        );
+        let mut out = Vec::with_capacity(smps.len());
+        for smp in smps {
+            if smp == 0 {
+                anyhow::bail!("SMP count must be >= 1, got 0");
+            }
+            print!("  smp={smp} ... ");
+            let result = igvm::invoke::build_snp(&fw_bytes, &uki_bytes, smp)?;
 
-        Some(manifest::Measurement {
-            snp_launch_digest: hex::encode(result.measurement.launch_digest),
-            algorithm: "sha384".to_string(),
-            page_count: result.measurement.page_count,
-            vmsa_count: result.measurement.vmsa_count,
-        })
+            let igvm_name = format!("guest-smp{smp}.igvm");
+            let igvm_path = output.join(&igvm_name);
+            fs_err::write(&igvm_path, &result.igvm_bytes)?;
+
+            let digest = hex::encode(result.measurement.launch_digest);
+            println!(
+                "{} ({}, digest: {}...{})",
+                igvm_name,
+                human_size(&igvm_path)?,
+                &digest[..8],
+                &digest[digest.len() - 8..],
+            );
+
+            let igvm_sha256 = manifest::sha256_file(&igvm_path)?;
+            out.push(manifest::IgvmVariant {
+                smp,
+                igvm: manifest::FileEntry {
+                    path: igvm_name,
+                    sha256: igvm_sha256,
+                },
+                measurement: manifest::Measurement {
+                    snp_launch_digest: digest,
+                    algorithm: "sha384".to_string(),
+                    page_count: result.measurement.page_count,
+                    vmsa_count: result.measurement.vmsa_count,
+                },
+            });
+        }
+        out
     };
 
     // Copy firmware into output so the directory is self-contained for publish/run
@@ -289,23 +327,18 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // calculate the other checksums
     let initrd_hash = manifest::sha256_file(&initrd_path)?;
     println!("initrd   {}", initrd_hash);
-    let igvm_hash = if args.skip_igvm {
-        String::new()
-    } else {
-        let h = manifest::sha256_file(&igvm_path)?;
-        println!("igvm     {}", h);
-        h
-    };
+    for v in &igvm_variants {
+        println!("igvm     {} ({})", v.igvm.sha256, v.igvm.path);
+    }
     let uki_hash = manifest::sha256_file(&output_uki)?;
     println!("uki      {}", uki_hash);
 
     println!("\n=== Writing manifest.json ===");
     // Write manifest
     let build_manifest = manifest::BuildManifest {
-        version: 1,
+        version: manifest::MANIFEST_VERSION,
         build: manifest::BuildConfig {
             timestamp: chrono_now(),
-            smp: args.smp,
             memory: args.memory.clone(),
             format: "raw".to_string(),
             platform: if args.skip_igvm {
@@ -350,20 +383,12 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 path: manifest::basename_of(&disk_path),
                 sha256: disk_checksum,
             },
-            igvm: if args.skip_igvm {
-                None
-            } else {
-                Some(manifest::FileEntry {
-                    path: manifest::basename_of(&igvm_path),
-                    sha256: igvm_hash,
-                })
-            },
             uki: manifest::FileEntry {
                 path: manifest::basename_of(&output_uki),
                 sha256: uki_hash,
             },
         },
-        measurement,
+        variants: igvm_variants,
     };
     let manifest_path = output.join("manifest.json");
     manifest::write_manifest(&build_manifest, &manifest_path)?;
@@ -371,14 +396,17 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     println!("\n===============================");
     println!("  Build complete!");
     println!("  Output:     {}", output.display());
-    if !args.skip_igvm {
-        println!("  IGVM:       {}", igvm_path.display());
+    for v in &build_manifest.variants {
+        println!("  IGVM:       {} (smp={})", v.igvm.path, v.smp);
     }
     println!("  Disk:       {}", disk_path.display());
     println!("  Manifest:   {}", manifest_path.display());
     println!("  Root hash:  {roothash}");
-    if let Some(ref m) = build_manifest.measurement {
-        println!("  Launch digest: {}", m.snp_launch_digest);
+    for v in &build_manifest.variants {
+        println!(
+            "  Launch digest (smp={}): {}",
+            v.smp, v.measurement.snp_launch_digest
+        );
     }
     if args.cloud_init.is_some() {
         println!("  Cloud-init: measured in verity root");

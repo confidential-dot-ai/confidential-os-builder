@@ -53,6 +53,12 @@ pub struct RunArgs {
     /// Path to OVMF firmware (overrides manifest; needed for --skip-igvm images on KVM)
     #[arg(long, env = "STEEP_FIRMWARE")]
     pub firmware: Option<PathBuf>,
+
+    /// Attach an ephemeral encrypted scratch disk of this size (e.g. "20G") as
+    /// the writable overlay upper layer. Creates a fresh LABEL=scratch raw disk
+    /// in the output directory on each run; contents do not survive a reboot.
+    #[arg(long, value_name = "SIZE")]
+    pub scratch: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -109,9 +115,13 @@ pub struct BuildArgs {
     #[arg(long, default_value = "4G")]
     pub memory: String,
 
-    /// Number of vCPUs
-    #[arg(long, default_value = "2")]
-    pub smp: u32,
+    /// SMP counts to generate IGVM variants for. Each value produces one
+    /// `guest-smp{N}.igvm` file alongside a manifest entry under
+    /// `variants[]`. Defaults to the standard powers-of-two set so a
+    /// single `steep build` is enough to serve any common vCPU topology;
+    /// `steep igvm` is then only needed for unusual SMP values or repair.
+    #[arg(long, num_args = 1.., default_values_t = [2u32, 4, 8, 16])]
+    pub smp: Vec<u32>,
 
     /// Enable an mkosi profile from `mkosi/base/mkosi.profiles/<NAME>/`.
     /// Repeatable. Profiles compose extra config (packages, systemd units,
@@ -152,6 +162,13 @@ pub struct PushArgs {
     /// Image tag
     #[arg(long, default_value = "latest")]
     pub tag: String,
+
+    /// Build a CDI-compatible single-layer tar+gzip image (for KubeVirt CDI importer).
+    ///
+    /// When set, all files are packed into one `application/vnd.oci.image.layer.v1.tar+gzip`
+    /// layer where `disk.raw` lives under `disk/` and other files sit at the tar root.
+    #[arg(long, default_value_t = false)]
+    pub cdi: bool,
 }
 
 #[derive(clap::Args)]

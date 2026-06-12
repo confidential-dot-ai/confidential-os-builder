@@ -195,12 +195,12 @@ Because they serve completely different purposes.
 
 That's it. ~50MB compressed. It does its job and is discarded.
 
-**The image** (`mkosi/base/`) is the actual operating system — Ubuntu with systemd, cloud-init, networking, SSH, everything. This becomes the root filesystem that runs for the lifetime of the VM.
+**The image** (`mkosi/base/`) is the actual operating system — Ubuntu with systemd, cloud-init, networking, everything. This becomes the root filesystem that runs for the lifetime of the VM.
 
 They're built separately because:
 1. The initrd needs to be **embedded inside the UKI** (more on that next)
 2. The image needs the initrd to be **passed to mkosi at build time** so mkosi can bundle it into the UKI
-3. They have totally different package sets — you don't want `vim` and `openssh-server` in your initrd
+3. They have totally different package sets — you don't want `vim` and `cloud-init` in your initrd
 
 ---
 
