@@ -61,7 +61,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Phase 0a: ensure tools tree
     println!("\n=== Step 0a: Ensuring kernel-builder tools tree (mkosi) ===");
-    let tools_tree = ensure_tools_tree(args.force)?;
+    let tools_tree = ensure_tools_tree(args.force, &args.kernel_builder_package)?;
 
     // Phase 0b: fetch tarball
     println!("\n=== Step 0b: Fetching kernel tarball ===");
@@ -143,15 +143,18 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 /// the skip. The stamp lives under `mkosi.output/`, which `mkosi --force`
 /// wipes — so a successful rebuild always lands a fresh stamp, and a failed
 /// rebuild leaves no stamp behind to fool a later cache check.
-fn ensure_tools_tree(force: bool) -> Result<PathBuf> {
+fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> {
     let tree = Path::new(TOOLS_TREE_IMAGE);
     let stamp_path = Path::new(TOOLS_TREE_STAMP);
-    let conf_sha = fetch::sha256_file(Path::new(TOOLS_TREE_CONF))?;
+    // Cache key = mkosi.conf hash + the extra-package list. The packages come
+    // via flags, not mkosi.conf, so they must be folded in here or a changed
+    // --kernel-builder-package list would silently reuse a stale tree.
+    let stamp_key = format!("{}\n{}", fetch::sha256_file(Path::new(TOOLS_TREE_CONF))?, extra_packages.join(","));
 
     if !force && tree.exists() {
         if let Ok(stamped) = fs_err::read_to_string(stamp_path) {
-            if stamped.trim() == conf_sha {
-                println!("kernel-builder tools tree cache HIT (mkosi.conf unchanged)");
+            if stamped.trim() == stamp_key {
+                println!("kernel-builder tools tree cache HIT (mkosi.conf + packages unchanged)");
                 return Ok(tree.canonicalize()?);
             }
         }
@@ -162,14 +165,20 @@ fn ensure_tools_tree(force: bool) -> Result<PathBuf> {
     let _ = fs_err::remove_file(stamp_path);
 
     let mkosi = tools::resolve_mkosi()?;
-    tools::run_command_streaming(
-        "sudo",
-        &[mkosi.as_str(), "--directory", TOOLS_TREE_DIR, "--force"],
-    )?;
+    let mut args: Vec<String> = vec![
+        mkosi.clone(),
+        "--directory".into(),
+        TOOLS_TREE_DIR.into(),
+        "--force".into(),
+    ];
+    for pkg in extra_packages {
+        args.push(format!("--package={pkg}"));
+    }
+    tools::run_command_streaming("sudo", &args)?;
     if !tree.exists() {
         return Err(anyhow!("mkosi did not produce {}", tree.display()));
     }
-    fs_err::write(stamp_path, &conf_sha)?;
+    fs_err::write(stamp_path, &stamp_key)?;
     Ok(tree.canonicalize()?)
 }
 
