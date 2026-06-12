@@ -25,13 +25,18 @@ pub struct KernelArtifact {
 ///
 /// `fragment` is the caller-supplied `--kernel-config-fragment`, threaded
 /// from `steep build`.
-pub fn ensure_kernel(force: bool, fragment: Option<PathBuf>) -> Result<KernelArtifact> {
+pub fn ensure_kernel(
+    force: bool,
+    fragment: Option<PathBuf>,
+    kernel_builder_package: Vec<String>,
+) -> Result<KernelArtifact> {
     require_inputs_exist(fragment.as_deref())?;
 
     commands::kernel::run(&KernelArgs {
         force,
         output: PathBuf::from(KERNEL_OUT_DIR),
         kernel_config_fragment: fragment,
+        kernel_builder_package,
     })?;
 
     let manifest_path = Path::new(KERNEL_OUT_DIR).join("manifest.json");
