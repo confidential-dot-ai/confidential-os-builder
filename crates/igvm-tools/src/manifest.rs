@@ -31,6 +31,9 @@ pub struct BuildConfig {
     pub platform: String,
     pub boot_mode: String,
     pub smp: u32,
+    /// Kernel command line embedded into the UKI, when one was supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cmdline: Option<String>,
 }
 
 /// Paths and SHA-256 hashes of all input files used in the build.
