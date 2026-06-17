@@ -22,6 +22,7 @@ chrono = "0.4"
 tar = "0.4"
 flate2 = "1"
 igvm-tools = { default-features = false, path = "crates/igvm-tools", version = "0.2.0" }
+tdx-measure = { default-features = false, path = "crates/tdx-measure", version = "0.1.0" }
 
 [dev-dependencies]
 assert_cmd = "2"
