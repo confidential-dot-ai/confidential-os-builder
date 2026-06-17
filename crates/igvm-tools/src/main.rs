@@ -45,9 +45,20 @@ struct BuildArgs {
     #[arg(long, value_name = "FILE")]
     vars: Option<String>,
 
-    /// Kernel EFI binary (optional)
+    /// Kernel EFI binary (optional). A plain kernel image when --cmdline is
+    /// given (it will be wrapped into a UKI), otherwise an existing UKI.
     #[arg(long, value_name = "FILE")]
     kernel: Option<String>,
+
+    /// Kernel command line. When set, --kernel is wrapped into a UKI with this
+    /// command line embedded, so the command line (e.g. a dm-verity root hash)
+    /// is part of the measured image. Requires --kernel.
+    #[arg(long, value_name = "STRING")]
+    cmdline: Option<String>,
+
+    /// Initrd to embed in the UKI. Only used together with --cmdline.
+    #[arg(long, value_name = "FILE")]
+    initrd: Option<String>,
 
     /// Shim EFI binary (optional)
     #[arg(long, value_name = "FILE")]
@@ -128,13 +139,74 @@ fn read_optional(path: &Option<String>, label: &str) -> Result<Option<Vec<u8>>, 
         .transpose()
 }
 
+/// Assemble a Unified Kernel Image (UKI) from a plain kernel image and a kernel
+/// command line (plus an optional initrd) by shelling out to `ukify`. ukify
+/// embeds the `.linux`/`.cmdline`(/`.initrd`) sections behind systemd-stub; the
+/// resulting UKI is then measured as the kernel blob, so the command line —
+/// including a dm-verity root hash — is covered by the launch measurement.
+///
+/// All inputs are passed as separate process arguments (never interpolated into
+/// a shell string) so a command line cannot inject extra ukify options.
+fn build_uki(kernel: &str, cmdline: &str, initrd: Option<&str>) -> Result<Vec<u8>, String> {
+    let uki_path = std::env::temp_dir().join(format!("igvm-uki-{}.efi", std::process::id()));
+
+    let mut cmd = std::process::Command::new("ukify");
+    cmd.arg("build")
+        .arg("--linux")
+        .arg(kernel)
+        .arg("--cmdline")
+        .arg(cmdline)
+        .arg("--output")
+        .arg(&uki_path);
+    if let Some(initrd) = initrd {
+        cmd.arg("--initrd").arg(initrd);
+    }
+
+    let status = cmd
+        .status()
+        .map_err(|e| format!("run ukify (is systemd-ukify installed?): {e}"))?;
+    if !status.success() {
+        return Err(format!("ukify failed to assemble a UKI from {kernel}"));
+    }
+
+    let bytes =
+        std::fs::read(&uki_path).map_err(|e| format!("read UKI {}: {e}", uki_path.display()))?;
+    let _ = std::fs::remove_file(&uki_path);
+    Ok(bytes)
+}
+
 fn do_build(args: &BuildArgs) -> Result<(), String> {
     // Read inputs from disk
     let firmware = std::fs::read(&args.firmware)
         .map_err(|e| format!("read firmware {}: {e}", args.firmware))?;
     let vars_blob = read_optional(&args.vars, "vars")?;
-    let kernel_blob = read_optional(&args.kernel, "kernel")?;
+    let kernel_file_blob = read_optional(&args.kernel, "kernel")?;
     let shim_blob = read_optional(&args.shim, "shim")?;
+
+    // If a command line is supplied, wrap the kernel into a UKI so the command
+    // line is embedded and measured. Otherwise --kernel is used as-is (already
+    // a UKI or EFI binary).
+    let uki_blob = match &args.cmdline {
+        Some(cmdline) => {
+            let kernel = args
+                .kernel
+                .as_ref()
+                .ok_or("--cmdline requires --kernel (the plain kernel image to wrap)")?;
+            Some(build_uki(kernel, cmdline, args.initrd.as_deref())?)
+        }
+        None => {
+            if args.initrd.is_some() {
+                return Err("--initrd requires --cmdline (it is embedded in the UKI)".to_string());
+            }
+            None
+        }
+    };
+    // The kernel blob that is actually placed into the IGVM and measured: the
+    // synthesized UKI when a command line was given, else the --kernel file.
+    let kernel_blob: Option<&[u8]> = match &uki_blob {
+        Some(uki) => Some(uki.as_slice()),
+        None => kernel_file_blob.as_deref(),
+    };
     let pk_blob = read_optional(&args.pk, "pk")?;
     let kek_blob = read_optional(&args.kek, "kek")?;
     let db_blob = read_optional(&args.db, "db")?;
@@ -153,7 +225,7 @@ fn do_build(args: &BuildArgs) -> Result<(), String> {
     let config = BuildConfig {
         firmware: &firmware,
         vars: vars_blob.as_deref(),
-        kernel: kernel_blob.as_deref(),
+        kernel: kernel_blob,
         shim: shim_blob.as_deref(),
         pk: pk_blob.as_deref(),
         kek: kek_blob.as_deref(),
@@ -204,6 +276,7 @@ fn do_build(args: &BuildArgs) -> Result<(), String> {
                 platform: format!("{:?}", args.platform).to_lowercase(),
                 boot_mode: format!("{:?}", args.boot_mode).to_lowercase(),
                 smp: args.smp,
+                cmdline: args.cmdline.clone(),
             },
             inputs: InputFiles {
                 firmware: FileInfo {
@@ -214,7 +287,9 @@ fn do_build(args: &BuildArgs) -> Result<(), String> {
                     path: args.vars.as_ref().expect("vars path set").clone(),
                     sha256: sha256_hex(v),
                 }),
-                kernel: kernel_blob.as_ref().map(|k| FileInfo {
+                // The manifest records the input kernel file; when --cmdline is
+                // used the measured blob is the UKI synthesized from it.
+                kernel: kernel_file_blob.as_ref().map(|k| FileInfo {
                     path: args.kernel.as_ref().expect("kernel path set").clone(),
                     sha256: sha256_hex(k),
                 }),
