@@ -1,0 +1,28 @@
+[package]
+name = "tdx-measure"
+version = "0.1.0"
+edition = "2021"
+description = "Offline TDX measurement computation and attestation verification"
+license = "AGPL-3.0"
+
+[lib]
+name = "tdx_measure"
+
+[[bin]]
+name = "tdx-measure"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:serde_json"]
+
+[dependencies]
+anyhow = "1"
+sha2 = "0.10"
+hex = "0.4"
+subtle = "2.6"
+clap = { version = "4", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[profile.release]
+overflow-checks = true
