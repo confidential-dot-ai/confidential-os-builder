@@ -35,6 +35,7 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 ///   make x86_64_defconfig
 ///   scripts/kconfig/merge_config.sh -m .config <required>
 ///   scripts/kconfig/merge_config.sh -m .config <hardening>
+///   scripts/kconfig/merge_config.sh -m .config <confidential>
 ///   scripts/kconfig/merge_config.sh -m .config <extra>      (when Some)
 ///   make mod2yesconfig
 ///   make olddefconfig
@@ -43,17 +44,21 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 /// present in the resolved `.config`, failing the build if `olddefconfig`
 /// silently dropped any (unmet Kconfig dependency or removed symbol).
 ///
+/// Merge order is load-bearing: `confidential.config` deliberately re-enables
+/// options the `hardening.config` fragment turned off (e.g.
+/// `CONFIG_ACPI_TABLE_UPGRADE=y` overriding the `# is not set` line) — last
+/// fragment wins under `merge_config.sh`, so the confidential fragment MUST
+/// follow hardening.
+///
 /// `extra_fragment` is the optional caller-supplied `--kernel-config-fragment`.
-/// When `Some`, it's merged after `hardening.config` so `mod2yesconfig` still
-/// flattens any tristate symbols it introduces. When `None` the merge sequence
-/// is byte-for-byte what it was before this fragment was added — kept this way
-/// so the resolved config for callers that don't supply an extra fragment is
-/// unchanged.
+/// When `Some`, it's merged after the steep-controlled fragments so
+/// `mod2yesconfig` still flattens any tristate symbols it introduces.
 pub fn run_configure_phase(
     tools_tree: &Path,
     kernel_dir: &Path,
     required_fragment: &Path,
     hardening_fragment: &Path,
+    confidential_fragment: &Path,
     extra_fragment: Option<&Path>,
 ) -> Result<()> {
     let kernel_dir_abs = kernel_dir
@@ -61,6 +66,7 @@ pub fn run_configure_phase(
         .with_context(|| format!("canonicalizing {}", kernel_dir.display()))?;
     let required_abs = required_fragment.canonicalize()?;
     let hardening_abs = hardening_fragment.canonicalize()?;
+    let confidential_abs = confidential_fragment.canonicalize()?;
     let extra_abs = extra_fragment.map(|p| p.canonicalize()).transpose()?;
 
     // Stage fragments inside the kernel dir so merge_config can find them
@@ -69,6 +75,10 @@ pub fn run_configure_phase(
     fs_err::create_dir_all(&frag_dir_in_kernel)?;
     fs_err::copy(&required_abs, frag_dir_in_kernel.join("required.config"))?;
     fs_err::copy(&hardening_abs, frag_dir_in_kernel.join("hardening.config"))?;
+    fs_err::copy(
+        &confidential_abs,
+        frag_dir_in_kernel.join("confidential.config"),
+    )?;
     if let Some(ref e) = extra_abs {
         fs_err::copy(e, frag_dir_in_kernel.join("extra.config"))?;
     }
@@ -84,6 +94,7 @@ pub fn run_configure_phase(
          make x86_64_defconfig\n\
          scripts/kconfig/merge_config.sh -m .config .fragments/required.config\n\
          scripts/kconfig/merge_config.sh -m .config .fragments/hardening.config\n\
+         scripts/kconfig/merge_config.sh -m .config .fragments/confidential.config\n\
          {extra_line}\
          make mod2yesconfig\n\
          make olddefconfig\n",
@@ -98,7 +109,7 @@ pub fn run_configure_phase(
     )?;
     fs_err::remove_dir_all(&frag_dir_in_kernel)?;
 
-    let mut fragments: Vec<&Path> = vec![&required_abs, &hardening_abs];
+    let mut fragments: Vec<&Path> = vec![&required_abs, &hardening_abs, &confidential_abs];
     if let Some(ref e) = extra_abs {
         fragments.push(e);
     }

@@ -27,7 +27,10 @@ pub struct Fingerprint {
     // `default` so a manifest written before this field existed still
     // deserializes — with an empty value — instead of failing to parse.
     // An empty hash never matches a real build's, so the kernel rebuilds
-    // and the manifest is rewritten with the field populated.
+    // and the manifest is rewritten with the field populated. Same logic
+    // applies to `confidential_config_sha256` below.
+    #[serde(default)]
+    pub confidential_config_sha256: String,
     #[serde(default)]
     pub kernel_extra_config_sha256: String,
     pub snapshot_config_sha256: String,
@@ -49,6 +52,10 @@ impl Fingerprint {
         m.insert("tarball_sha256", &self.tarball_sha256);
         m.insert("required_config_sha256", &self.required_config_sha256);
         m.insert("hardening_config_sha256", &self.hardening_config_sha256);
+        m.insert(
+            "confidential_config_sha256",
+            &self.confidential_config_sha256,
+        );
         m.insert(
             "kernel_extra_config_sha256",
             &self.kernel_extra_config_sha256,
@@ -82,6 +89,7 @@ mod tests {
             tarball_sha256: "a".repeat(64),
             required_config_sha256: "b".repeat(64),
             hardening_config_sha256: "c".repeat(64),
+            confidential_config_sha256: "g".repeat(64),
             kernel_extra_config_sha256: "f".repeat(64),
             snapshot_config_sha256: "d".repeat(64),
             tools_tree_digest: "e".repeat(64),
@@ -91,8 +99,9 @@ mod tests {
     #[test]
     fn fingerprint_canonical_json_keys_sorted() {
         let json = sample_fp().to_canonical_json();
-        // BTreeMap renders alphabetically: hardening, kernel_extra, linux,
-        // required, snapshot, tarball, tools.
+        // BTreeMap renders alphabetically: confidential, hardening,
+        // kernel_extra, linux, required, snapshot, tarball, tools.
+        let c = json.find("confidential_config_sha256").unwrap();
         let h = json.find("hardening_config_sha256").unwrap();
         let ke = json.find("kernel_extra_config_sha256").unwrap();
         let l = json.find("linux_version").unwrap();
@@ -100,7 +109,7 @@ mod tests {
         let s = json.find("snapshot_config_sha256").unwrap();
         let t = json.find("tarball_sha256").unwrap();
         let tt = json.find("tools_tree_digest").unwrap();
-        assert!(h < ke && ke < l && l < r && r < s && s < t && t < tt);
+        assert!(c < h && h < ke && ke < l && l < r && r < s && s < t && t < tt);
     }
 
     #[test]
