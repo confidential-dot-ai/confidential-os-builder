@@ -50,7 +50,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     // default if `steep igvm` was never run). A future change can add a `--smp`
     // selector to `steep run`; for now this matches v1 behaviour of "one IGVM
     // per output dir."
-    let variant = manifest.variants.first();
+    let variant = manifest.snp_variants.first();
 
     match tier {
         QemuTier::SevSnp => {
@@ -202,7 +202,7 @@ fn validate_manifest_fields(manifest: &BuildManifest) -> anyhow::Result<()> {
         );
     }
     qemu::validate_memory(&manifest.build.memory)?;
-    for v in &manifest.variants {
+    for v in &manifest.snp_variants {
         if v.smp == 0 || v.smp > 1024 {
             anyhow::bail!(
                 "invalid smp count in manifest variant: {} (must be 1-1024)",
