@@ -32,7 +32,7 @@
  * one per cross product.
  */
 
-DefinitionBlock ("dsdt.aml", "DSDT", 1, "LUNAL", "STEEP", 0x00000001)
+DefinitionBlock ("dsdt.aml", "DSDT", 1, "CONFAI", "CONFAI", 0x00000001)
 {
     Scope (\_SB)
     {
