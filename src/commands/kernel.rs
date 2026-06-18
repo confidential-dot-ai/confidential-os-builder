@@ -8,6 +8,11 @@ use crate::KernelArgs;
 
 const REQUIRED_FRAGMENT: &str = "kernel/required.config";
 const HARDENING_FRAGMENT: &str = "kernel/hardening.config";
+/// Confidential VM overrides. Merged after `hardening.config` so the last
+/// fragment wins — `CONFIG_ACPI_TABLE_UPGRADE=y` here intentionally overrides
+/// the `# is not set` line in `hardening.config`. See the file header for the
+/// threat-model justification.
+const CONFIDENTIAL_FRAGMENT: &str = "kernel/confidential.config";
 /// Resolved-config snapshot lockfile. Every kernel build rewrites this with
 /// the freshly-resolved `.config`; it's committed to git so `git diff` shows
 /// when a fragment edit or kernel bump changed the merged config.
@@ -96,6 +101,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
         &kernel_src,
         Path::new(REQUIRED_FRAGMENT),
         Path::new(HARDENING_FRAGMENT),
+        Path::new(CONFIDENTIAL_FRAGMENT),
         fragment,
     )?;
 
@@ -199,6 +205,7 @@ pub fn compute_fingerprint(
         tarball_sha256: version.tarball_sha256.clone(),
         required_config_sha256: fetch::sha256_file(Path::new(REQUIRED_FRAGMENT))?,
         hardening_config_sha256: fetch::sha256_file(Path::new(HARDENING_FRAGMENT))?,
+        confidential_config_sha256: fetch::sha256_file(Path::new(CONFIDENTIAL_FRAGMENT))?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
         kernel_extra_config_sha256: match fragment {
