@@ -7,6 +7,29 @@ pub mod tools;
 
 use std::path::PathBuf;
 
+/// Which confidential-VM platform(s) `steep build` should emit
+/// measurements for. The artifact set (disk + UKI + IGVM) is the same
+/// across platforms; this just toggles which measurement passes run
+/// and which manifest fields get populated.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildPlatform {
+    /// AMD SEV-SNP: build IGVM variants and populate `snp_variants[]`.
+    Snp,
+    /// Intel TDX: compute MRTD + RTMR[1] + RTMR[2] and populate `tdx`.
+    Tdx,
+    /// Both — default. Produces a manifest that attests on either fleet.
+    Both,
+}
+
+impl BuildPlatform {
+    pub fn needs_snp(self) -> bool {
+        matches!(self, BuildPlatform::Snp | BuildPlatform::Both)
+    }
+    pub fn needs_tdx(self) -> bool {
+        matches!(self, BuildPlatform::Tdx | BuildPlatform::Both)
+    }
+}
+
 #[derive(clap::Args)]
 pub struct KernelArgs {
     /// Force rebuild even if cache is current
@@ -112,7 +135,15 @@ pub struct BuildArgs {
     #[arg(short = 's', long, value_name = "FILE")]
     pub script: Option<PathBuf>,
 
-    /// Skip IGVM generation (produce only disk + UKI, no SNP measurement)
+    /// Which confidential-VM platform(s) to measure for. `both` (default)
+    /// emits SNP IGVM variants AND a TDX measurement block in the manifest.
+    /// `snp` is IGVM-only (no TDX measurements). `tdx` skips IGVM
+    /// generation entirely — same shape as the legacy `--skip-igvm`.
+    #[arg(long, value_enum, default_value = "both")]
+    pub platform: BuildPlatform,
+
+    /// DEPRECATED: alias for `--platform tdx`. Use that instead.
+    /// Skip IGVM generation (produce only disk + UKI, no SNP measurement).
     #[arg(long)]
     pub skip_igvm: bool,
 

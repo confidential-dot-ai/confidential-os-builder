@@ -1,21 +1,45 @@
 use std::path::{Path, PathBuf};
 
-use crate::{igvm, kernel_cache, manifest, qemu, tools, BuildArgs};
+use crate::{igvm, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform};
 
 pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     tracing::info!("sealing base image with dm-verity + UKI");
 
-    let firmware = if args.skip_igvm {
-        None
+    // Resolve the requested platform set. --skip-igvm is the historical
+    // way to ask for "no SNP measurement", which now corresponds to
+    // `--platform tdx`. Honour it for back-compat with shell wrappers,
+    // but warn so the operator migrates. Reject conflicting combos to
+    // catch typos before a 10-minute build runs.
+    let platform = if args.skip_igvm {
+        if !matches!(args.platform, BuildPlatform::Both) {
+            anyhow::bail!(
+                "--skip-igvm conflicts with --platform; pass only --platform tdx (or drop --skip-igvm)"
+            );
+        }
+        eprintln!(
+            "warning: --skip-igvm is deprecated; use `--platform tdx` instead. \
+             treating this build as `--platform tdx`."
+        );
+        BuildPlatform::Tdx
     } else {
+        args.platform
+    };
+
+    // Firmware is required whenever we measure: SNP needs it for IGVM
+    // assembly, TDX needs it to parse TDVF metadata for MRTD + RTMR[0]
+    // (we only emit MRTD, but the parser is the same path). Skip the
+    // requirement only when no measurement pass runs.
+    let firmware = if platform.needs_snp() || platform.needs_tdx() {
         let fw = args.firmware.clone();
         if !fw.exists() {
             anyhow::bail!(
-                "firmware not found: {}. Pass --skip-igvm to build without IGVM.",
+                "firmware not found: {}. Pass `--platform tdx` to build without SNP measurement or `--platform snp` to skip TDX.",
                 fw.display()
             );
         }
         Some(fw)
+    } else {
+        None
     };
 
     // Validate memory format before it reaches QEMU arg interpolation
@@ -238,27 +262,29 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         human_size(&output_uki)?
     );
 
-    // Step 3: Build IGVM variants (optional). Emits one `guest-smp{N}.igvm`
+    // Read firmware + UKI bytes once; both SNP and TDX measurement
+    // passes consume them, and the file reads aren't free on large
+    // OVMF builds.
+    let fw_bytes_opt = match firmware.as_ref() {
+        Some(fw) => Some(fs_err::read(fw)?),
+        None => None,
+    };
+    let uki_bytes = fs_err::read(&output_uki)?;
+
+    // Step 4: Build IGVM variants (optional). Emits one `guest-smp{N}.igvm`
     // per value in `args.smp` (default [2, 4, 8, 16] — the standard
-    // powers-of-two), each as its own entry in manifest.variants[]. The
-    // firmware + UKI bytes are read once and reused; the per-variant cost
-    // is just the measurement pass, so building the default set adds
-    // sub-second to the overall build.
-    let igvm_variants: Vec<manifest::SnpVariant> = if args.skip_igvm {
-        println!("\n=== Step 4/4: Skipping IGVM (--skip-igvm) ===");
-        Vec::new()
-    } else {
+    // powers-of-two), each as its own entry in manifest.snp_variants[].
+    // The firmware + UKI bytes are read once and reused; the per-variant
+    // cost is just the measurement pass.
+    let igvm_variants: Vec<manifest::SnpVariant> = if platform.needs_snp() {
         println!(
-            "\n=== Step 4/4: Building IGVM variants (smp = {:?}) ===",
+            "\n=== Step 4a: Building IGVM variants (smp = {:?}) ===",
             args.smp
         );
 
-        // firmware is guaranteed Some when skip_igvm is false (validated at top)
-        let fw_path = firmware
+        let fw_bytes = fw_bytes_opt
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("firmware path required for IGVM build"))?;
-        let fw_bytes = fs_err::read(fw_path)?;
-        let uki_bytes = fs_err::read(&output_uki)?;
 
         // Sort + dedup so the on-disk manifest has a canonical ordering
         // regardless of how the operator listed --smp.
@@ -275,7 +301,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 anyhow::bail!("SMP count must be >= 1, got 0");
             }
             print!("  smp={smp} ... ");
-            let result = igvm::invoke::build_snp(&fw_bytes, &uki_bytes, smp)?;
+            let result = igvm::invoke::build_snp(fw_bytes, &uki_bytes, smp)?;
 
             let igvm_name = format!("guest-smp{smp}.igvm");
             let igvm_path = output.join(&igvm_name);
@@ -306,6 +332,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             });
         }
         out
+    } else {
+        println!("\n=== Step 4a: Skipping IGVM (platform = {:?}) ===", platform);
+        Vec::new()
     };
 
     // Copy firmware into output so the directory is self-contained for publish/run
@@ -319,6 +348,32 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     let disk_path = output.join("disk.raw");
     let base_abs = base_image.canonicalize()?;
     tools::sudo_mv(&base_abs, &disk_path)?;
+
+    // Step 4b: TDX measurement pass. We need to read the now-user-owned
+    // disk image (for the RTMR[1] GPT event), so this runs after the
+    // sudo_mv above. The pass is fast (a few hundred ms on a 1G UKI +
+    // 4G disk) — no disk crypto, no firmware-side simulation beyond
+    // MRTD's MEM.PAGE.ADD / MR.EXTEND replay.
+    let tdx_measurement: Option<manifest::TdxMeasurement> = if platform.needs_tdx() {
+        println!("\n=== Step 4b: Computing TDX measurements ===");
+        let fw_bytes = fw_bytes_opt
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("firmware path required for TDX measurement"))?;
+        let disk_bytes = fs_err::read(&disk_path)?;
+        let m = tdx_measure::measure_uki(fw_bytes, &uki_bytes, Some(&disk_bytes))
+            .map_err(|e| anyhow::anyhow!("TDX measurement failed: {e}"))?;
+        println!("  MRTD:    {}", m.mrtd);
+        println!("  RTMR[1]: {}", m.rtmr1);
+        println!("  RTMR[2]: {}", m.rtmr2);
+        Some(manifest::TdxMeasurement {
+            mrtd: m.mrtd,
+            rtmr1: m.rtmr1,
+            rtmr2: m.rtmr2,
+        })
+    } else {
+        println!("\n=== Step 4b: Skipping TDX measurement (platform = {:?}) ===", platform);
+        None
+    };
 
     println!("\n=== Calculating checksums ===");
     // Read the disk checksum from the mkosi output
@@ -343,6 +398,16 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     println!("uki      {}", uki_hash);
 
     println!("\n=== Writing manifest.json ===");
+    // build.platform: a short tag for the runner / publisher to know
+    // what hardware this artifact was prepared for. The accepted values
+    // here (`snp`, `generic`) are constrained by commands::run::ALLOWED_PLATFORMS.
+    // A future change can introduce `tdx` and `multi` once the runner
+    // teaches itself about TDX hardware tiers.
+    let platform_tag = if platform.needs_snp() {
+        "snp".to_string()
+    } else {
+        "generic".to_string()
+    };
     // Write manifest
     let build_manifest = manifest::BuildManifest {
         version: manifest::MANIFEST_VERSION,
@@ -350,11 +415,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             timestamp: chrono_now(),
             memory: args.memory.clone(),
             format: "raw".to_string(),
-            platform: if args.skip_igvm {
-                "generic".to_string()
-            } else {
-                "snp".to_string()
-            },
+            platform: platform_tag,
         },
         inputs: manifest::ManifestInputs {
             kernel: Some(manifest::KernelInputs {
@@ -398,10 +459,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             },
         },
         snp_variants: igvm_variants,
-        // TDX measurements get wired in alongside the --platform flag in
-        // the next commit. For now this field stays None so the manifest
-        // schema works end-to-end.
-        tdx: None,
+        tdx: tdx_measurement,
     };
     let manifest_path = output.join("manifest.json");
     manifest::write_manifest(&build_manifest, &manifest_path)?;
@@ -420,6 +478,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             "  Launch digest (smp={}): {}",
             v.smp, v.measurement.snp_launch_digest
         );
+    }
+    if let Some(ref t) = build_manifest.tdx {
+        println!("  TDX MRTD:    {}", t.mrtd);
+        println!("  TDX RTMR[1]: {}", t.rtmr1);
+        println!("  TDX RTMR[2]: {}", t.rtmr2);
     }
     if args.cloud_init.is_some() {
         println!("  Cloud-init: measured in verity root");
