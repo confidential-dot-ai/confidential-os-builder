@@ -244,7 +244,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // firmware + UKI bytes are read once and reused; the per-variant cost
     // is just the measurement pass, so building the default set adds
     // sub-second to the overall build.
-    let igvm_variants: Vec<manifest::IgvmVariant> = if args.skip_igvm {
+    let igvm_variants: Vec<manifest::SnpVariant> = if args.skip_igvm {
         println!("\n=== Step 4/4: Skipping IGVM (--skip-igvm) ===");
         Vec::new()
     } else {
@@ -291,7 +291,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             );
 
             let igvm_sha256 = manifest::sha256_file(&igvm_path)?;
-            out.push(manifest::IgvmVariant {
+            out.push(manifest::SnpVariant {
                 smp,
                 igvm: manifest::FileEntry {
                     path: igvm_name,
@@ -397,7 +397,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 sha256: uki_hash,
             },
         },
-        variants: igvm_variants,
+        snp_variants: igvm_variants,
+        // TDX measurements get wired in alongside the --platform flag in
+        // the next commit. For now this field stays None so the manifest
+        // schema works end-to-end.
+        tdx: None,
     };
     let manifest_path = output.join("manifest.json");
     manifest::write_manifest(&build_manifest, &manifest_path)?;
@@ -405,13 +409,13 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     println!("\n===============================");
     println!("  Build complete!");
     println!("  Output:     {}", output.display());
-    for v in &build_manifest.variants {
+    for v in &build_manifest.snp_variants {
         println!("  IGVM:       {} (smp={})", v.igvm.path, v.smp);
     }
     println!("  Disk:       {}", disk_path.display());
     println!("  Manifest:   {}", manifest_path.display());
     println!("  Root hash:  {roothash}");
-    for v in &build_manifest.variants {
+    for v in &build_manifest.snp_variants {
         println!(
             "  Launch digest (smp={}): {}",
             v.smp, v.measurement.snp_launch_digest

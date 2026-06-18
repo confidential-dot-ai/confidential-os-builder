@@ -3,26 +3,34 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Current manifest schema version. v2 introduces `variants[]` (one entry per
-/// SMP configuration of the IGVM) and removes the singleton `outputs.igvm` and
-/// top-level `measurement` fields. v1 manifests fail to parse — there is no
-/// reader compatibility shim.
-pub const MANIFEST_VERSION: u32 = 2;
+/// Current manifest schema version. v3 splits SNP measurements (which vary
+/// per vCPU count) into `snp_variants[]` and adds a singleton `tdx` block
+/// of TDX reference measurements. The TDX block is SMP-and-memory-invariant
+/// thanks to the trusted-DSDT override mechanism that strips the only AML
+/// fields that varied per (vCPU, memory) topology. v2 manifests fail to
+/// parse — there is no reader compatibility shim.
+pub const MANIFEST_VERSION: u32 = 3;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct BuildManifest {
     pub version: u32,
     pub build: BuildConfig,
     pub inputs: ManifestInputs,
     pub outputs: ManifestOutputs,
-    /// One entry per (SMP) IGVM variant. Populated by `steep build` (initial
-    /// variant) and extended/replaced in place by `steep igvm`.
-    #[serde(default)]
-    pub variants: Vec<IgvmVariant>,
+    /// Per-SMP SNP IGVM variants. One entry per vCPU count built; populated
+    /// by `steep build` and extended/replaced in place by `steep igvm`.
+    /// Omitted from JSON when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub snp_variants: Vec<SnpVariant>,
+    /// TDX reference measurements — single block, SMP-and-memory-invariant
+    /// thanks to the trusted-DSDT override that strips the AML fields that
+    /// varied across topologies. `None` when the build excluded TDX.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tdx: Option<TdxMeasurement>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct BuildConfig {
     pub timestamp: String,
@@ -31,22 +39,48 @@ pub struct BuildConfig {
     pub platform: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
-pub struct IgvmVariant {
+pub struct SnpVariant {
     pub smp: u32,
     pub igvm: FileEntry,
     pub measurement: Measurement,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+/// TDX reference measurements for the platform.
+///
+/// Hex-encoded SHA-384 digests (96 lowercase hex chars each, 48 bytes).
+///
+/// - `mrtd`  — MRTD computed from the OVMF/TDVF binary by simulating the
+///   TDX Module's `MEM.PAGE.ADD` + `MR.EXTEND` algorithm. Fixed per
+///   firmware build.
+/// - `rtmr1` — Authenticode hash of the UKI PE image plus boot-service
+///   constants and (when a disk image is supplied) the GPT header event.
+/// - `rtmr2` — UKI section measurement chain (.linux, .osrel, .cmdline,
+///   .initrd, plus the systemd-stub assembled-initrd Event 14).
+///
+/// Deliberately absent: `rtmr0`. RTMR[0] mixes TD-HOB (memory-sensitive)
+/// and ACPI tables (memory + SMP-sensitive) coming from the VMM. Pinning
+/// it would force a per-`(smp × memory)` matrix of manifest variants.
+/// We avoid that by overriding the VMM-supplied DSDT with our trusted
+/// AML via the initrd, then attesting the override through RTMR[2] /
+/// the IGVM launch digest.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TdxMeasurement {
+    pub mrtd: String,
+    pub rtmr1: String,
+    pub rtmr2: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct FileEntry {
     pub path: String,
     pub sha256: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestInputs {
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -57,7 +91,7 @@ pub struct ManifestInputs {
     pub base_image: FileEntry,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct KernelInputs {
     pub linux_version: String,
@@ -72,14 +106,14 @@ pub struct KernelInputs {
     pub snapshot_config_sha256: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestOutputs {
     pub disk_image: FileEntry,
     pub uki: FileEntry,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Measurement {
     pub snp_launch_digest: String,
@@ -124,9 +158,25 @@ pub fn parse_igvm_manifest(json: &str) -> anyhow::Result<Measurement> {
     Ok(measurement)
 }
 
-/// Read a manifest from a JSON file.
+/// Read a manifest from a JSON file. Rejects any `version` other than
+/// [`MANIFEST_VERSION`] before attempting field-by-field deserialization,
+/// so a v2 manifest fails with a clear error instead of a confusing
+/// "missing field" complaint.
 pub fn read_manifest(path: &Path) -> anyhow::Result<BuildManifest> {
     let content = fs_err::read_to_string(path)?;
+    // Peek at just `version` first. v2 readers don't exist outside this
+    // codebase so we don't migrate — just refuse and tell the operator.
+    let probe: serde_json::Value = serde_json::from_str(&content)?;
+    if let Some(v) = probe.get("version").and_then(|v| v.as_u64()) {
+        if v != u64::from(MANIFEST_VERSION) {
+            anyhow::bail!(
+                "manifest at {} is version {} (this build of steep speaks v{}). Rebuild with the current steep.",
+                path.display(),
+                v,
+                MANIFEST_VERSION
+            );
+        }
+    }
     let manifest: BuildManifest = serde_json::from_str(&content)?;
     Ok(manifest)
 }
