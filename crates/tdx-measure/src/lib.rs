@@ -33,11 +33,16 @@ pub mod pe;
 pub mod rtmr;
 pub mod tdvf;
 
-/// A minimal TDX measurement bundle for a UKI boot — MRTD plus the two
-/// RTMR registers that are stable across SMP and memory topologies in
-/// steep's confidential VM model.
+/// A topology-invariant TDX measurement bundle for a UKI boot. Carries
+/// MRTD + RTMR[1] + RTMR[2] — the three registers that are stable across
+/// vCPU and memory configurations under steep's confidential VM model.
 ///
-/// Hex-encoded SHA-384 digests (96 lowercase hex chars each).
+/// **RTMR[0] is deliberately absent.** It depends on TD-HOB and
+/// VMM-supplied ACPI tables, both of which vary at runtime. Callers that
+/// need to attest RTMR[0] must replay the CCEL event log against the
+/// runtime quote (see `tdx_measure::ccel`).
+///
+/// All fields are hex-encoded SHA-384 digests (96 lowercase hex chars).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UkiMeasurement {
     pub mrtd: String,
@@ -45,22 +50,23 @@ pub struct UkiMeasurement {
     pub rtmr2: String,
 }
 
-/// Compute the three TDX measurements that downstream code (the build
-/// manifest, attestation verifiers) actually needs from a steep build:
-/// MRTD, RTMR[1], RTMR[2].
+/// Compute the **topology-invariant subset** of TDX measurements for a
+/// UKI boot: MRTD + RTMR[1] + RTMR[2]. RTMR[0] is intentionally omitted
+/// — see [`UkiMeasurement`] for the rationale and the CCEL-replay path
+/// for runtime RTMR[0] attestation.
 ///
-/// RTMR[0] is intentionally not produced here. It depends on TD-HOB and
-/// VMM-supplied ACPI tables, both of which vary with the runtime memory
-/// and (for some ACPI fields) vCPU topology. steep handles those at the
-/// trust boundary by overriding the DSDT via the initrd, then attesting
-/// the override via RTMR[2] / the IGVM launch digest — RTMR[0] itself
-/// is left to the runtime CCEL replay path in the attestation API.
+/// The function name is suffixed `_topology_invariant` to make it
+/// obvious at every call site that the result is a three-register
+/// bundle, not a full quote. A future caller looking for "the
+/// measurement" and writing a policy gate would otherwise silently get
+/// a 3-of-4 comparison and accept any RTMR[0] without realizing it.
 ///
 /// `disk_image` is optional. When present, RTMR[1] includes the GPT
 /// header event the firmware emits before launching the UKI. When
 /// absent, the GPT event is skipped and the resulting RTMR[1] will not
-/// match a real boot's CCEL — useful only for unit tests.
-pub fn measure_uki(
+/// match a real disk-boot CCEL — useful only for unit tests or
+/// `-kernel`-style direct boots.
+pub fn measure_uki_topology_invariant(
     firmware: &[u8],
     uki: &[u8],
     disk_image: Option<&[u8]>,
@@ -86,18 +92,37 @@ mod tests {
     /// Sanity check: measure_uki fails on an empty firmware buffer (TDVF
     /// parse will reject it), rather than silently returning zeros.
     #[test]
-    fn measure_uki_rejects_empty_firmware() {
-        let result = measure_uki(&[], &[], None);
+    fn measure_uki_topology_invariant_rejects_empty_firmware() {
+        let result = measure_uki_topology_invariant(&[], &[], None);
         assert!(result.is_err());
     }
 
     /// Sanity check: measure_uki fails on bogus firmware bytes that won't
-    /// match the TDVF table footer GUID.
+    /// match the TDVF table footer GUID, AND the failure is rooted in
+    /// the TDVF parse — not a PE-parse short-circuit on a too-small UKI.
+    ///
+    /// Original version of this test used a 64-byte UKI buffer. A 64-byte
+    /// UKI is too short for any PE/COFF parser to validate (DOS header
+    /// alone is 64 bytes); any future TDVF-parse regression that silently
+    /// returns zeros would still be caught by the PE-parse error. By
+    /// passing a UKI long enough to clear the PE parser's headers
+    /// length check we ensure this test fails for the *TDVF* reason
+    /// it claims to fail for.
     #[test]
-    fn measure_uki_rejects_garbage_firmware() {
+    fn measure_uki_topology_invariant_rejects_garbage_firmware() {
         // 4KiB of zeros; no TDVF footer GUID present.
         let firmware = vec![0u8; 4096];
-        let result = measure_uki(&firmware, &[0u8; 64], None);
-        assert!(result.is_err());
+        // 4KiB UKI buffer with a plausible-looking DOS magic so the PE
+        // parser doesn't reject on the first byte. The error must come
+        // from TDVF parsing, not PE parsing.
+        let mut uki = vec![0u8; 4096];
+        uki[0..2].copy_from_slice(b"MZ");
+        let result = measure_uki_topology_invariant(&firmware, &uki, None);
+        let err = result.expect_err("garbage firmware must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.to_lowercase().contains("tdvf") || msg.to_lowercase().contains("firmware"),
+            "rejection should originate from TDVF/firmware parse, got: {msg}"
+        );
     }
 }

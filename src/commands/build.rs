@@ -398,7 +398,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("TDX firmware path required for TDX measurement"))?;
         let disk_bytes = fs_err::read(&disk_path)?;
-        let m = tdx_measure::measure_uki(fw_bytes, &uki_bytes, Some(&disk_bytes))
+        let m = tdx_measure::measure_uki_topology_invariant(fw_bytes, &uki_bytes, Some(&disk_bytes))
             .map_err(|e| anyhow::anyhow!("TDX measurement failed: {e}"))?;
         println!("  MRTD:    {}", m.mrtd);
         println!("  RTMR[1]: {}", m.rtmr1);
