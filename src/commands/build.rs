@@ -710,8 +710,25 @@ fn build_early_cpio(root: &Path, out: &Path) -> anyhow::Result<()> {
         std::env::current_dir()?.join(out)
     };
 
-    // `find . -mindepth 1 -print0` enumerates everything inside root.
-    // Piping into `cpio -o -H newc --null --quiet` packs them.
+    // INVARIANT: This cpio must be byte-reproducible across builds. The
+    // cpio bytes are concatenated into the initrd and feed into RTMR[2]
+    // (TDX) and the SNP launch digest. Two clean checkouts of the same
+    // commit must produce identical cpio bytes — otherwise the manifest's
+    // measurements drift between builds and verifiers can't pin a
+    // reference.
+    //
+    // Three sources of non-determinism in `find | cpio -o -H newc` that we
+    // have to neutralize:
+    //   1. Directory enumeration order. find walks readdir order, which is
+    //      filesystem-dependent (ext4 htree, tmpfs, btrfs, etc.). Pipe
+    //      through `sort -z` so the path list is byte-sorted.
+    //   2. File mtime. newc cpio headers embed mtime per entry. We can't
+    //      rely on touch(1) idempotency in CI, so the easiest fix is to
+    //      hint GNU cpio with SOURCE_DATE_EPOCH=0 (its --reproducible
+    //      flag is too new to require on every host).
+    //   3. uid/gid embedded in headers. We pass --owner=root:root so the
+    //      cpio is built with the same identity regardless of who runs
+    //      the build.
     let mut find = Command::new("find")
         .arg(".")
         .arg("-mindepth")
@@ -725,22 +742,51 @@ fn build_early_cpio(root: &Path, out: &Path) -> anyhow::Result<()> {
         .take()
         .ok_or_else(|| anyhow::anyhow!("could not capture find stdout"))?;
 
+    let mut sort = Command::new("sort")
+        .arg("-z")
+        .stdin(Stdio::from(find_stdout))
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let sort_stdout = sort
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("could not capture sort stdout"))?;
+
+    // Zero mtimes recursively before cpio reads them. GNU cpio's
+    // --reproducible flag only zeros device/inode numbers; mtime in the
+    // newc header still comes from st_mtime. Walking the tree and forcing
+    // mtime to 0 (epoch) is the only way to get bit-identical headers
+    // across builds.
+    zero_mtimes(&root_abs)?;
+
     let cpio_out = std::fs::File::create(&out_abs)?;
     let cpio = Command::new("cpio")
-        .args(["-o", "-H", "newc", "--null", "--quiet"])
+        .args([
+            "-o",
+            "-H",
+            "newc",
+            "--null",
+            "--quiet",
+            "--owner=+0:+0",
+            "--reproducible",
+        ])
         .current_dir(&root_abs)
-        .stdin(Stdio::from(find_stdout))
+        .stdin(Stdio::from(sort_stdout))
         .stdout(Stdio::from(cpio_out))
         .stderr(Stdio::inherit())
         .spawn()?;
     let cpio_output = cpio.wait_with_output()?;
     let find_status = find.wait()?;
+    let sort_status = sort.wait()?;
     if !find_status.success() {
         anyhow::bail!(
             "find failed enumerating {} (exit {:?})",
             root_abs.display(),
             find_status.code()
         );
+    }
+    if !sort_status.success() {
+        anyhow::bail!("sort failed sorting cpio input (exit {:?})", sort_status.code());
     }
     if !cpio_output.status.success() {
         anyhow::bail!(
@@ -750,6 +796,29 @@ fn build_early_cpio(root: &Path, out: &Path) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// Recursively reset access and modification times on every entry under
+/// `root` to the Unix epoch (0). Used to neutralize per-file mtime as a
+/// source of cpio newc header non-determinism — see the comment in
+/// `build_early_cpio` for context.
+fn zero_mtimes(root: &Path) -> anyhow::Result<()> {
+    let epoch = filetime::FileTime::from_unix_time(0, 0);
+    fn walk(p: &Path, epoch: filetime::FileTime) -> std::io::Result<()> {
+        let md = std::fs::symlink_metadata(p)?;
+        // symlink times can't be set portably; the parent's lstat carries
+        // the canonical timestamp for cpio's view of the symlink anyway.
+        if !md.file_type().is_symlink() {
+            filetime::set_file_times(p, epoch, epoch)?;
+        }
+        if md.is_dir() {
+            for entry in std::fs::read_dir(p)? {
+                walk(&entry?.path(), epoch)?;
+            }
+        }
+        Ok(())
+    }
+    walk(root, epoch).map_err(Into::into)
 }
 
 /// Concatenate the byte streams of `parts` (in order) into `out`.
@@ -889,6 +958,51 @@ mod tests {
         let dir = parent.path().join("never-existed");
         drop(MkosiLocalCleanup { dir });
         // No panic == pass.
+    }
+
+    #[test]
+    fn build_early_cpio_is_reproducible_across_mtime_and_enumeration_order() {
+        // The cpio bytes feed into RTMR[2] / SNP launch digest, so they
+        // must be byte-stable across builds. Two sources of drift we
+        // explicitly defend against: (a) file mtime, (b) readdir-order
+        // dependence on enumeration. This test exercises both.
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let build = |mtimes: &[u64], create_order: &[&str]| -> Vec<u8> {
+            let src = TempDir::new().unwrap();
+            // Create the same logical content but in a different order so
+            // any readdir-order bug surfaces. Use different mtimes per
+            // build so any mtime leak surfaces.
+            for &name in create_order {
+                let p = src.path().join("kernel/firmware/acpi").join(name);
+                fs_err::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .mode(0o644)
+                    .open(&p)
+                    .unwrap();
+                fs_err::write(&p, b"payload").unwrap();
+            }
+            // Set distinct mtimes per file (and per build) — these should
+            // be erased by zero_mtimes() before the cpio runs.
+            for (i, name) in create_order.iter().enumerate() {
+                let p = src.path().join("kernel/firmware/acpi").join(name);
+                let t = filetime::FileTime::from_unix_time(mtimes[i] as i64, 0);
+                filetime::set_file_times(&p, t, t).unwrap();
+            }
+            let out_dir = TempDir::new().unwrap();
+            let cpio_path = out_dir.path().join("early.cpio");
+            build_early_cpio(src.path(), &cpio_path).unwrap();
+            fs_err::read(&cpio_path).unwrap()
+        };
+
+        let a = build(&[1_700_000_000, 1_700_000_001], &["a.aml", "b.aml"]);
+        let b = build(&[1_750_000_000, 1_750_000_002], &["b.aml", "a.aml"]);
+        assert_eq!(
+            a, b,
+            "cpio bytes drifted across mtime / enumeration order; this breaks RTMR[2] / SNP launch digest reproducibility"
+        );
     }
 
     #[test]
