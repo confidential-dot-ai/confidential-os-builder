@@ -32,7 +32,24 @@
  * one per cross product.
  */
 
-DefinitionBlock ("dsdt.aml", "DSDT", 1, "CONFAI", "CONFAI", 0x00000001)
+// Linux's acpi_table_initrd_override (drivers/acpi/tables.c) requires the
+// initrd table to match the firmware DSDT on Signature, OEM_ID, AND
+// OEM_Table_ID, AND have an OEM_Revision STRICTLY GREATER than the
+// firmware's. QEMU emits DSDT with OEM_ID="BOCHS " and OEM_Table_ID="BXPC"
+// at OEM_Revision=1, so we must match those exactly and bump revision to
+// at least 2 for the override path to fire — otherwise the kernel keeps
+// FADT pointing at the VMM-supplied DSDT and our table is installed as
+// an unused second DSDT (the "install" path), leaving BadAML unmitigated.
+//
+// INVARIANT: do not reorder these positional args. The pattern is
+//   DefinitionBlock(filename, signature, compliance_rev, OEM_ID,
+//                   OEM_Table_ID, OEM_Revision).
+// OEM_ID is exactly 6 bytes (space-padded), OEM_Table_ID is 8 bytes.
+// OEM_ID is exactly 6 ASCII bytes, OEM_Table_ID is exactly 8 ASCII bytes.
+// QEMU/SeaBIOS space-pads short strings; iasl null-pads. memcmp on the
+// raw 6/8 bytes is what the kernel match uses, so we must space-pad too
+// or the override match fails on a single trailing byte difference.
+DefinitionBlock ("dsdt.aml", "DSDT", 1, "BOCHS ", "BXPC    ", 0x00000002)
 {
     Scope (\_SB)
     {
