@@ -147,9 +147,29 @@ pub struct BuildArgs {
     #[arg(long)]
     pub skip_igvm: bool,
 
-    /// Path to OVMF firmware binary
+    /// Path to OVMF firmware binary used for SNP launch. Must be steep's
+    /// edk2 build that includes the IgvmHobArea region (region type 0x200),
+    /// because IGVM construction injects the UKI/shim into that area. The
+    /// upstream Ubuntu OVMF does NOT have this region and will fail
+    /// IGVM build.
     #[arg(long, env = "STEEP_FIRMWARE", default_value = "output/OVMF.fd")]
     pub firmware: PathBuf,
+
+    /// Path to OVMF firmware binary used for TDX measurement. Must be a
+    /// build with TDVF code paths compiled in (TD HOB processing, TDCALL
+    /// plumbing). Ubuntu's `ovmf` package binary at
+    /// `/usr/share/ovmf/OVMF.fd` works. Steep's IGVM-aware firmware does
+    /// NOT include TDVF and will hang silently when booted as a TDX guest.
+    ///
+    /// If --platform is `snp`, this firmware is ignored. If --platform is
+    /// `tdx` or `both`, the TDX `mrtd` in the manifest is the hash of
+    /// THIS firmware (not --firmware).
+    #[arg(
+        long = "tdx-firmware",
+        env = "STEEP_TDX_FIRMWARE",
+        default_value = "/usr/share/ovmf/OVMF.fd"
+    )]
+    pub tdx_firmware: PathBuf,
 
     /// RAM for VM (QEMU-style suffix, e.g. "4G")
     #[arg(long, default_value = "4G")]
