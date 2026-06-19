@@ -762,8 +762,16 @@ fn build_early_cpio(root: &Path, out: &Path) -> anyhow::Result<()> {
         .take()
         .ok_or_else(|| anyhow::anyhow!("could not capture find stdout"))?;
 
+    // LC_ALL=C forces byte-wise sort. glibc's default locale collation
+    // can reorder Unicode filenames (and even some single-byte
+    // characters depending on UCA tailoring), which would silently
+    // drift RTMR[2] / SNP launch digest between hosts with different
+    // locale settings. ASCII-only filenames today, but lock the order
+    // down so it stays stable if a future contributor adds an
+    // SSDT-from-some-vendor file with non-ASCII bytes.
     let mut sort = Command::new("sort")
         .arg("-z")
+        .env("LC_ALL", "C")
         .stdin(Stdio::from(find_stdout))
         .stdout(Stdio::piped())
         .spawn()?;
