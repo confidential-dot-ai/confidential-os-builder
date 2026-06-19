@@ -41,7 +41,21 @@ The build host needs to be a real Linux system with `sudo` and the kernel/userns
 
 ## Scope
 
-Steep builds **SEV-SNP guest images** — measurable, dm-verity-protected, attestable VM images that boot inside an L0 hypervisor. It is **not** a builder for host/hypervisor images that themselves run other VMs: steep's guest-oriented kernel, IGVM measurement, and verity initrd are all designed for the guest side of the trust boundary. For a plain host or hypervisor image, use a general-purpose image builder such as mkosi directly.
+Steep builds **confidential VM images for AMD SEV-SNP and Intel TDX** —
+measurable, dm-verity-protected, attestable VM images that boot inside an L0
+hypervisor. The same UKI + disk artifacts boot under both TEEs; the manifest
+records the platform-specific reference measurements alongside each other:
+
+| Platform | Measurement registers in the manifest | Firmware |
+|----------|---------------------------------------|----------|
+| **SEV-SNP** | one entry per `--smp` in `snp_variants[]`: launch digest, IGVM file, page/VMSA counts | steep's IGVM-aware edk2 fork (default `output/OVMF.fd`) |
+| **Intel TDX** | singleton `tdx`: `mrtd`, `rtmr1`, `rtmr2` (RTMR[0] floats by design — see "Trusted DSDT" below) | upstream OVMF with TDVF (default `/usr/share/ovmf/OVMF.fd`) |
+
+Steep is **not** a builder for host/hypervisor images that themselves run
+other VMs: the guest-oriented kernel, dm-verity initrd, and trusted-DSDT
+override are all designed for the guest side of the trust boundary. For a
+plain host or hypervisor image, use a general-purpose image builder such as
+mkosi directly.
 
 ## Usage
 
@@ -62,8 +76,10 @@ steep build [OPTIONS] [NAME]
 | `-p, --package <PKG>` | (none) | Extra apt package to install in the base image. Repeatable, also accepts comma-separated lists (`-p curl,jq,iproute2` or `-p curl -p jq`). Passed through to mkosi as `--package=`. |
 | `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after `required.config` + `hardening.config`. Omitted → steep's hardened required+hardening baseline kernel. Lets a project enable extra kernel symbols without modifying steep. The build rewrites `kernel/config-x86_64.snapshot` with the resolved config (see [Snapshots](#snapshots)). |
 | `--console` | off | Inject a systemd drop-in that gives root a passwordless autologin on `hvc0`. Useful for testing; changes the image measurement. **Don't ship with this on** — under the SNP threat model the host controls the serial port. |
-| `--skip-igvm` | off | Don't generate `guest.igvm`. The resulting `disk.raw` + `uki.efi` still boot under KVM (or directly on UEFI) — you just don't get the SNP launch digest that proves what the firmware loaded. Useful when the image is meant to run as an L1 guest of a cloud that does its own SEV-SNP attestation, or for local QEMU testing. |
-| `--firmware <PATH>` | `output/OVMF.fd` (env: `STEEP_FIRMWARE`) | OVMF firmware binary that's bundled into the IGVM. Required unless `--skip-igvm`. |
+| `--platform <snp\|tdx\|both>` | `both` | Which confidential-VM platform(s) to measure for. `both` emits both `snp_variants[]` IGVM measurements AND a singleton `tdx` measurement block. `snp` is IGVM-only. `tdx` skips IGVM and only computes the TDX registers. The same UKI + disk artifacts feed both measurement paths. |
+| `--skip-igvm` | off | DEPRECATED — accepted as an alias for `--platform tdx` so older shell wrappers keep working. The combination `--skip-igvm --platform snp` is rejected (it asks for an SNP launch digest while also opting out of IGVM generation). |
+| `--firmware <PATH>` | `output/OVMF.fd` (env: `STEEP_FIRMWARE`) | OVMF firmware binary used for SNP launch. Must be steep's edk2 build with the `IgvmHobArea` region (region type 0x200) — IGVM construction injects UKI/shim/cert bytes into that area. Ubuntu's stock OVMF does not have this region and will fail IGVM build. |
+| `--tdx-firmware <PATH>` | `/usr/share/ovmf/OVMF.fd` (env: `STEEP_TDX_FIRMWARE`) | OVMF firmware used for TDX measurement. Must be a build with TDVF code paths compiled in (the `ovmf` package binary works). Steep's IGVM-aware firmware does NOT include TDVF — a TDX guest booted on it hangs silently in firmware. The TDX `mrtd` in the manifest is the hash of THIS firmware, not `--firmware`. Ignored when `--platform snp`. |
 | `--memory <SIZE>` | `4G` | VM memory recorded in `manifest.json` (`build.memory`). `steep run` reads this when booting the image; not used at build time. QEMU-style suffix (`512M`, `8G`, `64G`). |
 | `--smp <N>` | `2` | vCPU count recorded in `manifest.json` (`build.smp`), used by `steep run` and (when generating IGVM) by the SNP launch measurement computation. |
 
@@ -169,6 +185,45 @@ Steep ships a hardened guest kernel built from `kernel/version` (linux 6.12.84) 
 | `--kernel-config-fragment <PATH>` | Whatever the caller's fragment enables — steep ships none | Only when the flag is passed |
 
 steep itself builds only `required + hardening` — a minimal hardened microVM kernel, and **steep carries no project-specific kernel config**. A project that needs extra kernel symbols (a wider networking stack, additional filesystems, cgroup features, …) keeps its own fragment file in its own repo and passes it via `--kernel-config-fragment`. steep merges it after `required + hardening`; nothing else about the build changes.
+
+### Trusted DSDT (TDX BadAML mitigation)
+
+A TDX guest's firmware-supplied DSDT (Differentiated System Description Table)
+contains AML bytecode that the guest kernel executes at kernel privilege during
+ACPI init. Because the DSDT comes from the VMM in the TDX threat model,
+arbitrary AML in the DSDT is an attack vector — the "BadAML" class.
+
+Steep ships a minimal, audited DSDT (`mkosi/base/acpi-tables/dsdt.asl`) in
+the initrd's early-cpio segment at `kernel/firmware/acpi/dsdt.aml`. The
+kernel's `CONFIG_ACPI_TABLE_UPGRADE` feature scans the initrd for this path
+at boot and **overrides** the VMM-supplied DSDT (replaces FADT's DSDT
+pointer to point at the trusted bytes). The OEM ID, OEM Table ID, and
+OEM Revision in the ASL are chosen to match QEMU's emission exactly so the
+override condition in Linux's `acpi_table_initrd_override` actually fires —
+a single trailing-byte mismatch falls through to the install-only path and
+leaves the VMM's DSDT live. The runtime override is verifiable via
+`dmesg | grep "Table Upgrade: override"` (the `override` keyword is the
+load-bearing signal — `install` alone is a no-op).
+
+The trusted DSDT bytes are part of the initrd, which is part of the UKI
+and the IGVM file, so the override is itself attested:
+  - on TDX, via the UKI sections hash in RTMR[2]
+  - on SNP, via the IGVM launch digest
+
+This is why steep's TDX manifest pins only MRTD + RTMR[1] + RTMR[2] and
+leaves RTMR[0] unpinned: the VMM still drives RTMR[0] (TD HOB + remaining
+ACPI tables that vary with memory size and SMP topology), but the
+*executable* AML the kernel runs is the trusted one. Memory and SMP can
+vary at deployment time without invalidating the manifest's TDX reference
+values.
+
+The kernel fragment `kernel/confidential.config` re-enables
+`CONFIG_ACPI_TABLE_UPGRADE` (which the standard-threat-model hardening
+fragment disables) and adds `CONFIG_INTEL_TDX_GUEST` + `CONFIG_TDX_GUEST_DRIVER`
++ `CONFIG_X86_X2APIC` (the last being a required dependency for the TDX
+guest support). It's merged after `required.config` and `hardening.config`
+so the last-wins semantics deliberately invert the hardening choices that
+the trusted-DSDT design makes unnecessary.
 
 ### Snapshots
 
