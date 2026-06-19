@@ -35,6 +35,10 @@ fn sample_tdx() -> TdxMeasurement {
         mrtd: "11".repeat(48),
         rtmr1: "22".repeat(48),
         rtmr2: "33".repeat(48),
+        firmware: Some(FileEntry {
+            path: "OVMF.tdx.fd".to_string(),
+            sha256: "ee".repeat(32),
+        }),
     }
 }
 

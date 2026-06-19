@@ -71,9 +71,17 @@ pub struct TdxMeasurement {
     pub mrtd: String,
     pub rtmr1: String,
     pub rtmr2: String,
+    /// File entry for the TDX firmware binary the TDX measurements were
+    /// computed against. Different from `inputs.firmware` (which records
+    /// the SNP-side IGVM-aware firmware): TDX needs TDVF support that
+    /// steep's edk2 fork does not include, so a both-platform build
+    /// uses two distinct OVMF binaries. `Option` because older
+    /// manifests written before the dual-firmware split land here as None.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub firmware: Option<FileEntry>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FileEntry {
     pub path: String,

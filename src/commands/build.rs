@@ -25,15 +25,14 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         args.platform
     };
 
-    // Firmware is required whenever we measure: SNP needs it for IGVM
-    // assembly, TDX needs it to parse TDVF metadata for MRTD + RTMR[0]
-    // (we only emit MRTD, but the parser is the same path). Skip the
-    // requirement only when no measurement pass runs.
-    let firmware = if platform.needs_snp() || platform.needs_tdx() {
+    // SNP firmware: required only when building SNP variants. Must be
+    // steep's edk2 build with IgvmHobArea — Ubuntu's stock OVMF does not
+    // have that region and IGVM construction fails on it.
+    let snp_firmware = if platform.needs_snp() {
         let fw = args.firmware.clone();
         if !fw.exists() {
             anyhow::bail!(
-                "firmware not found: {}. Pass `--platform tdx` to build without SNP measurement or `--platform snp` to skip TDX.",
+                "SNP firmware not found: {} (--firmware). Pass `--platform tdx` to build without SNP measurement.",
                 fw.display()
             );
         }
@@ -41,6 +40,33 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     } else {
         None
     };
+
+    // TDX firmware: required only when computing TDX measurements. Must
+    // be an OVMF build with TDVF code paths (Ubuntu's `ovmf` package
+    // works). Steep's IGVM-aware firmware does NOT include TDVF — a TDX
+    // guest booted on it hangs silently in firmware. So we keep two
+    // firmware binaries side by side, one per platform.
+    let tdx_firmware = if platform.needs_tdx() {
+        let fw = args.tdx_firmware.clone();
+        if !fw.exists() {
+            anyhow::bail!(
+                "TDX firmware not found: {} (--tdx-firmware). Install ubuntu's `ovmf` package (`apt install ovmf`) or pass --tdx-firmware/-Eenv STEEP_TDX_FIRMWARE.",
+                fw.display()
+            );
+        }
+        Some(fw)
+    } else {
+        None
+    };
+
+    // Most legacy paths still take a single `firmware: Option<PathBuf>`
+    // (IGVM build, output staging, the `firmware: Option<FileEntry>` in
+    // ManifestInputs). The first non-None of SNP, TDX is the one the
+    // operator will actually run with on KVM if there's no IGVM, so we
+    // present that. Both-platform builds get the SNP firmware in
+    // outputs/manifest.inputs (IGVM remains the canonical artifact);
+    // the TDX firmware is referenced separately in the TDX block.
+    let firmware = snp_firmware.clone().or_else(|| tdx_firmware.clone());
 
     // Validate memory format before it reaches QEMU arg interpolation
     qemu::validate_memory(&args.memory)?;
@@ -262,10 +288,15 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         human_size(&output_uki)?
     );
 
-    // Read firmware + UKI bytes once; both SNP and TDX measurement
-    // passes consume them, and the file reads aren't free on large
-    // OVMF builds.
-    let fw_bytes_opt = match firmware.as_ref() {
+    // Read firmware + UKI bytes once per platform; the file reads aren't
+    // free on large OVMF builds. SNP and TDX use DIFFERENT firmware
+    // binaries (steep-edk2 with IgvmHobArea for SNP, Ubuntu/TDVF-capable
+    // for TDX) so we read each independently.
+    let snp_fw_bytes_opt = match snp_firmware.as_ref() {
+        Some(fw) => Some(fs_err::read(fw)?),
+        None => None,
+    };
+    let tdx_fw_bytes_opt = match tdx_firmware.as_ref() {
         Some(fw) => Some(fs_err::read(fw)?),
         None => None,
     };
@@ -282,9 +313,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             args.smp
         );
 
-        let fw_bytes = fw_bytes_opt
+        let fw_bytes = snp_fw_bytes_opt
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("firmware path required for IGVM build"))?;
+            .ok_or_else(|| anyhow::anyhow!("SNP firmware path required for IGVM build"))?;
 
         // Sort + dedup so the on-disk manifest has a canonical ordering
         // regardless of how the operator listed --smp.
@@ -337,11 +368,18 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         Vec::new()
     };
 
-    // Copy firmware into output so the directory is self-contained for publish/run
-    if let Some(ref fw) = firmware {
+    // Copy firmware(s) into output so the directory is self-contained
+    // for publish/run. SNP firmware lives at `OVMF.fd` (back-compat),
+    // TDX firmware at `OVMF.tdx.fd` when present.
+    if let Some(ref fw) = snp_firmware {
         let output_fw = output.join("OVMF.fd");
         fs_err::copy(fw, &output_fw)?;
-        println!("Firmware: {}", output_fw.display());
+        println!("SNP firmware: {}", output_fw.display());
+    }
+    if let Some(ref fw) = tdx_firmware {
+        let output_fw = output.join("OVMF.tdx.fd");
+        fs_err::copy(fw, &output_fw)?;
+        println!("TDX firmware: {}", output_fw.display());
     }
 
     // move raw disk image to output
@@ -356,19 +394,29 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // MRTD's MEM.PAGE.ADD / MR.EXTEND replay.
     let tdx_measurement: Option<manifest::TdxMeasurement> = if platform.needs_tdx() {
         println!("\n=== Step 4b: Computing TDX measurements ===");
-        let fw_bytes = fw_bytes_opt
+        let fw_bytes = tdx_fw_bytes_opt
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("firmware path required for TDX measurement"))?;
+            .ok_or_else(|| anyhow::anyhow!("TDX firmware path required for TDX measurement"))?;
         let disk_bytes = fs_err::read(&disk_path)?;
         let m = tdx_measure::measure_uki(fw_bytes, &uki_bytes, Some(&disk_bytes))
             .map_err(|e| anyhow::anyhow!("TDX measurement failed: {e}"))?;
         println!("  MRTD:    {}", m.mrtd);
         println!("  RTMR[1]: {}", m.rtmr1);
         println!("  RTMR[2]: {}", m.rtmr2);
+        let tdx_fw_entry = tdx_firmware
+            .as_ref()
+            .map(|fw| -> anyhow::Result<manifest::FileEntry> {
+                Ok(manifest::FileEntry {
+                    path: "OVMF.tdx.fd".to_string(),
+                    sha256: manifest::sha256_file(fw)?,
+                })
+            })
+            .transpose()?;
         Some(manifest::TdxMeasurement {
             mrtd: m.mrtd,
             rtmr1: m.rtmr1,
             rtmr2: m.rtmr2,
+            firmware: tdx_fw_entry,
         })
     } else {
         println!("\n=== Step 4b: Skipping TDX measurement (platform = {:?}) ===", platform);
