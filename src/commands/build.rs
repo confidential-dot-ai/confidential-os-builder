@@ -11,10 +11,18 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // but warn so the operator migrates. Reject conflicting combos to
     // catch typos before a 10-minute build runs.
     let platform = if args.skip_igvm {
-        if !matches!(args.platform, BuildPlatform::Both) {
-            anyhow::bail!(
-                "--skip-igvm conflicts with --platform; pass only --platform tdx (or drop --skip-igvm)"
-            );
+        match args.platform {
+            // The legacy `--skip-igvm` and the new `--platform tdx` mean
+            // the same thing; accept the combo silently as redundant
+            // rather than rejecting it as a "conflict" — operators
+            // migrating their wrapper scripts get a smooth path that
+            // accepts both spellings.
+            BuildPlatform::Tdx | BuildPlatform::Both => {}
+            BuildPlatform::Snp => anyhow::bail!(
+                "--skip-igvm with --platform snp is incoherent (skip-igvm \
+                 produces no SNP launch digest, but --platform snp asks for one). \
+                 Drop one of the flags."
+            ),
         }
         eprintln!(
             "warning: --skip-igvm is deprecated; use `--platform tdx` instead. \
@@ -59,14 +67,13 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         None
     };
 
-    // Most legacy paths still take a single `firmware: Option<PathBuf>`
-    // (IGVM build, output staging, the `firmware: Option<FileEntry>` in
-    // ManifestInputs). The first non-None of SNP, TDX is the one the
-    // operator will actually run with on KVM if there's no IGVM, so we
-    // present that. Both-platform builds get the SNP firmware in
-    // outputs/manifest.inputs (IGVM remains the canonical artifact);
-    // the TDX firmware is referenced separately in the TDX block.
-    let firmware = snp_firmware.clone().or_else(|| tdx_firmware.clone());
+    // The dual-firmware split (commit 78337a2) means the legacy single
+    // `firmware: Option<PathBuf>` is no longer load-bearing — every
+    // downstream consumer now reads `snp_firmware` or `tdx_firmware`
+    // directly. Keep this alias bound but underscore-prefixed as
+    // documentation of the prior contract, in case a follow-up wants
+    // a single-firmware fallback path (e.g. a future KVM-only tier).
+    let _firmware = snp_firmware.clone().or_else(|| tdx_firmware.clone());
 
     // Validate memory format before it reaches QEMU arg interpolation
     qemu::validate_memory(&args.memory)?;
@@ -447,14 +454,18 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     println!("\n=== Writing manifest.json ===");
     // build.platform: a short tag for the runner / publisher to know
-    // what hardware this artifact was prepared for. The accepted values
-    // here (`snp`, `generic`) are constrained by commands::run::ALLOWED_PLATFORMS.
-    // A future change can introduce `tdx` and `multi` once the runner
-    // teaches itself about TDX hardware tiers.
-    let platform_tag = if platform.needs_snp() {
-        "snp".to_string()
-    } else {
-        "generic".to_string()
+    // what hardware this artifact was prepared for. The set of accepted
+    // values mirrors commands::run::ALLOWED_PLATFORMS — keep these two
+    // in sync. A both-platforms build encodes as `multi`; a TDX-only
+    // build encodes as `tdx`; SNP-only stays `snp`. This lets a verifier
+    // reading just `build.platform` know which entries to expect in
+    // `snp_variants[]` / `tdx`. The historical `generic` value remains
+    // accepted by `steep run` for back-compat with non-confidential
+    // KVM-only builds.
+    let platform_tag = match platform {
+        BuildPlatform::Snp => "snp".to_string(),
+        BuildPlatform::Tdx => "tdx".to_string(),
+        BuildPlatform::Both => "multi".to_string(),
     };
     // Write manifest
     let build_manifest = manifest::BuildManifest {
@@ -482,11 +493,20 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 path: manifest::basename_of(&initrd_path),
                 sha256: initrd_hash,
             },
-            firmware: firmware
+            // inputs.firmware records the SNP firmware specifically.
+            // Both common firmware files ship as `OVMF.fd`, so recording
+            // the source basename would collide with the TDX firmware in
+            // a both-platform build. Use the deterministic output-relative
+            // path that `Copy firmware(s) into output` writes earlier
+            // ("OVMF.fd" for SNP), so a verifier reading the manifest
+            // resolves it the same way regardless of where the build
+            // pulled its firmware from. The TDX firmware is recorded
+            // separately under `tdx.firmware` with path "OVMF.tdx.fd".
+            firmware: snp_firmware
                 .as_ref()
                 .map(|fw| -> anyhow::Result<manifest::FileEntry> {
                     Ok(manifest::FileEntry {
-                        path: manifest::basename_of(fw),
+                        path: "OVMF.fd".to_string(),
                         sha256: manifest::sha256_file(fw)?,
                     })
                 })

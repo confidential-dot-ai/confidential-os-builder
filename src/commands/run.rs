@@ -3,7 +3,11 @@ use crate::qemu::{self, QemuArgs, QemuTier};
 use crate::RunArgs;
 
 const ALLOWED_DISK_FORMATS: &[&str] = &["raw", "qcow2"];
-const ALLOWED_PLATFORMS: &[&str] = &["snp", "generic"];
+// `build.platform` values that `steep run` knows how to launch. Keep in
+// sync with commands::build::run() — adding a new BuildPlatform variant
+// there without teaching the runner about its hardware tier produces a
+// misleading "unsupported" error.
+const ALLOWED_PLATFORMS: &[&str] = &["snp", "tdx", "multi", "generic"];
 
 pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     tracing::info!(dir = %args.dir.display(), "launching VM");
