@@ -988,6 +988,9 @@ mod tests {
         // No panic == pass.
     }
 
+    // Shells out to GNU cpio/sort flags that BSD userland (macOS) rejects.
+    // steep build runs on Linux only (mkosi is Linux-only).
+    #[cfg(target_os = "linux")]
     #[test]
     fn build_early_cpio_is_reproducible_across_mtime_and_enumeration_order() {
         // The cpio bytes feed into RTMR[2] / SNP launch digest, so they
@@ -1033,6 +1036,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn build_early_cpio_packs_files_from_root() {
         // Sanity: build_early_cpio reads a directory and produces a
