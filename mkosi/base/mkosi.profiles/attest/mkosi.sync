@@ -28,8 +28,13 @@ set -euo pipefail
 STAGE_DIR="$SRCDIR/mkosi.local/mkosi.extra/usr/local/bin"
 TARGET="$STAGE_DIR/attestation-api"
 
-# Pinned digest of the SNP-only attestation-api container.
-IMAGE="ghcr.io/lunal-dev/attestation-api@sha256:64468157f4cdcc549846edbe973a15d6c30aa90f5dac193ad324d6df238ee89c"
+# Pinned digest of the attestation-api container. Bumping this changes the
+# launch measurement of any `--profile attest` build — intended behaviour.
+# Sourced from `confidential-dot-ai/attestation-rs` CI, which now publishes
+# a binary that supports both SEV-SNP (`/dev/sev-guest`) and Intel TDX
+# (`/dev/tdx_guest`); see attestation-api/src/config.rs's
+# SUPPORTED_ATTESTATION_PLATFORMS for the full list.
+IMAGE="ghcr.io/confidential-dot-ai/attestation-api@sha256:724019b3b4787141da6f8c96b74fa3f39f48f54c10a813df4790778b0d4d0e81"
 
 mkdir -p "$STAGE_DIR"
 
@@ -63,9 +68,22 @@ while read -r layer; do
     rm -f "$TMPDIR/layer.tar.gz"
 done
 
-FOUND="$EXTRACT_DIR/usr/local/bin/attestation-api"
-if [ ! -f "$FOUND" ]; then
-    echo "ERROR: usr/local/bin/attestation-api not found after extracting layers" >&2
+# The confidential-dot-ai attestation-api image places the binary at `/`
+# (entrypoint is `/attestation-api`), while older lunal-dev builds put it
+# under `usr/local/bin/`. Try both locations so the script keeps working
+# across image lineages.
+FOUND=""
+for candidate in \
+    "$EXTRACT_DIR/usr/local/bin/attestation-api" \
+    "$EXTRACT_DIR/attestation-api" \
+; do
+    if [ -f "$candidate" ]; then
+        FOUND="$candidate"
+        break
+    fi
+done
+if [ -z "$FOUND" ]; then
+    echo "ERROR: no attestation-api binary found after extracting layers" >&2
     find "$EXTRACT_DIR" -name attestation-api -print >&2
     exit 1
 fi

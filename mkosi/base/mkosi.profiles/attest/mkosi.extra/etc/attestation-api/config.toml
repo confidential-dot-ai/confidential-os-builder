@@ -25,4 +25,9 @@ enabled = false
 
 [attestation]
 enabled = true
-platforms = ["snp"]
+# `snp` for AMD SEV-SNP guests, `tdx` for Intel TDX guests. The binary
+# probes /dev/sev-guest and /dev/tdx_guest at runtime and only reports
+# the platforms whose device is actually present, so listing both here
+# is safe on either host. `tdx_quote_method = "auto"` (default) tries
+# vsock (QGS) first and falls back to ConfigFS TSM.
+platforms = ["snp", "tdx"]
