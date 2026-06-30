@@ -28,6 +28,11 @@ set -euo pipefail
 STAGE_DIR="$SRCDIR/mkosi.local/mkosi.extra/usr/local/bin"
 TARGET="$STAGE_DIR/attestation-api"
 
+# mkosi exports TMPDIR pointing into its workspace, but doesn't always
+# pre-create the leaf directory. Ensure it exists so the `mktemp -d`
+# below succeeds; fall back to /tmp if TMPDIR is unset.
+mkdir -p "${TMPDIR:=/tmp}"
+
 # Pinned digest of the attestation-api container. Bumping this changes the
 # launch measurement of any `--profile attest` build — intended behaviour.
 # Sourced from `confidential-dot-ai/attestation-rs` CI, which now publishes
