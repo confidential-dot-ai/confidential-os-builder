@@ -29,6 +29,7 @@
 //! for the documented boot flow.
 
 pub mod ccel;
+pub mod esp;
 pub mod pe;
 pub mod rtmr;
 pub mod tdvf;
