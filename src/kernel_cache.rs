@@ -54,6 +54,7 @@ fn require_inputs_exist(fragment: Option<&Path>) -> Result<()> {
         "kernel/version",
         "kernel/required.config",
         "kernel/hardening.config",
+        "kernel/confidential.config",
     ] {
         if !Path::new(f).exists() {
             return Err(anyhow!("required file missing: {}", f));

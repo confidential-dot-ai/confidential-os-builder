@@ -6,7 +6,11 @@ set -x
 
 echo "==> Installing system packages..."
 sudo apt-get update
-sudo apt install -y build-essential systemd-repart systemd-container qemu-utils genisoimage swtpm cpio
+# acpica-tools provides iasl, used at build time to compile the trusted
+# DSDT (mkosi/base/acpi-tables/dsdt.asl) that gets injected into the
+# initrd so the kernel's CONFIG_ACPI_TABLE_UPGRADE replaces the
+# VMM-supplied DSDT at boot.
+sudo apt install -y build-essential systemd-repart systemd-container qemu-utils genisoimage swtpm cpio acpica-tools
 
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh

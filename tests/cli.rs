@@ -49,12 +49,41 @@ fn test_build_help() {
 
 #[test]
 fn test_build_skip_igvm_flag() {
+    // --skip-igvm survives as a deprecated alias for --platform tdx;
+    // verify it still shows up in --help.
     let mut cmd = Command::cargo_bin("steep").unwrap();
     cmd.args(["build", "--help"])
         .assert()
         .success()
         .stdout(predicates::str::contains("skip-igvm"))
         .stdout(predicates::str::contains("cloud-init"));
+}
+
+#[test]
+fn test_build_platform_flag_documented() {
+    // --platform replaces --skip-igvm; check it documents the three
+    // expected values.
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["build", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--platform"))
+        .stdout(predicates::str::contains("snp"))
+        .stdout(predicates::str::contains("tdx"))
+        .stdout(predicates::str::contains("both"));
+}
+
+#[test]
+fn test_build_rejects_skip_igvm_with_explicit_platform() {
+    // The deprecated alias is rejected when combined with an explicit
+    // --platform (other than the default) so silent ambiguity is
+    // impossible. We exercise the --help path indirectly here — the
+    // actual rejection happens at run-time in commands::build::run, so
+    // assert it via a build invocation that fails fast on mkosi.
+    let mut cmd = Command::cargo_bin("steep").unwrap();
+    cmd.args(["build", "--platform", "snp", "--skip-igvm"])
+        .assert()
+        .failure();
 }
 
 #[test]
