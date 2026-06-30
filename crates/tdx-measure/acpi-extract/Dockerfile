@@ -25,6 +25,12 @@
 #     -machine q35,kernel-irqchip=split,hpet=off,smm=off,pic=off \
 #     -bios /firmware.fd -nographic -nodefaults -serial stdio
 
+# Pin the base image by tag (LTS short-lived release window). A digest
+# pin would be stricter but Canonical re-publishes 25.04 periodically
+# with libc / kernel-headers updates; for an ACPI extractor whose output
+# depends on QEMU's source and machine-type emission rather than the
+# base userland, the tag is acceptable. Revisit if extraction output
+# starts drifting between rebuilds.
 FROM ubuntu:25.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -47,12 +53,20 @@ RUN apt-get update && \
 ARG QEMU_VERSION="1:9.2.1+ds-1ubuntu4+tdx2.0~ppa2"
 RUN pull-ppa-source --ppa ppa:kobuk-team/tdx-release qemu ${QEMU_VERSION}
 
-# Symlink the extracted source to a stable path.
+# Symlink the extracted source to a stable path, then create a non-root
+# user that owns the source tree. Building and running the patched QEMU
+# under this user limits the blast radius if the (untrusted) PPA-fetched
+# source ships a compromised build script. Mirrors the upstream
+# tdx-measure repo's commit `5e7e883` ("Run QEMU ACPI Dump container as
+# non-root user").
 RUN QEMU_WRK_DIR=$(find / -maxdepth 1 -type d -name "qemu*" | head -n 1) && \
     echo "Found QEMU directory: $QEMU_WRK_DIR" && \
-    ln -s "$QEMU_WRK_DIR" /qemu-source
+    ln -s "$QEMU_WRK_DIR" /qemu-source && \
+    useradd -m -s /sbin/nologin qemu-user && \
+    chown -R qemu-user:qemu-user "$QEMU_WRK_DIR"
 
 WORKDIR /qemu-source
+USER qemu-user
 
 # ---------------------------------------------------------------------------
 # Patch QEMU to dump all three ACPI fw_cfg blobs and exit.

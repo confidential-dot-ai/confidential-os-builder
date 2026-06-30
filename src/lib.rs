@@ -7,6 +7,29 @@ pub mod tools;
 
 use std::path::PathBuf;
 
+/// Which confidential-VM platform(s) `steep build` should emit
+/// measurements for. The artifact set (disk + UKI + IGVM) is the same
+/// across platforms; this just toggles which measurement passes run
+/// and which manifest fields get populated.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildPlatform {
+    /// AMD SEV-SNP: build IGVM variants and populate `snp_variants[]`.
+    Snp,
+    /// Intel TDX: compute MRTD + RTMR[1] + RTMR[2] and populate `tdx`.
+    Tdx,
+    /// Both — default. Produces a manifest that attests on either fleet.
+    Both,
+}
+
+impl BuildPlatform {
+    pub fn needs_snp(self) -> bool {
+        matches!(self, BuildPlatform::Snp | BuildPlatform::Both)
+    }
+    pub fn needs_tdx(self) -> bool {
+        matches!(self, BuildPlatform::Tdx | BuildPlatform::Both)
+    }
+}
+
 #[derive(clap::Args)]
 pub struct KernelArgs {
     /// Force rebuild even if cache is current
@@ -112,13 +135,41 @@ pub struct BuildArgs {
     #[arg(short = 's', long, value_name = "FILE")]
     pub script: Option<PathBuf>,
 
-    /// Skip IGVM generation (produce only disk + UKI, no SNP measurement)
+    /// Which confidential-VM platform(s) to measure for. `both` (default)
+    /// emits SNP IGVM variants AND a TDX measurement block in the manifest.
+    /// `snp` is IGVM-only (no TDX measurements). `tdx` skips IGVM
+    /// generation entirely — same shape as the legacy `--skip-igvm`.
+    #[arg(long, value_enum, default_value = "both")]
+    pub platform: BuildPlatform,
+
+    /// DEPRECATED: alias for `--platform tdx`. Use that instead.
+    /// Skip IGVM generation (produce only disk + UKI, no SNP measurement).
     #[arg(long)]
     pub skip_igvm: bool,
 
-    /// Path to OVMF firmware binary
+    /// Path to OVMF firmware binary used for SNP launch. Must be steep's
+    /// edk2 build that includes the IgvmHobArea region (region type 0x200),
+    /// because IGVM construction injects the UKI/shim into that area. The
+    /// upstream Ubuntu OVMF does NOT have this region and will fail
+    /// IGVM build.
     #[arg(long, env = "STEEP_FIRMWARE", default_value = "output/OVMF.fd")]
     pub firmware: PathBuf,
+
+    /// Path to OVMF firmware binary used for TDX measurement. Must be a
+    /// build with TDVF code paths compiled in (TD HOB processing, TDCALL
+    /// plumbing). Ubuntu's `ovmf` package binary at
+    /// `/usr/share/ovmf/OVMF.fd` works. Steep's IGVM-aware firmware does
+    /// NOT include TDVF and will hang silently when booted as a TDX guest.
+    ///
+    /// If --platform is `snp`, this firmware is ignored. If --platform is
+    /// `tdx` or `both`, the TDX `mrtd` in the manifest is the hash of
+    /// THIS firmware (not --firmware).
+    #[arg(
+        long = "tdx-firmware",
+        env = "STEEP_TDX_FIRMWARE",
+        default_value = "/usr/share/ovmf/OVMF.fd"
+    )]
+    pub tdx_firmware: PathBuf,
 
     /// RAM for VM (QEMU-style suffix, e.g. "4G")
     #[arg(long, default_value = "4G")]

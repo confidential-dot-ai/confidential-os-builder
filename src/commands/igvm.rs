@@ -1,4 +1,4 @@
-use crate::manifest::{self, BuildManifest, FileEntry, IgvmVariant, Measurement};
+use crate::manifest::{self, BuildManifest, FileEntry, SnpVariant, Measurement};
 use crate::IgvmArgs;
 
 /// Generate IGVM files for multiple SMP counts from an existing sealed output.
@@ -55,7 +55,7 @@ pub fn run(args: &IgvmArgs) -> anyhow::Result<()> {
 
         // Idempotency: if a variant already exists for this SMP, its IGVM file
         // is on disk, and the recorded sha256 matches, skip the rebuild.
-        if let Some(existing) = build_manifest.variants.iter().find(|v| v.smp == smp) {
+        if let Some(existing) = build_manifest.snp_variants.iter().find(|v| v.smp == smp) {
             if igvm_path.exists() {
                 match manifest::sha256_file(&igvm_path) {
                     Ok(actual) if actual == existing.igvm.sha256 => {
@@ -90,7 +90,7 @@ pub fn run(args: &IgvmArgs) -> anyhow::Result<()> {
             &digest[digest.len() - 8..],
         );
 
-        let variant = IgvmVariant {
+        let variant = SnpVariant {
             smp,
             igvm: FileEntry {
                 path: igvm_name,
@@ -109,7 +109,7 @@ pub fn run(args: &IgvmArgs) -> anyhow::Result<()> {
     // Persist updates. Sort variants by SMP for stable on-disk ordering, so a
     // diff between two manifest.json files is meaningful even if the user
     // happened to invoke `--smp 8 2 4` versus `--smp 2 4 8`.
-    build_manifest.variants.sort_by_key(|v| v.smp);
+    build_manifest.snp_variants.sort_by_key(|v| v.smp);
     manifest::write_manifest(&build_manifest, &manifest_path)?;
 
     println!("\nDone. IGVM files written to {}", args.dir.display());
@@ -118,11 +118,11 @@ pub fn run(args: &IgvmArgs) -> anyhow::Result<()> {
 
 /// Replace any existing variant with the same SMP count, or append if absent.
 /// Ensures `variants[]` has at most one entry per SMP.
-pub(crate) fn upsert_variant(manifest: &mut BuildManifest, variant: IgvmVariant) {
-    if let Some(existing) = manifest.variants.iter_mut().find(|v| v.smp == variant.smp) {
+pub(crate) fn upsert_variant(manifest: &mut BuildManifest, variant: SnpVariant) {
+    if let Some(existing) = manifest.snp_variants.iter_mut().find(|v| v.smp == variant.smp) {
         *existing = variant;
     } else {
-        manifest.variants.push(variant);
+        manifest.snp_variants.push(variant);
     }
 }
 
@@ -159,12 +159,13 @@ mod tests {
                 disk_image: entry("disk"),
                 uki: entry("uki"),
             },
-            variants: vec![],
+            snp_variants: vec![],
+            tdx: None,
         }
     }
 
-    fn variant(smp: u32, digest: &str) -> IgvmVariant {
-        IgvmVariant {
+    fn variant(smp: u32, digest: &str) -> SnpVariant {
+        SnpVariant {
             smp,
             igvm: FileEntry {
                 path: format!("guest-smp{smp}.igvm"),
@@ -183,8 +184,8 @@ mod tests {
     fn upsert_appends_new_variant() {
         let mut m = empty_manifest();
         upsert_variant(&mut m, variant(2, "d2"));
-        assert_eq!(m.variants.len(), 1);
-        assert_eq!(m.variants[0].smp, 2);
+        assert_eq!(m.snp_variants.len(), 1);
+        assert_eq!(m.snp_variants[0].smp, 2);
     }
 
     #[test]
@@ -194,8 +195,8 @@ mod tests {
         let mut m = empty_manifest();
         upsert_variant(&mut m, variant(2, "d2-old"));
         upsert_variant(&mut m, variant(2, "d2-new"));
-        assert_eq!(m.variants.len(), 1);
-        assert_eq!(m.variants[0].measurement.snp_launch_digest, "d2-new");
+        assert_eq!(m.snp_variants.len(), 1);
+        assert_eq!(m.snp_variants[0].measurement.snp_launch_digest, "d2-new");
     }
 
     #[test]
@@ -206,9 +207,9 @@ mod tests {
         upsert_variant(&mut m, variant(2, "d2"));
         upsert_variant(&mut m, variant(4, "d4"));
         upsert_variant(&mut m, variant(2, "d2")); // re-upsert same smp
-        assert_eq!(m.variants.len(), 2);
+        assert_eq!(m.snp_variants.len(), 2);
         let digests: Vec<&str> = m
-            .variants
+            .snp_variants
             .iter()
             .map(|v| v.measurement.snp_launch_digest.as_str())
             .collect();

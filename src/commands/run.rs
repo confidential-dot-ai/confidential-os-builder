@@ -3,7 +3,11 @@ use crate::qemu::{self, QemuArgs, QemuTier};
 use crate::RunArgs;
 
 const ALLOWED_DISK_FORMATS: &[&str] = &["raw", "qcow2"];
-const ALLOWED_PLATFORMS: &[&str] = &["snp", "generic"];
+// `build.platform` values that `steep run` knows how to launch. Keep in
+// sync with commands::build::run() — adding a new BuildPlatform variant
+// there without teaching the runner about its hardware tier produces a
+// misleading "unsupported" error.
+const ALLOWED_PLATFORMS: &[&str] = &["snp", "tdx", "multi", "generic"];
 
 pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     tracing::info!(dir = %args.dir.display(), "launching VM");
@@ -50,7 +54,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     // default if `steep igvm` was never run). A future change can add a `--smp`
     // selector to `steep run`; for now this matches v1 behaviour of "one IGVM
     // per output dir."
-    let variant = manifest.variants.first();
+    let variant = manifest.snp_variants.first();
 
     match tier {
         QemuTier::SevSnp => {
@@ -202,7 +206,7 @@ fn validate_manifest_fields(manifest: &BuildManifest) -> anyhow::Result<()> {
         );
     }
     qemu::validate_memory(&manifest.build.memory)?;
-    for v in &manifest.variants {
+    for v in &manifest.snp_variants {
         if v.smp == 0 || v.smp > 1024 {
             anyhow::bail!(
                 "invalid smp count in manifest variant: {} (must be 1-1024)",
