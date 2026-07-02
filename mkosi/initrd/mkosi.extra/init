@@ -91,7 +91,9 @@ use_tmpfs_overlay() {
 
 if [ -n "$SCRATCH_DEV" ]; then
     echo "initrd: found confai-scratch disk at $SCRATCH_DEV — ephemeral encrypted overlay"
-    # Random per-boot key, kept only in (SEV-encrypted) RAM, never persisted.
+    # Random per-boot key, kept only in TEE-encrypted guest RAM (SEV-SNP or
+    # TDX; the platform running the VM protects the key-holding page in either
+    # case), never persisted.
     mkdir -p /run
     head -c 64 /dev/urandom > /run/scratch.key
     # --batch-mode: the raw PVC may carry stale filesystem signatures from a
