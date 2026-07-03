@@ -29,60 +29,80 @@ fn measure_log(log: &[Vec<u8>]) -> Vec<u8> {
     mr
 }
 
-/// Compute RTMR[1] for UKI boot.
+/// Compute RTMR[1] for UKI boot on TDX.
 ///
-/// The 7 events in order:
-///   1. EV_EFI_ACTION "Calling EFI Application from Boot Option"
-///   2. EV_SEPARATOR (4 zero bytes)
-///   3. EV_EFI_GPT_EVENT (GPT partition table hash from disk image)
-///   4. EV_EFI_BOOT_SERVICES_APPLICATION (UKI PE Authenticode hash)
-///   5. EV_EFI_BOOT_SERVICES_APPLICATION (kernel loaded by UKI stub)
-///   6. EV_EFI_ACTION "Exit Boot Services Invocation"
-///   7. EV_EFI_ACTION "Exit Boot Services Returned with Success"
+/// **The real boot chain is `TDVF → systemd-boot → UKI`.** TDVF loads
+/// `\EFI\BOOT\BOOTX64.EFI` (the removable-media fallback path) as the
+/// first PE, which is systemd-boot on steep-built disks. systemd-boot
+/// then loads the UKI from `\EFI\Linux\<entry>.efi`. **Each PE LoadImage
+/// generates its own `EV_EFI_BOOT_SERVICES_APPLICATION` event extended
+/// into RTMR[1].** A prior version of this function modelled only the
+/// UKI hash and added a synthetic kernel-PE hash that the real boot
+/// path doesn't actually measure — that produced an RTMR[1] that didn't
+/// match hardware. We empirically traced the 7-event chain by parsing
+/// the live CCEL eventlog from a TDX quote.
+///
+/// The 7 events extended into RTMR[1], in order:
+///   1. EV_EFI_ACTION "Calling EFI Application from Boot Option" — TDVF
+///      announces it's about to invoke the boot manager's choice.
+///   2. EV_SEPARATOR (4 zero bytes) — phase boundary.
+///   3. EV_EFI_GPT_EVENT — the disk's GPT header + valid entries.
+///      Required when a disk is present; the TDVF spec mandates it.
+///   4. EV_EFI_BOOT_SERVICES_APPLICATION — Authenticode hash of
+///      `\EFI\BOOT\BOOTX64.EFI` (systemd-boot).
+///   5. EV_EFI_BOOT_SERVICES_APPLICATION — Authenticode hash of the
+///      UKI .efi (loaded by systemd-boot via LoadImage).
+///   6. EV_EFI_ACTION "Exit Boot Services Invocation" — TDVF
+///      announces it's exiting boot services.
+///   7. EV_EFI_ACTION "Exit Boot Services Returned with Success".
+///
+/// The `sections` parameter is unused for RTMR[1] today — the kernel
+/// inside the UKI is NOT measured as a separate PE on TDX, because
+/// systemd-stub hands the kernel off via the EFI handover protocol
+/// rather than calling LoadImage on it. We keep the parameter on the
+/// signature for symmetry with `compute_rtmr2_uki` (which DOES consume
+/// sections) and in case a future boot path measures the kernel
+/// separately.
 pub fn compute_rtmr1_uki(
     uki_data: &[u8],
-    sections: &[(String, Vec<u8>)],
+    _sections: &[(String, Vec<u8>)],
     disk_image: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    let uki_auth_hash =
-        crate::pe::authenticode_sha384(uki_data).context("Failed to compute UKI Authenticode hash")?;
-
-    // The kernel inside the UKI is also measured by OVMF when the stub
-    // loads it via LoadImage. Compute its Authenticode hash from .linux section.
-    let kernel_data = sections
-        .iter()
-        .find(|(name, _)| name == ".linux")
-        .map(|(_, data)| data.as_slice());
-
-    let kernel_auth_hash = if let Some(kdata) = kernel_data {
-        // The .linux section is a raw bzImage, not a PE. OVMF measures the
-        // kernel via LoadImage which computes the Authenticode hash of the
-        // PE/COFF image. Linux bzImage has a PE header at the start.
-        Some(crate::pe::authenticode_sha384(kdata).context("Failed to compute kernel Authenticode hash")?)
-    } else {
-        None
-    };
-
-    let gpt_hash = if let Some(disk) = disk_image {
-        Some(compute_gpt_event_hash(disk)?)
-    } else {
-        None
-    };
-
     let mut rtmr1_log = vec![
         sha384(b"Calling EFI Application from Boot Option"),
-        sha384(&[0x00, 0x00, 0x00, 0x00]), // Separator
+        sha384(&[0x00, 0x00, 0x00, 0x00]), // EV_SEPARATOR
     ];
 
-    if let Some(gh) = gpt_hash {
-        rtmr1_log.push(gh);
+    // Steps 3-5 only fire when there's a disk image; without one, TDVF
+    // wouldn't be loading anything off a disk in the first place and
+    // the boot path would look totally different. The function's two
+    // call sites in the steep pipeline always pass `Some`.
+    if let Some(disk) = disk_image {
+        // EV_EFI_GPT_EVENT
+        rtmr1_log.push(compute_gpt_event_hash(disk)?);
+
+        // EV_EFI_BOOT_SERVICES_APPLICATION — systemd-boot.
+        // The bootloader is BYTE-IDENTICAL at /EFI/BOOT/BOOTX64.EFI and
+        // /EFI/systemd/systemd-bootx64.efi (mkosi places the same binary
+        // at both paths). TDVF chases the removable-media fallback first
+        // because the variable store is fresh and no Boot#### entry
+        // points to the systemd subdir.
+        let bootloader = crate::esp::read_esp_file(disk, crate::esp::FALLBACK_BOOTLOADER_PATH)
+            .with_context(|| {
+                format!(
+                    "extracting bootloader {} from disk image for RTMR[1] computation",
+                    crate::esp::FALLBACK_BOOTLOADER_PATH
+                )
+            })?;
+        let bootloader_auth_hash = crate::pe::authenticode_sha384(&bootloader)
+            .context("Authenticode hash of systemd-boot PE")?;
+        rtmr1_log.push(bootloader_auth_hash);
     }
 
+    // EV_EFI_BOOT_SERVICES_APPLICATION — the UKI itself.
+    let uki_auth_hash =
+        crate::pe::authenticode_sha384(uki_data).context("Authenticode hash of UKI PE")?;
     rtmr1_log.push(uki_auth_hash);
-
-    if let Some(kh) = kernel_auth_hash {
-        rtmr1_log.push(kh);
-    }
 
     rtmr1_log.push(sha384(b"Exit Boot Services Invocation"));
     rtmr1_log.push(sha384(b"Exit Boot Services Returned with Success"));
