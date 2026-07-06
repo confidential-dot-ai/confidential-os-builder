@@ -10,7 +10,9 @@ sudo apt-get update
 # DSDT (mkosi/base/acpi-tables/dsdt.asl) that gets injected into the
 # initrd so the kernel's CONFIG_ACPI_TABLE_UPGRADE replaces the
 # VMM-supplied DSDT at boot.
-sudo apt install -y build-essential systemd-repart systemd-container qemu-utils genisoimage swtpm cpio acpica-tools
+# ovmf provides the TDVF-capable firmware `steep build` hashes for TDX
+# measurements. Keep host deps in lockstep with .github/workflows/base.yml.
+sudo apt install -y build-essential systemd-repart systemd-container qemu-utils genisoimage swtpm cpio acpica-tools ovmf
 
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
