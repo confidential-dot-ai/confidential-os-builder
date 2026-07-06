@@ -25,10 +25,10 @@ jobs:
       - name: Setup mkosi
         uses: systemd/mkosi@v26
 
-      - name: Install systemd-container
+      - name: Install systemd-container + ovmf (TDVF firmware for TDX measurement)
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y systemd-container
+          sudo apt-get install -y systemd-container ovmf
 
       - name: Cache kernel tools
         uses: actions/cache@v5
