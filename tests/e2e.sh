@@ -1,10 +1,10 @@
 #!/bin/bash
-# E2E test for steep seal pipeline.
+# E2E test for the steep build pipeline.
 #
 # Tests:
-#   1. Seal with boot-time cloud-init (--skip-igvm)
+#   1. Build with boot-time cloud-init (--skip-igvm)
 #   2. Artifact existence and manifest validation
-#   3. Seal with IGVM (if STEEP_FIRMWARE + STEEP_IGVM_TOOLS set)
+#   3. Build with IGVM (if STEEP_FIRMWARE + STEEP_IGVM_TOOLS set)
 #   4. Boot VM and verify cloud-init applied (if QEMU + firmware available)
 #
 # Usage: sudo ./tests/e2e.sh
@@ -92,12 +92,12 @@ runcmd:
     " &
 USERDATA
 
-# ── Test 1: Seal (--skip-igvm) ───────────────────────────────────────────────
+# ── Test 1: Build (--skip-igvm) ──────────────────────────────────────────────
 OUT="$REPO_DIR/output/e2e-test"
 rm -rf "$OUT"
 
-echo -e "\n${BOLD}Test 1: Seal (boot-time cloud-init, --skip-igvm)${NC}"
-$STEEP seal --skip-igvm --cloud-init "$CI_FILE" -o "$OUT" 2>&1 | tail -20
+echo -e "\n${BOLD}Test 1: Build (boot-time cloud-init, --skip-igvm)${NC}"
+$STEEP build --skip-igvm --cloud-init "$CI_FILE" "$(basename "$OUT")" 2>&1 | tail -20
 
 # ── Test 2: Artifact checks ──────────────────────────────────────────────────
 echo -e "\n${BOLD}Test 2: Artifact checks${NC}"
@@ -134,16 +134,16 @@ echo "$RH" | grep -qE '^[0-9a-f]{64}$' \
     && pass "cloud-init seed cleaned up" \
     || fail "cloud-init seed leaked"
 
-# ── Test 3: Seal with IGVM ───────────────────────────────────────────────────
-echo -e "\n${BOLD}Test 3: IGVM seal${NC}"
+# ── Test 3: Build with IGVM ──────────────────────────────────────────────────
+echo -e "\n${BOLD}Test 3: IGVM build${NC}"
 
 if [ -n "${STEEP_IGVM_TOOLS:-}" ] && [ -n "${STEEP_FIRMWARE:-}" ]; then
-    IGVM_SEAL_ARGS=(--cloud-init "$CI_FILE" --firmware "$STEEP_FIRMWARE" --igvm-tools "$STEEP_IGVM_TOOLS")
+    IGVM_BUILD_ARGS=(--cloud-init "$CI_FILE" --firmware "$STEEP_FIRMWARE")
 
     IGVM_OUT="$REPO_DIR/output/e2e-igvm"
     rm -rf "$IGVM_OUT"
 
-    $STEEP seal "${IGVM_SEAL_ARGS[@]}" -o "$IGVM_OUT" 2>&1 | tail -20
+    $STEEP build "${IGVM_BUILD_ARGS[@]}" "$(basename "$IGVM_OUT")" 2>&1 | tail -20
 
     [ -f "$IGVM_OUT/guest.igvm" ] && pass "IGVM: guest.igvm built" || fail "IGVM: guest.igvm missing"
     [ -f "$IGVM_OUT/manifest.json" ] && pass "IGVM: manifest.json built" || fail "IGVM: manifest.json missing"
@@ -163,7 +163,7 @@ sys.exit(0 if ok else 1)
     IGVM_OUT2="$REPO_DIR/output/e2e-igvm-2"
     rm -rf "$IGVM_OUT2"
 
-    $STEEP seal "${IGVM_SEAL_ARGS[@]}" -o "$IGVM_OUT2" 2>&1 | tail -5
+    $STEEP build "${IGVM_BUILD_ARGS[@]}" "$(basename "$IGVM_OUT2")" 2>&1 | tail -5
 
     HASH1=$(sha256sum "$IGVM_OUT/guest.igvm" | cut -d' ' -f1)
     HASH2=$(sha256sum "$IGVM_OUT2/guest.igvm" | cut -d' ' -f1)
@@ -188,7 +188,7 @@ elif ! command -v qemu-system-x86_64 &>/dev/null; then
 elif [ ! -e /dev/kvm ]; then
     skip "boot: /dev/kvm not available"
 elif [ ! -f "$OUT/uki.efi" ]; then
-    skip "boot: seal output not available"
+    skip "boot: build output not available"
 else
     SERIAL_LOG=$(mktemp)
 
