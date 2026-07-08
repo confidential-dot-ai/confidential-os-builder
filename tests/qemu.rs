@@ -390,7 +390,7 @@ fn test_qemu_args_disk_is_readonly() {
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
     assert!(
-        joined.contains("file=/output/disk.raw,format=raw,if=virtio,readonly=on"),
+        joined.contains("file=/output/disk.raw,format=raw,if=none,id=root0,readonly=on"),
         "disk drive should be marked readonly so the same image can back multiple VMs concurrently"
     );
 }

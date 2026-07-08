@@ -227,12 +227,20 @@ impl QemuArgs {
         if !allowed_formats.contains(&self.disk_format.as_str()) {
             anyhow::bail!("unsupported disk format: {:?}", self.disk_format);
         }
+        // Both disks are explicit -device (never board-created if=virtio):
+        // explicit devices get PCI slots in command-line order, while
+        // board-created if=virtio devices are realized after all -device
+        // args. Mixing the two gave the scratch disk a lower PCI slot than
+        // the root disk, so the guest enumerated scratch as vda and the
+        // initrd's wait for /dev/vda2 timed out. Root must stay first.
         args.push("-drive".to_string());
         args.push(format!(
-            "file={},format={},if=virtio,readonly=on",
+            "file={},format={},if=none,id=root0,readonly=on",
             self.disk.display(),
             self.disk_format
         ));
+        args.push("-device".to_string());
+        args.push("virtio-blk-pci,drive=root0".to_string());
         if let Some(ref scratch) = self.scratch {
             reject_comma_in_path("scratch", scratch)?;
             args.push("-drive".to_string());

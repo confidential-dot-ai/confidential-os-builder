@@ -75,6 +75,27 @@ fn test_qemu_args_scratch_adds_writable_drive() {
         joined.contains("-device virtio-blk-pci,drive=scratch0,serial=confai-scratch"),
         "scratch virtio-blk device missing serial=confai-scratch: {joined}"
     );
+    // Both disks must be explicit -device (not board-created if=virtio), and
+    // root must come first: explicit devices get PCI slots in command-line
+    // order, while board-created if=virtio devices are realized AFTER all
+    // -device args — mixing the two put scratch at a lower slot than root,
+    // so the guest saw scratch as vda and the initrd's /dev/vda2 mount hung.
+    assert!(
+        joined.contains("-drive file=/output/disk.raw,format=raw,if=none,id=root0,readonly=on"),
+        "root drive must be explicit if=none: {joined}"
+    );
+    let root_dev = cmd
+        .iter()
+        .position(|s| s.starts_with("virtio-blk-pci,drive=root0"))
+        .expect("root virtio-blk device must be present");
+    let scratch_dev = cmd
+        .iter()
+        .position(|s| s.starts_with("virtio-blk-pci,drive=scratch0"))
+        .expect("scratch virtio-blk device must be present");
+    assert!(
+        root_dev < scratch_dev,
+        "root device must precede scratch device so root enumerates as vda: {joined}"
+    );
     let scratch_drive = cmd
         .iter()
         .find(|s| s.contains("scratch.raw"))
