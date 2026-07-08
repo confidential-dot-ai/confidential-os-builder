@@ -65,9 +65,15 @@ fn test_qemu_args_scratch_adds_writable_drive() {
     };
     let cmd = args.to_args().unwrap();
     let joined = cmd.join(" ");
+    // QEMU >= 3.0 removed the `serial=` sugar on -drive, so the serial must be
+    // set on the virtio-blk device instead.
     assert!(
-        joined.contains("file=/output/scratch.raw,format=raw,if=virtio,serial=confai-scratch"),
-        "scratch drive missing or missing serial=confai-scratch: {joined}"
+        joined.contains("-drive file=/output/scratch.raw,format=raw,if=none,id=scratch0"),
+        "scratch drive missing or malformed: {joined}"
+    );
+    assert!(
+        joined.contains("-device virtio-blk-pci,drive=scratch0,serial=confai-scratch"),
+        "scratch virtio-blk device missing serial=confai-scratch: {joined}"
     );
     let scratch_drive = cmd
         .iter()
@@ -76,6 +82,10 @@ fn test_qemu_args_scratch_adds_writable_drive() {
     assert!(
         !scratch_drive.contains("readonly=on"),
         "scratch drive must be writable: {scratch_drive}"
+    );
+    assert!(
+        !scratch_drive.contains("serial="),
+        "serial= on -drive was removed in QEMU 3.0; it must go on the -device: {scratch_drive}"
     );
 }
 
