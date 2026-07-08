@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# mkosi sync hook for the attest-gpu profile. Same mechanism as the `attest`
+# profile's sync (see its header for the full explanation of the oras +
+# layer-extract approach and the mkosi.local staging convention) — the only
+# difference is the image and that we pluck TWO artifacts out of it: the
+# GPU-capable attestation-api binary AND NVIDIA's libnvat.so collector.
+#
+# >>> STAGE 4: IMAGE is a SENTINEL. Publish the attestation-rs `-gpu` image
+# >>> (Dockerfile.gpu, built with `--features nvidia-gpu-attest`, bundling
+# >>> libnvat.so) and replace the digest below. Until then this profile fails
+# >>> fast on purpose.
+
+set -euo pipefail
+
+# Pinned digest of the GPU-capable attestation-api image. Bumping it changes
+# the launch measurement of any --profile attest-gpu build — intended.
+IMAGE="ghcr.io/confidential-dot-ai/attestation-api-gpu@sha256:FILL_AT_STAGE_4_attestation_api_gpu_digest"
+
+case "$IMAGE" in
+  *FILL_AT_STAGE_4*)
+    echo "attest-gpu: image digest is still a Stage-4 sentinel — publish the" >&2
+    echo "  attestation-rs -gpu image and pin its digest before building this" >&2
+    echo "  profile. The 'gpu' profile builds and runs without attest-gpu." >&2
+    exit 1 ;;
+esac
+
+STAGE_DIR="$SRCDIR/mkosi.local/mkosi.extra"
+mkdir -p "${TMPDIR:=/tmp}"
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+EXTRACT="$TMP/rootfs"; mkdir -p "$EXTRACT"
+
+MANIFEST=$(oras manifest fetch "$IMAGE")
+REPO="${IMAGE%@*}"
+echo "$MANIFEST" | jq -r '.layers[] | select(.mediaType | test("tar.?gzip$")) | .digest' | \
+while read -r layer; do
+    oras blob fetch --output "$TMP/layer.tgz" "${REPO}@${layer}"
+    tar -xzf "$TMP/layer.tgz" -C "$EXTRACT" 2>/dev/null || true
+    rm -f "$TMP/layer.tgz"
+done
+
+# attestation-api binary (entrypoint at image root in the confidential-dot-ai
+# lineage; fall back to usr/local/bin for older layouts).
+BIN=""
+for c in "$EXTRACT/attestation-api" "$EXTRACT/usr/local/bin/attestation-api"; do
+    [ -f "$c" ] && { BIN="$c"; break; }
+done
+[ -n "$BIN" ] || { echo "attest-gpu: attestation-api not found in image" >&2; exit 1; }
+install -D -m0755 "$BIN" "$STAGE_DIR/usr/local/bin/attestation-api"
+
+# libnvat.so — NVIDIA's evidence collector the -gpu build links.
+NVAT="$(find "$EXTRACT" -name 'libnvat.so*' -print -quit)"
+[ -n "$NVAT" ] || { echo "attest-gpu: libnvat.so not found in image" >&2; exit 1; }
+install -D -m0755 "$NVAT" "$STAGE_DIR/usr/lib/x86_64-linux-gnu/$(basename "$NVAT")"
+
+echo "attest-gpu: staged attestation-api + $(basename "$NVAT") from $IMAGE"

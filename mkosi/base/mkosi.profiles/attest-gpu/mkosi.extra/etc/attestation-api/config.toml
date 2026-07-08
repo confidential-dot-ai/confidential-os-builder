@@ -1,0 +1,33 @@
+# attestation-api config baked by `steep build --profile attest-gpu`.
+# Identical in shape to the `attest` profile's config — there is NO GPU flag
+# here. GPU evidence is requested per-call: POST /attest with
+# {"nvidia_gpu": true, "report_data": "<>=16-byte base64 nonce>"}. The one
+# caller nonce binds the TDX quote AND every GPU. Override at runtime by
+# writing /etc/attestation-api/config.toml (persists on the overlay, does not
+# change the measurement).
+
+[server]
+bind = "0.0.0.0:8400"
+
+[server.tls]
+enabled = false
+
+[auth]
+api_keys = []
+
+[certs]
+cache_max_entries = 1024
+tdx_collateral_ttl_hours = 24
+# NRAS JWKS for GPU EAT verification (only needed if this node also verifies;
+# serving evidence does not require NRAS egress).
+prefetch_nras_jwks = true
+
+[token]
+enabled = false
+
+[attestation]
+enabled = true
+# This TDX host runs QGS on vsock, so the quote path is vsock-first.
+tdx_quote_method = "vsock"
+# GPU is NOT a platform here — it is a per-request add-on (see header).
+platforms = ["tdx"]

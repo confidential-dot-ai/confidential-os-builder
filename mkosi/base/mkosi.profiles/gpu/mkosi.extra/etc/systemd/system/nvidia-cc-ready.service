@@ -1,0 +1,14 @@
+[Unit]
+Description=Bring NVIDIA GPUs to confidential-compute Ready state
+# Needs the driver resident first. The helper is idempotent and no-ops on a
+# GPU-less or non-CC boot, so we can enable it unconditionally in the image.
+After=nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/nvidia-cc-ready
+
+[Install]
+WantedBy=multi-user.target

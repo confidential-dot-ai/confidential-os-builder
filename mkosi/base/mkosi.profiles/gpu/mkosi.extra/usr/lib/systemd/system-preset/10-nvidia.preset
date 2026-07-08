@@ -1,0 +1,6 @@
+# Enable the GPU bring-up units at image build time (mkosi applies presets;
+# same mechanism as 10-cloud-init.preset). All three are safe on a GPU-less or
+# non-CC boot, so unconditional enablement is correct.
+enable nvidia-persistenced.service
+enable nvidia-cc-ready.service
+enable nvidia-modules-latch.service
