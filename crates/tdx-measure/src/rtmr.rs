@@ -70,6 +70,41 @@ pub fn compute_rtmr2_direct_kernel(cmdline: &str) -> Vec<u8> {
     measure_log(&[sha384(&load_options)])
 }
 
+/// Normalize an image reference or digest to the canonical `sha256:<hex>` form
+/// that the RTMR[3] workload measurement hashes.
+///
+/// Accepts `sha256:<hex>` or `<repo>[:tag]@sha256:<hex>`, and **rejects a bare
+/// tag** (no `@sha256:` digest) — a tag is not content-bound, so the caller
+/// fails closed on an unpinned image. The guest-side hook applies the same rule.
+pub fn canonical_image_digest(reference: &str) -> Result<String> {
+    // The content id is the part after '@'; a tag-only ref has no '@'.
+    let digest = reference.split_once('@').map(|(_, d)| d).unwrap_or(reference);
+    let hex = digest.strip_prefix("sha256:").context(
+        "image must be pinned by digest (…@sha256:<hex>); a tag is not content-bound",
+    )?;
+    if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        anyhow::bail!("sha256 image digest must be 64 hex chars, got {hex:?}");
+    }
+    Ok(format!("sha256:{}", hex.to_ascii_lowercase()))
+}
+
+/// Compute the expected RTMR[3] for a pod's workload container image digests,
+/// in container creation order.
+///
+/// Each workload container extends one event, `SHA384("sha256:" + hex)`, and
+/// `RTMR[3] = extend(0, ev1, ev2, …)`. The guest-side createContainer hook
+/// (baked into the dm-verity rootfs) extends RTMR[3] with the identical
+/// encoding before the workload process starts, so a relying party recomputes
+/// this and checks it against an allowlist. Inputs must already be canonical
+/// (see [`canonical_image_digest`]).
+pub fn compute_rtmr3_workloads(canonical_digests: &[String]) -> Vec<u8> {
+    let log: Vec<Vec<u8>> = canonical_digests
+        .iter()
+        .map(|d| sha384(d.as_bytes()))
+        .collect();
+    measure_log(&log)
+}
+
 /// Compute RTMR[1] for UKI boot on TDX.
 ///
 /// **The real boot chain is `TDVF → systemd-boot → UKI`.** TDVF loads
@@ -437,6 +472,42 @@ mod tests {
             hex::encode(&rtmr2),
             "b595f9f179d8b699d1420000d36c1fba82e9853545e719caa6ddbb82fa2041a23b4459876af4a253a1c20c5956529b9a"
         );
+    }
+
+    #[test]
+    fn test_rtmr3_workloads_golden() {
+        // Pins the RTMR[3] workload-measurement convention shared with the
+        // guest hook: event = SHA384("sha256:"+hex); RTMR3 = extend(0, event…).
+        let d = canonical_image_digest(
+            "docker.io/library/busybox@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028",
+        )
+        .unwrap();
+        assert_eq!(
+            d,
+            "sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
+        );
+        assert_eq!(
+            hex::encode(compute_rtmr3_workloads(&[d])),
+            "1ad70a34f3ac77a222e512c44691d55cc10f9929ac602be81f8aa42f15013fac4da2231f67176b05ff670f1f8f7a7e21"
+        );
+    }
+
+    #[test]
+    fn test_rtmr3_two_containers() {
+        let a = "sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028".to_string();
+        let b = "sha256:1e9991826cc99d614bf697d71a59d80ed5eb2969babba07d9707e6a0296026b4".to_string();
+        assert_eq!(
+            hex::encode(compute_rtmr3_workloads(&[a, b])),
+            "16c3b1c47922b6e03c25ceac00216c40962ffc4da71d170e5ea1b76acaff10b1d3dceeaf3e449be1b01d302caee046c1"
+        );
+    }
+
+    #[test]
+    fn test_canonical_image_digest_rejects_unpinned() {
+        assert!(canonical_image_digest("busybox:1.37").is_err()); // tag
+        assert!(canonical_image_digest("busybox").is_err()); // bare
+        assert!(canonical_image_digest("repo@sha256:deadbeef").is_err()); // short hex
+        assert!(canonical_image_digest("repo@md5:abcd").is_err()); // wrong algo
     }
 
     #[test]

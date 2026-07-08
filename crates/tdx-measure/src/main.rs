@@ -127,6 +127,21 @@ enum Commands {
         #[arg(long, default_value = ".")]
         output: PathBuf,
     },
+
+    /// Compute the expected RTMR[3] from workload container image digests.
+    /// The guest-side createContainer hook extends RTMR[3] with the identical
+    /// encoding, so a relying party recomputes this and checks an allowlist.
+    Rtmr3 {
+        /// Workload image digest(s) in container creation order. Accepts
+        /// `sha256:<hex>` or `<repo>@sha256:<hex>`; a bare tag is rejected.
+        /// Repeat `--digest` once per workload container.
+        #[arg(long = "digest", required = true)]
+        digests: Vec<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -171,7 +186,43 @@ fn main() -> Result<()> {
         } => cmd_verify(&ccel, &tdreport, uki.as_deref()),
         Commands::Inspect { ccel, tdreport } => cmd_inspect(&ccel, tdreport.as_deref()),
         Commands::ExtractPlatform { ccel, output } => cmd_extract_platform(&ccel, &output),
+        Commands::Rtmr3 { digests, json } => cmd_rtmr3(&digests, json),
     }
+}
+
+/// Compute the expected RTMR[3] from a pod's workload image digests (verify
+/// side). Mirrors the guest createContainer hook's extend encoding.
+fn cmd_rtmr3(digests: &[String], json: bool) -> Result<()> {
+    let canonical: Vec<String> = digests
+        .iter()
+        .map(|d| rtmr::canonical_image_digest(d))
+        .collect::<Result<_>>()?;
+    let rtmr3 = rtmr::compute_rtmr3_workloads(&canonical);
+
+    if json {
+        let mut result = serde_json::Map::new();
+        result.insert("rtmr3".into(), serde_json::Value::String(hex::encode(&rtmr3)));
+        result.insert(
+            "images".into(),
+            serde_json::Value::Array(
+                canonical
+                    .iter()
+                    .map(|d| serde_json::Value::String(d.clone()))
+                    .collect(),
+            ),
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::Value::Object(result))?
+        );
+    } else {
+        println!("Workload images (RTMR[3] extend order):");
+        for d in &canonical {
+            println!("  {d}");
+        }
+        println!("\nRTMR[3]: {}", hex::encode(&rtmr3));
+    }
+    Ok(())
 }
 
 /// Measure a TDVF **direct kernel boot** (`-kernel`/`-append`), e.g. the guest
