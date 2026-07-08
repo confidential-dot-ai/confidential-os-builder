@@ -29,6 +29,47 @@ fn measure_log(log: &[Vec<u8>]) -> Vec<u8> {
     mr
 }
 
+/// Compute RTMR[1] for a **TDVF direct kernel boot** (`-kernel`/`-append`).
+///
+/// TDVF direct-loads a single kernel PE — there is no systemd-boot stage and
+/// no GPT event, unlike the UKI path modelled by [`compute_rtmr1_uki`]. This is
+/// firmware behavior, independent of the orchestrator (kata, libvirt, raw QEMU
+/// all measure identically). The 5-event chain below was traced from a live
+/// CCEL and validated byte-for-byte against a `kata-guest-base` TDX quote
+/// (2026-07-08):
+///   1. `EV_EFI_BOOT_SERVICES_APPLICATION` = Authenticode(kernel PE)
+///   2. `EV_EFI_ACTION` "Calling EFI Application from Boot Option"
+///   3. `EV_SEPARATOR` (0x00000000)
+///   4. `EV_EFI_ACTION` "Exit Boot Services Invocation"
+///   5. `EV_EFI_ACTION` "Exit Boot Services Returned with Success"
+pub fn compute_rtmr1_direct_kernel(kernel: &[u8]) -> Result<Vec<u8>> {
+    let log = vec![
+        crate::pe::authenticode_sha384(kernel)
+            .context("Authenticode hash of direct-boot kernel PE")?,
+        sha384(b"Calling EFI Application from Boot Option"),
+        sha384(&[0x00, 0x00, 0x00, 0x00]), // EV_SEPARATOR
+        sha384(b"Exit Boot Services Invocation"),
+        sha384(b"Exit Boot Services Returned with Success"),
+    ];
+    Ok(measure_log(&log))
+}
+
+/// Compute RTMR[2] for a **TDVF direct kernel boot**.
+///
+/// TDVF measures the kernel command line as a single `EV_EVENT_TAG`
+/// (`LOADED_IMAGE::LoadOptions`). The extended digest is the SHA-384 of the
+/// cmdline encoded as **UTF-16LE with a trailing NUL** (the UEFI LoadOptions
+/// representation) — NOT the UKI section measurements of [`compute_rtmr2_uki`].
+/// Validated byte-for-byte against a `kata-guest-base` TDX quote.
+pub fn compute_rtmr2_direct_kernel(cmdline: &str) -> Vec<u8> {
+    let mut load_options: Vec<u8> = cmdline
+        .encode_utf16()
+        .flat_map(|u| u.to_le_bytes())
+        .collect();
+    load_options.extend_from_slice(&[0x00, 0x00]); // UTF-16LE NUL terminator
+    measure_log(&[sha384(&load_options)])
+}
+
 /// Compute RTMR[1] for UKI boot on TDX.
 ///
 /// **The real boot chain is `TDVF → systemd-boot → UKI`.** TDVF loads
@@ -382,6 +423,19 @@ mod tests {
         assert_eq!(
             hex::encode(&h),
             "59e1748777448c69de6b800d7a33bbfb9ff1b463e44354c3553bcdb9c666fa90125a3c79f90397bdf5f6a13de828684f"
+        );
+    }
+
+    #[test]
+    fn test_rtmr2_direct_kernel_golden() {
+        // Byte-exact cmdline and resulting RTMR[2] from a live kata-guest-base
+        // TDX quote (tdx-dev-host-1, 2026-07-08). Guards the direct-kernel
+        // LoadOptions encoding (UTF-16LE + NUL) against regressions.
+        let cmdline = r#"tsc=reliable no_timer_check rcupdate.rcu_expedited=1 i8042.direct=1 i8042.dumbkbd=1 i8042.nopnp=1 i8042.noaux=1 noreplace-smp reboot=k cryptomgr.notests net.ifnames=0 pci=lastbus=0 dm-mod.create="dm-verity,,,ro,0 772096 verity 1 /dev/vda1 /dev/vda2 4096 4096 96512 0 sha256 768cd7e848f6cb7eb4f59467b26ee5c5e45ece570cb96a5c952d97dbc89bb150 63f8dacc786bd19f307be8668c7792a8fe07818df4aae55b63e76c4931d35c76" root=/dev/dm-0 rootflags=data=ordered,errors=remount-ro ro rootfstype=ext4 console=hvc0 console=hvc1 quiet systemd.show_status=false panic=1 nr_cpus=1 selinux=0 systemd.unit=kata-containers.target systemd.mask=systemd-networkd.service systemd.mask=systemd-networkd.socket scsi_mod.scan=none agent.launch_process_timeout=6 cgroup_no_v1=all systemd.unified_cgroup_hierarchy=1"#;
+        let rtmr2 = compute_rtmr2_direct_kernel(cmdline);
+        assert_eq!(
+            hex::encode(&rtmr2),
+            "b595f9f179d8b699d1420000d36c1fba82e9853545e719caa6ddbb82fa2041a23b4459876af4a253a1c20c5956529b9a"
         );
     }
 

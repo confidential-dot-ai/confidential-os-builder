@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::str;
 
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use tdx_measure::{ccel, pe, rtmr, tdvf};
 
@@ -15,13 +15,37 @@ struct Cli {
     command: Commands,
 }
 
+/// Which boot model to measure. Both are OVMF/TDVF firmware; they differ in
+/// how the kernel is loaded and therefore in the RTMR[1]/RTMR[2] event chain.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum BootMode {
+    /// steep UKI boot: TDVF -> systemd-boot -> Unified Kernel Image.
+    Uki,
+    /// TDVF direct kernel boot (`-kernel`/`-append`), e.g. kata-qemu-tdx.
+    /// Not kata-specific — any direct-booted guest under TDVF measures this way.
+    DirectKernel,
+}
+
 #[derive(Subcommand)]
 enum Commands {
-    /// Compute expected TDX measurements from a UKI file
+    /// Compute expected TDX measurements for a UKI or direct-kernel boot
     Measure {
-        /// Path to the UKI EFI binary
+        /// Boot model to measure (default: uki)
+        #[arg(long, value_enum, default_value_t = BootMode::Uki)]
+        boot_mode: BootMode,
+
+        /// Path to the UKI EFI binary (required for --boot-mode uki)
         #[arg(long)]
-        uki: PathBuf,
+        uki: Option<PathBuf>,
+
+        /// Path to the kernel PE / bzImage (required for --boot-mode direct-kernel)
+        #[arg(long)]
+        kernel: Option<PathBuf>,
+
+        /// File containing the exact kernel command line, i.e. qemu's `-append`
+        /// value (required for --boot-mode direct-kernel)
+        #[arg(long)]
+        cmdline_file: Option<PathBuf>,
 
         /// Path to the OVMF/TDVF firmware binary
         #[arg(long)]
@@ -110,7 +134,10 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Measure {
+            boot_mode,
             uki,
+            kernel,
+            cmdline_file,
             firmware,
             disk,
             memory,
@@ -122,7 +149,10 @@ fn main() -> Result<()> {
             boot_vars,
             json,
         } => cmd_measure(
-            &uki,
+            boot_mode,
+            uki.as_deref(),
+            kernel.as_deref(),
+            cmdline_file.as_deref(),
             firmware.as_deref(),
             disk.as_deref(),
             &memory,
@@ -144,8 +174,92 @@ fn main() -> Result<()> {
     }
 }
 
+/// Measure a TDVF **direct kernel boot** (`-kernel`/`-append`), e.g. the guest
+/// launched by `kata-qemu-tdx`. Only MRTD, RTMR[1] and RTMR[2] are verifiable;
+/// RTMR[0] encodes ACPI/memory/vCPU config and is intentionally not checked,
+/// and RTMR[3] is left for a runtime workload measurement.
+fn cmd_measure_direct_kernel(
+    kernel_path: Option<&Path>,
+    cmdline_file: Option<&Path>,
+    firmware_path: Option<&Path>,
+    json: bool,
+) -> Result<()> {
+    let kernel_path =
+        kernel_path.context("--kernel is required for --boot-mode direct-kernel")?;
+    let cmdline_path =
+        cmdline_file.context("--cmdline-file is required for --boot-mode direct-kernel")?;
+
+    let kernel = fs::read(kernel_path)
+        .with_context(|| format!("Failed to read kernel: {}", kernel_path.display()))?;
+    let cmdline_raw = fs::read_to_string(cmdline_path)
+        .with_context(|| format!("Failed to read cmdline: {}", cmdline_path.display()))?;
+    // qemu's `-append` is a single line; drop a trailing newline the file may
+    // carry (the measured LoadOptions do not include it).
+    let cmdline = cmdline_raw.strip_suffix('\n').unwrap_or(&cmdline_raw);
+
+    let rtmr1 = rtmr::compute_rtmr1_direct_kernel(&kernel)?;
+    let rtmr2 = rtmr::compute_rtmr2_direct_kernel(cmdline);
+
+    let mrtd = match firmware_path {
+        Some(fw) => {
+            let fw_data = fs::read(fw)
+                .with_context(|| format!("Failed to read firmware: {}", fw.display()))?;
+            let t = tdvf::Tdvf::parse(&fw_data).context("Failed to parse TDVF metadata")?;
+            Some(t.mrtd().context("Failed to compute MRTD")?)
+        }
+        None => None,
+    };
+
+    if json {
+        let mut result = serde_json::Map::new();
+        result.insert(
+            "boot_mode".into(),
+            serde_json::Value::String("direct-kernel".into()),
+        );
+        if let Some(ref m) = mrtd {
+            result.insert("mrtd".into(), serde_json::Value::String(hex::encode(m)));
+        }
+        result.insert("rtmr1".into(), serde_json::Value::String(hex::encode(&rtmr1)));
+        result.insert("rtmr2".into(), serde_json::Value::String(hex::encode(&rtmr2)));
+        result.insert(
+            "rtmr3".into(),
+            serde_json::Value::String(hex::encode([0u8; 48])),
+        );
+        result.insert(
+            "rtmr0_note".into(),
+            serde_json::Value::String(
+                "not computed: RTMR[0] encodes ACPI/memory/vCPU config and is not verified".into(),
+            ),
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::Value::Object(result))?
+        );
+    } else {
+        eprintln!("Boot model: direct-kernel (TDVF -kernel/-append)");
+        eprintln!("Kernel:  {} ({} bytes)", kernel_path.display(), kernel.len());
+        eprintln!("Cmdline: {} chars\n", cmdline.len());
+
+        println!("=== TDX Measurements (direct-kernel) ===\n");
+        match mrtd {
+            Some(ref m) => println!("MRTD:    {}", hex::encode(m)),
+            None => println!("MRTD:    (provide --firmware to compute)"),
+        }
+        println!("RTMR[0]: (not verified -- encodes ACPI/memory/vCPU config)");
+        println!("RTMR[1]: {}", hex::encode(&rtmr1));
+        println!("RTMR[2]: {}", hex::encode(&rtmr2));
+        println!("RTMR[3]: {}", hex::encode([0u8; 48]));
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn cmd_measure(
-    uki_path: &Path,
+    boot_mode: BootMode,
+    uki_path: Option<&Path>,
+    kernel_path: Option<&Path>,
+    cmdline_file: Option<&Path>,
     firmware_path: Option<&Path>,
     disk_path: Option<&Path>,
     memory: &str,
@@ -157,6 +271,11 @@ fn cmd_measure(
     boot_vars_dir: Option<&Path>,
     json: bool,
 ) -> Result<()> {
+    if boot_mode == BootMode::DirectKernel {
+        return cmd_measure_direct_kernel(kernel_path, cmdline_file, firmware_path, json);
+    }
+
+    let uki_path = uki_path.context("--uki is required for --boot-mode uki")?;
     let uki_data = fs::read(uki_path)
         .with_context(|| format!("Failed to read UKI: {}", uki_path.display()))?;
 
