@@ -1,0 +1,18 @@
+[Unit]
+Description=Latch kernel.modules_disabled after the GPU driver is loaded
+# Restores the monolithic no-further-modules posture once NVIDIA is in. Ordered
+# after every boot-time module load AND after CC bring-up, so nvidia +
+# nvidia_uvm are already resident. No Requires — this must latch even if GPU
+# bring-up was skipped (e.g. a CPU-only boot of the GPU image), where it simply
+# hardens a kernel that loaded nothing.
+After=nvidia-cc-ready.service systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# One-way latch: once 1, it cannot be set back to 0 without a reboot. That is
+# the point — no module may load for the rest of this boot.
+ExecStart=/sbin/sysctl -w kernel.modules_disabled=1
+
+[Install]
+WantedBy=multi-user.target

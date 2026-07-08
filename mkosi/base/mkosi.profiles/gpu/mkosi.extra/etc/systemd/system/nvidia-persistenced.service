@@ -1,0 +1,19 @@
+[Unit]
+Description=NVIDIA Persistence Daemon
+# Modules are loaded by systemd-modules-load.service (see
+# /etc/modules-load.d/nvidia.conf); the daemon keeps the driver resident and
+# holds UVM state so per-VM GPU init is fast and CC state survives client exit.
+After=systemd-modules-load.service
+Wants=syslog.target
+
+[Service]
+Type=forking
+# --uvm-persistence-mode was the load-bearing flag on b200-dev-1 (checkpoint
+# 006): it keeps nvidia_uvm resident. persistenced creates the /dev/nvidia*
+# nodes via the setuid nvidia-modprobe we stage. Tolerate a GPU-less boot —
+# the daemon simply finds no devices.
+ExecStart=/usr/bin/nvidia-persistenced --uvm-persistence-mode --verbose
+ExecStopPost=-/bin/rm -rf /var/run/nvidia-persistenced
+
+[Install]
+WantedBy=multi-user.target

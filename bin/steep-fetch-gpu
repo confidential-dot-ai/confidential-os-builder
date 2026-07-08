@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# steep-fetch-gpu — build + sign the NVIDIA kernel modules and stage the
+# GPU userspace into mkosi.local/ for the `gpu` profile.
+#
+# Runs on the HOST, AFTER `steep kernel --kernel-config-fragment kernel/gpu.config`
+# and BEFORE `steep build ... --profile gpu`. The `build-gpu` Make target
+# chains all three. See docs/GPU-IMAGE-PLAN.md ("Build sequencing").
+#
+# Why a separate host-side step and not a mkosi.sync hook (like `attest`):
+# the NVIDIA modules must be compiled against the *built* kernel tree with the
+# *same toolchain* steep used to build the kernel — that tree
+# (output/kernel/build/linux-<ver>, with Module.symvers + certs/signing_key.*)
+# and that toolchain (the kernel-builder mkosi tools tree) only exist here,
+# not inside the base-image mkosi sandbox. Downloads are cached under
+# output/gpu/cache so repeat builds don't re-pull the 400 MB driver.
+#
+# Everything this stages lands in mkosi/base/mkosi.local/mkosi.extra/, which
+# steep's build.rs deliberately does NOT wipe at build start, so it survives
+# into the mkosi run and gets copied into the dm-verity root (measured).
+
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$DIR"
+
+# --- Pinned inputs (version-locked to the working B200 CC guest: 595.71.05) ---
+# open-gpu-kernel-modules tag 595.71.05 == commit 095de56d. The "open" modules
+# are mandatory for Blackwell + confidential compute.
+readonly NV_VERSION="595.71.05"
+readonly OGKM_TARBALL="https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/${NV_VERSION}.tar.gz"
+readonly RUN_INSTALLER="https://us.download.nvidia.com/tesla/${NV_VERSION}/NVIDIA-Linux-x86_64-${NV_VERSION}.run"
+
+# sha256 pins. FILL THESE at Stage 2 (compute once, commit). The script REFUSES
+# to run against the sentinel so an unverified download can never slip through.
+readonly OGKM_SHA256="FILL_AT_STAGE_2_open_gpu_kernel_modules_595.71.05_tar_gz"
+readonly RUN_SHA256="FILL_AT_STAGE_2_NVIDIA_Linux_x86_64_595.71.05_run"
+
+# --- Paths ---
+readonly KERNEL_OUT="output/kernel"
+readonly TOOLS_TREE="mkosi/kernel-builder/mkosi.output/image"
+readonly STAGE="mkosi/base/mkosi.local/mkosi.extra"
+readonly CACHE="output/gpu/cache"
+readonly WORK="output/gpu/work"
+
+# Which modules the image loads. Deliberately just the compute core + UVM;
+# nvidia-modeset/nvidia-drm (need CONFIG_DRM, off in hardening) and
+# nvidia-peermem (GPUDirect RDMA, multi-node) are excluded.
+readonly WANT_MODULES=(nvidia.ko nvidia-uvm.ko)
+
+log() { printf '\n=== %s ===\n' "$*"; }
+die() { printf 'steep-fetch-gpu: %s\n' "$*" >&2; exit 1; }
+
+# --- Preconditions ------------------------------------------------------------
+[[ "$OGKM_SHA256" == FILL_* || "$RUN_SHA256" == FILL_* ]] && \
+  die "sha256 pins are still sentinels — compute and commit them before running (Stage 2)."
+
+KVER="$(sed -n 's/^LINUX_VERSION=//p' kernel/version)"
+[[ -n "$KVER" ]] || die "could not read LINUX_VERSION from kernel/version"
+readonly KTREE="${KERNEL_OUT}/build/linux-${KVER}"
+
+[[ -d "$KTREE" ]] || die "kernel tree $KTREE missing — run 'steep kernel --kernel-config-fragment kernel/gpu.config' first."
+grep -qx 'CONFIG_MODULES=y' "$KTREE/.config" || \
+  die "kernel at $KTREE was built WITHOUT CONFIG_MODULES=y — rebuild with --kernel-config-fragment kernel/gpu.config."
+[[ -f "$KTREE/Module.symvers" ]] || die "$KTREE/Module.symvers missing — kernel build incomplete."
+[[ -f "$KTREE/certs/signing_key.pem" && -f "$KTREE/certs/signing_key.x509" ]] || \
+  die "module signing key not found under $KTREE/certs — MODULE_SIG=y should have generated it."
+[[ -x "$KTREE/scripts/sign-file" ]] || die "$KTREE/scripts/sign-file missing — cannot sign modules."
+[[ -d "$TOOLS_TREE" ]] || die "kernel-builder tools tree $TOOLS_TREE missing — run 'steep kernel' first."
+command -v systemd-nspawn >/dev/null || die "systemd-nspawn required (apt install systemd-container)."
+command -v depmod >/dev/null || die "depmod required (apt install kmod)."
+
+mkdir -p "$CACHE" "$WORK"
+
+# --- Cached, checksum-verified fetch ------------------------------------------
+fetch() { # url sha256 dest
+  local url="$1" want="$2" dest="$3"
+  if [[ -f "$dest" ]] && echo "${want}  ${dest}" | sha256sum -c - >/dev/null 2>&1; then
+    echo "cache hit: $dest"; return
+  fi
+  echo "fetching $url"
+  curl -fL --retry 3 -o "$dest" "$url"
+  echo "${want}  ${dest}" | sha256sum -c - || die "sha256 mismatch for $dest"
+}
+
+log "Fetching pinned NVIDIA sources ($NV_VERSION)"
+fetch "$OGKM_TARBALL" "$OGKM_SHA256" "$CACHE/ogkm-${NV_VERSION}.tar.gz"
+fetch "$RUN_INSTALLER" "$RUN_SHA256" "$CACHE/NVIDIA-${NV_VERSION}.run"
+
+# =============================================================================
+# Part 1: build + sign the kernel modules
+# =============================================================================
+log "Building NVIDIA kernel modules against linux-$KVER (kernel-builder toolchain)"
+rm -rf "$WORK/ogkm"
+mkdir -p "$WORK/ogkm"
+tar -xzf "$CACHE/ogkm-${NV_VERSION}.tar.gz" -C "$WORK/ogkm" --strip-components=1
+
+# Build inside the SAME nspawn tools tree steep compiled the kernel in, so the
+# module objects are ABI-compatible (gcc/binutils versions match). Pin the
+# reproducibility env exactly as src/kernel/compile.rs does.
+KTREE_ABS="$(cd "$KTREE" && pwd)"
+OGKM_ABS="$(cd "$WORK/ogkm" && pwd)"
+NPROC="$(nproc)"
+sudo systemd-nspawn --quiet --register=no --keep-unit --ephemeral \
+  --directory "$TOOLS_TREE" \
+  --bind "${KTREE_ABS}:/ksrc" \
+  --bind "${OGKM_ABS}:/nv" \
+  --setenv SOURCE_DATE_EPOCH=0 \
+  --setenv KBUILD_BUILD_TIMESTAMP=@0 \
+  --setenv KBUILD_BUILD_USER=steep \
+  --setenv KBUILD_BUILD_HOST=steep \
+  /bin/bash -c "set -eux
+    # Ensure the tree can host out-of-tree module builds.
+    make -C /ksrc modules_prepare
+    # Open GPU kernel modules build. SYSSRC points at our kernel tree.
+    make -C /nv SYSSRC=/ksrc -j${NPROC} modules
+    test -f /nv/kernel-open/nvidia.ko"
+
+# --- Sign + stage the modules -------------------------------------------------
+log "Signing modules with the kernel's ephemeral key and staging"
+MODDIR="$STAGE/usr/lib/modules/${KVER}/kernel/drivers/video"
+mkdir -p "$MODDIR"
+for ko in "${WANT_MODULES[@]}"; do
+  src="$WORK/ogkm/kernel-open/$ko"
+  [[ -f "$src" ]] || die "expected module $ko not produced at $src"
+  # sha512 must match CONFIG_MODULE_SIG_SHA512 in kernel/gpu.config.
+  "$KTREE/scripts/sign-file" sha512 \
+    "$KTREE/certs/signing_key.pem" "$KTREE/certs/signing_key.x509" "$src"
+  cp "$src" "$MODDIR/$ko"
+  echo "  staged (signed): $MODDIR/$ko"
+done
+
+# modules-load.d refers to modules by name; depmod builds the dependency +
+# alias maps so `modprobe nvidia` resolves. Run it against the staging root
+# (offline) using the kernel tree's own module ordering.
+log "Running depmod over the staged module tree"
+depmod -b "$STAGE" -F "$KTREE/System.map" "$KVER"
+
+# =============================================================================
+# Part 2: stage the GPU userspace + GSP firmware from the .run installer
+# =============================================================================
+# NVIDIA userspace is version-locked to the modules. We take only the runtime
+# pieces a headless compute + attestation image needs — NOT CUDA, NOT NCCL,
+# NOT the X/GL stack. The .run is a makeself archive; --extract-only unpacks
+# it without touching the host.
+log "Extracting GPU userspace from the .run installer"
+rm -rf "$WORK/run"
+mkdir -p "$WORK/run"
+sh "$CACHE/NVIDIA-${NV_VERSION}.run" --extract-only --target "$WORK/run/extract"
+RUN_SRC="$WORK/run/extract"
+
+stage_lib() { # soname
+  local so="$1" f
+  f="$(find "$RUN_SRC" -maxdepth 1 -name "${so}.${NV_VERSION}" -print -quit)"
+  [[ -n "$f" ]] || die "userspace lib ${so}.${NV_VERSION} not found in .run"
+  install -D -m0755 "$f" "$STAGE/usr/lib/x86_64-linux-gnu/${so}.${NV_VERSION}"
+  # versioned + bare symlinks (e.g. libnvidia-ml.so.1 -> .so.595.71.05)
+  ln -sf "${so}.${NV_VERSION}" "$STAGE/usr/lib/x86_64-linux-gnu/${so}.1"
+  ln -sf "${so}.1"             "$STAGE/usr/lib/x86_64-linux-gnu/${so}"
+}
+stage_bin() { # name mode
+  local n="$1" f
+  f="$(find "$RUN_SRC" -maxdepth 1 -name "$n" -print -quit)"
+  [[ -n "$f" ]] || die "userspace binary $n not found in .run"
+  install -D -m"${2:-0755}" "$f" "$STAGE/usr/bin/$n"
+}
+
+# NVML — the ONLY hard runtime dependency of the attestation collector and
+# the CC-ready tooling (nvidia-smi links it). NVIDIA-ML lib + smi + persistenced
+# + modprobe (setuid, creates /dev/nvidia* nodes; see Stage 3 open question).
+stage_lib libnvidia-ml.so
+stage_bin nvidia-smi
+stage_bin nvidia-persistenced
+stage_bin nvidia-modprobe 4755   # setuid root — creates device nodes on demand
+
+# GSP firmware: the open modules request_firmware() a GSP blob at load time.
+# It must live at /lib/firmware/nvidia/<ver>/. Stage the whole per-version dir.
+log "Staging GSP firmware"
+FW_SRC="$(find "$RUN_SRC/firmware" -maxdepth 1 -name '*.bin' -print -quit 2>/dev/null || true)"
+[[ -n "$FW_SRC" ]] || die "no GSP firmware .bin found under $RUN_SRC/firmware"
+install -d "$STAGE/usr/lib/firmware/nvidia/${NV_VERSION}"
+install -m0644 "$RUN_SRC"/firmware/*.bin "$STAGE/usr/lib/firmware/nvidia/${NV_VERSION}/"
+
+log "steep-fetch-gpu done — modules + userspace staged under $STAGE"

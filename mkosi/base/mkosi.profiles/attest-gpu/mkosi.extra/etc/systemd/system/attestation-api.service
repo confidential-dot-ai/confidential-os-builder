@@ -1,0 +1,22 @@
+[Unit]
+Description=TEE Attestation REST API (TDX + NVIDIA GPU)
+Documentation=https://github.com/confidential-dot-ai/attestation-rs
+After=network-online.target nvidia-cc-ready.service
+Wants=network-online.target
+# GPU evidence collection needs the driver up; ordered after CC bring-up.
+Wants=nvidia-cc-ready.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/attestation-api -c /etc/attestation-api/config.toml
+Restart=on-failure
+RestartSec=3
+# TDX quote device.
+DeviceAllow=/dev/tdx_guest rwm
+# NVIDIA nodes the libnvat/NVML collector opens for SPDM evidence.
+DeviceAllow=/dev/nvidiactl rwm
+DeviceAllow=/dev/nvidia-uvm rwm
+DeviceAllow=char-nvidia-frontend rwm
+
+[Install]
+WantedBy=multi-user.target

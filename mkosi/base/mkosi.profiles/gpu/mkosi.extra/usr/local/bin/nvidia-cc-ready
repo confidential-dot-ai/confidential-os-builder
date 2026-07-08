@@ -1,0 +1,35 @@
+#!/bin/bash
+# nvidia-cc-ready — bring passed-through NVIDIA GPUs to confidential-compute
+# Ready state at boot. Baked into the GPU image; run by nvidia-cc-ready.service
+# after nvidia-persistenced. Idempotent and safe on a GPU-less boot (no-ops).
+#
+# This is the exact operator sequence proven on b200-dev-1 (checkpoint 006):
+# the driver must be resident (persistenced), then an admin flips the CC GPUs
+# Ready-State gate with `-srs 1`. Without that gate Ready-State stays "Not
+# Ready" forever even with CC on — it is a required policy action, not
+# automatic.
+set -euo pipefail
+
+# No NVIDIA GPU on the PCI bus (vendor 0x10de) → nothing to do. Lets the same
+# image boot unchanged on a CPU-only VM.
+if ! grep -qxl 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null; then
+    echo "nvidia-cc-ready: no NVIDIA GPU present; skipping."
+    exit 0
+fi
+
+# If the driver never came up (nvidia-smi fails), don't hard-fail the boot;
+# surface it and leave the GPU un-readied for an operator to inspect.
+if ! nvidia-smi >/dev/null 2>&1; then
+    echo "nvidia-cc-ready: nvidia-smi not responding; driver not up. Leaving GPUs un-readied." >&2
+    exit 0
+fi
+
+# Only meaningful when the GPUs are actually in CC mode. On a non-CC host the
+# query returns CC State: OFF and -srs is a no-op / error; tolerate it.
+if nvidia-smi conf-compute -q 2>/dev/null | grep -q 'CC State.*ON'; then
+    echo "nvidia-cc-ready: CC on — setting GPUs Ready State."
+    nvidia-smi conf-compute -srs 1
+    nvidia-smi conf-compute -q | grep -E 'CC State|Multi-GPU|Ready State' || true
+else
+    echo "nvidia-cc-ready: CC State not ON; not a confidential launch. Skipping -srs."
+fi
