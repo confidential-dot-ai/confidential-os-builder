@@ -49,7 +49,11 @@ pub struct KernelArgs {
     /// Extra packages for the kernel-builder tools tree (build-time tools a
     /// fragment needs, e.g. `dwarves` for CONFIG_DEBUG_INFO_BTF). Repeatable
     /// and comma-separated.
-    #[arg(long = "kernel-builder-package", value_name = "PKG", value_delimiter = ',')]
+    #[arg(
+        long = "kernel-builder-package",
+        value_name = "PKG",
+        value_delimiter = ','
+    )]
     pub kernel_builder_package: Vec<String>,
 }
 
@@ -121,7 +125,11 @@ pub struct BuildArgs {
     /// comma-separated. Use for build-time tools a fragment needs — e.g.
     /// `dwarves` (pahole) when the fragment enables CONFIG_DEBUG_INFO_BTF.
     /// Twin of `--package`, routed to the kernel-builder mkosi run.
-    #[arg(long = "kernel-builder-package", value_name = "PKG", value_delimiter = ',')]
+    #[arg(
+        long = "kernel-builder-package",
+        value_name = "PKG",
+        value_delimiter = ','
+    )]
     pub kernel_builder_package: Vec<String>,
 
     /// Optional kernel config fragment, merged after required + hardening
@@ -194,7 +202,7 @@ pub struct BuildArgs {
 
 #[derive(clap::Args)]
 pub struct IgvmArgs {
-    /// Sealed output directory (from steep seal)
+    /// Build output directory (from steep build)
     pub dir: PathBuf,
 
     /// SMP counts to generate IGVM files for (e.g. --smp 1 2 4 8)
