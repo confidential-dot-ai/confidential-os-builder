@@ -20,7 +20,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     let manifest_path = args.dir.join("manifest.json");
     if !manifest_path.exists() {
         anyhow::bail!(
-            "manifest.json not found in {}. Run `steep seal` first.",
+            "manifest.json not found in {}. Run `steep build` first.",
             args.dir.display()
         );
     }
