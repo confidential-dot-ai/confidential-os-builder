@@ -249,10 +249,15 @@ impl QemuArgs {
             // the disk cluster-side, ~5-7s of orchestration latency per launch).
             // KubeVirt exposes the same attribute via `Disk.serial` in the VM
             // spec; confai sets that on its datadisk emission.
+            //
+            // QEMU >= 3.0 removed the `serial=` sugar on -drive, so the drive
+            // and device are declared separately with the serial on the device.
             args.push(format!(
-                "file={},format=raw,if=virtio,serial=confai-scratch",
+                "file={},format=raw,if=none,id=scratch0",
                 scratch.display()
             ));
+            args.push("-device".to_string());
+            args.push("virtio-blk-pci,drive=scratch0,serial=confai-scratch".to_string());
         }
         args.push("-smp".to_string());
         args.push(self.smp.to_string());
