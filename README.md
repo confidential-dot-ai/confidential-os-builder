@@ -309,3 +309,7 @@ Pass `--console` to enable a passwordless root autologin on the serial console,
 so `steep run` pops a shell. This changes the image measurement and must not be
 used for production images — under the SNP threat model the host controls the
 serial port.
+
+## License
+
+Steep is licensed under the [Apache License 2.0](LICENSE).
