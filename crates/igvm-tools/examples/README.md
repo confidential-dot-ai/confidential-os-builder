@@ -1,6 +1,8 @@
 # Examples
 
-Prebuilt OVMF firmware and a UKI are included in `prebuilt/` so you can build and measure IGVM files without any extra setup.
+Building an IGVM takes two inputs: a patched OVMF firmware and a UKI. The
+["Building the inputs"](#building-the-inputs) section below documents how to
+produce both.
 
 ## Quick start
 
@@ -8,18 +10,18 @@ Prebuilt OVMF firmware and a UKI are included in `prebuilt/` so you can build an
 cargo build --release
 
 # Build an IGVM (prints the expected SNP launch digest)
-./examples/build.sh -o guest.igvm
+FIRMWARE=path/to/OVMF.fd KERNEL=path/to/uki.efi ./examples/build.sh -o guest.igvm
 
 # Build with SMP 2
-./examples/build.sh --smp 2 -o guest-smp2.igvm
+FIRMWARE=path/to/OVMF.fd KERNEL=path/to/uki.efi ./examples/build.sh --smp 2 -o guest-smp2.igvm
 
 # Measure an existing IGVM
 ./examples/measure.sh guest.igvm
 ```
 
-## What's in `prebuilt/`
+## Building the inputs
 
-### `OVMF.fd` (4 MB)
+### `OVMF.fd`
 
 Patched OVMF firmware built from our [edk2 fork](https://github.com/confidential-dot-ai/edk2)
 
@@ -43,7 +45,7 @@ build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE -DSMM_REQUIRE=FALSE
 
 > **Do NOT use `OvmfPkg/AmdSev/AmdSevX64.dsc`** — it fails with `0x404` page-not-validated errors under IGVM+SNP.
 
-### `uki.efi` (20 MB)
+### `uki.efi`
 
 Unified Kernel Image containing:
 - Linux 6.17.0-14-generic (Ubuntu 25.10)
