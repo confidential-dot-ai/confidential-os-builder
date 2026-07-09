@@ -39,6 +39,12 @@ bin/steep --help # builds steep using cargo and then runs it
 
 The build host needs to be a real Linux system with `sudo` and the kernel/userns capabilities to run mkosi's sandbox. Most rootless dev containers can't — their nested user namespace can't `chown` to arbitrary uids/gids during package extraction, which mkosi requires.
 
+### Developing
+
+`bin/test` runs the test suite (`cargo nextest run`); `bin/lint` runs clippy
+over all targets. Both are what CI runs, so a clean local pass should mean a
+green PR.
+
 ## Scope
 
 Steep builds **confidential VM images for AMD SEV-SNP and Intel TDX** —
@@ -71,7 +77,7 @@ steep build [OPTIONS] [NAME]
 | Arg / flag | Default | Purpose |
 |---|---|---|
 | `NAME` | `base` | Subdirectory under `output/` for build artifacts. |
-| `-c, --cloud-init <PATH>` | (none) | NoCloud `user-data` file baked into the verity root at `/var/lib/cloud/seed/nocloud/user-data`. Measured into the image. |
+| `-c, --cloud-init <PATH>` | (none) | NoCloud `user-data` file baked into the verity root at `/var/lib/cloud/seed/nocloud/user-data`. Measured into the image. Standard cloud-init `#cloud-config` YAML — see [`examples/caddy.yaml`](examples/caddy.yaml) for a working example that serves a web page from the VM. |
 | `-e, --extra <DIR>` | (none) | Directory whose contents are recursively copied **on top of** mkosi's base image filesystem. File modes and symlinks are preserved. Use this to bake binaries, systemd units, configuration files, etc. into the verity root. Measured. |
 | `-p, --package <PKG>` | (none) | Extra apt package to install in the base image. Repeatable, also accepts comma-separated lists (`-p curl,jq,iproute2` or `-p curl -p jq`). Passed through to mkosi as `--package=`. |
 | `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after `required.config` + `hardening.config`. Omitted → steep's hardened required+hardening baseline kernel. Lets a project enable extra kernel symbols without modifying steep. The build rewrites `kernel/config-x86_64.snapshot` with the resolved config (see [Snapshots](#snapshots)). |
