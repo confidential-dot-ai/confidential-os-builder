@@ -75,7 +75,7 @@ steep build [OPTIONS] [NAME]
 | `-e, --extra <DIR>` | (none) | Directory whose contents are recursively copied **on top of** mkosi's base image filesystem. File modes and symlinks are preserved. Use this to bake binaries, systemd units, configuration files, etc. into the verity root. Measured. |
 | `-p, --package <PKG>` | (none) | Extra apt package to install in the base image. Repeatable, also accepts comma-separated lists (`-p curl,jq,iproute2` or `-p curl -p jq`). Passed through to mkosi as `--package=`. |
 | `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after `required.config` + `hardening.config`. Omitted → steep's hardened required+hardening baseline kernel. Lets a project enable extra kernel symbols without modifying steep. The build rewrites `kernel/config-x86_64.snapshot` with the resolved config (see [Snapshots](#snapshots)). |
-| `--console` | off | Inject a systemd drop-in that gives root a passwordless autologin on `hvc0`. Useful for testing; changes the image measurement. **Don't ship with this on** — under the SNP threat model the host controls the serial port. |
+| `--profile dev` | off | Enable the `dev` profile: a systemd drop-in that gives root a passwordless autologin on the serial gettys, plus `console=ttyS0` on the measured cmdline. Useful for testing; changes the image measurement. Pair with `--kernel-config-fragment kernel/dev.config` to actually get ttyS0 output. **Don't ship with this on** — under the SNP threat model the host controls the serial port. |
 | `--platform <snp\|tdx\|both>` | `both` | Which confidential-VM platform(s) to measure for. `both` emits both `snp_variants[]` IGVM measurements AND a singleton `tdx` measurement block. `snp` is IGVM-only. `tdx` skips IGVM and only computes the TDX registers. The same UKI + disk artifacts feed both measurement paths. |
 | `--skip-igvm` | off | DEPRECATED — accepted as an alias for `--platform tdx` so older shell wrappers keep working. The combination `--skip-igvm --platform snp` is rejected (it asks for an SNP launch digest while also opting out of IGVM generation). |
 | `--firmware <PATH>` | `output/OVMF.fd` (env: `STEEP_FIRMWARE`) | OVMF firmware binary used for SNP launch. Must be steep's edk2 build with the `IgvmHobArea` region (region type 0x200) — IGVM construction injects UKI/shim/cert bytes into that area. Ubuntu's stock OVMF does not have this region and will fail IGVM build. |
@@ -95,7 +95,7 @@ steep build myimage \
     --cloud-init ./myimage/user-data \
     --package curl,jq \
     --memory 8G --smp 4 \
-    --console --skip-igvm
+    --profile dev --skip-igvm
 
 # With a custom kernel config fragment and an IGVM measurement
 steep build myimage \
@@ -162,7 +162,7 @@ steep pull [OPTIONS] <NAME>
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--registry <URL>` | `ghcr.io/confidential-dot-ai` | Registry root. |
+| `--registry <URL>` | `docker.io/confidentialai` | OCI Registry root. |
 | `--name <NAME>` | `<DIR basename>` (push) / required (pull) | Image name segment. |
 | `--tag <TAG>` | `latest` | Image tag. |
 
@@ -305,7 +305,7 @@ Steep uses `mkosi` to build base image for Ubuntu 26.04 (Resolute Raccoon).
 Built images is fully measured (see [Measurement Chain](#measurement-chain)),
 and suitable for booting trusted confidential VMs.
 
-Pass `--console` to enable a passwordless root autologin on the serial console,
+Pass `--profile dev` to enable a passwordless root autologin on the serial console,
 so `steep run` pops a shell. This changes the image measurement and must not be
 used for production images — under the SNP threat model the host controls the
 serial port.

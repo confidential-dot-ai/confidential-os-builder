@@ -74,7 +74,7 @@ while read -r layer; do
 done
 
 # The confidential-dot-ai attestation-api image places the binary at `/`
-# (entrypoint is `/attestation-api`), while older lunal-dev builds put it
+# (entrypoint is `/attestation-api`), while builds from the old org put it
 # under `usr/local/bin/`. Try both locations so the script keeps working
 # across image lineages.
 FOUND=""

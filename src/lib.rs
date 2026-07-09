@@ -196,7 +196,8 @@ pub struct BuildArgs {
     /// Repeatable. Profiles compose extra config (packages, systemd units,
     /// files) into the base image at build time. Each enabled profile may
     /// also trigger pre-build hooks (e.g. fetching binaries from GHCR).
-    /// Currently supported: `attest` (bakes the attestation-api HTTP service).
+    /// Currently supported: `attest` (bakes the attestation-api HTTP service)
+    /// and `dev` (serial-console autologin + ttyS0 output for debugging).
     #[arg(long = "profile", value_name = "NAME")]
     pub profiles: Vec<String>,
 }
@@ -249,7 +250,7 @@ pub struct PullArgs {
     /// Image name to pull (e.g. "base")
     pub name: String,
 
-    /// OCI registry (e.g. ghcr.io/confidential-dot-ai)
+    /// OCI registry
     #[arg(
         long,
         env = "STEEP_OCI_REGISTRY",

@@ -4,7 +4,7 @@
 
 Remote attestation requires a verifier to compare a hardware-signed measurement against an **expected value**. If the same inputs produce different measurements on each build, the verifier has nothing stable to compare against.
 
-Before this work, two consecutive `steep seal` runs with identical config produced completely different roothashes, UKIs, and IGVM measurements. This made pre-computing expected measurements impossible.
+Before this work, two consecutive `steep build` runs with identical config produced completely different roothashes, UKIs, and IGVM measurements. This made pre-computing expected measurements impossible.
 
 ## Our Approach
 

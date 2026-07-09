@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::{igvm, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform};
 
 pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
-    tracing::info!("sealing base image with dm-verity + UKI");
+    tracing::info!("building base image with dm-verity + UKI");
 
     // Resolve the requested platform set. --skip-igvm is the historical
     // way to ask for "no SNP measurement", which now corresponds to
@@ -142,7 +142,6 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     fs_err::create_dir_all(&dir)?;
     let output = dir.canonicalize()?;
 
-    // Inject debug autologin if --debug (enables passwordless root on serial console)
     // Inject cloud-init user-data into mkosi.local/mkosi.extra seed directory (measured in verity root)
     let seed_dir = PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/var/lib/cloud/seed/nocloud");
     if let Some(ref ci) = args.cloud_init {

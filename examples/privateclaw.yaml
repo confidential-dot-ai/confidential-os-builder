@@ -172,7 +172,7 @@ runcmd:
   - |
     export PRIVATECLAW_VERSION="v1.1.0"
     export ATTESTATION_CLI_VERSION="v0.4.1"
-    curl -fsSL "https://github.com/lunal-dev/privateclaw-cli/releases/download/v1.1.0/install.sh" | bash
+    curl -fsSL "https://github.com/confidential-dot-ai/privateclaw-cli/releases/download/v1.1.0/install.sh" | bash
   - |
     cat > /etc/privateclaw/inference.conf << EOF
     PROXY_BASE_URL=http://10.0.0.4:9090

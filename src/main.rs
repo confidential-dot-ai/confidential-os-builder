@@ -21,7 +21,7 @@ enum Commands {
     Build(BuildArgs),
     /// Generate IGVM files for additional SMP counts from a sealed output
     Igvm(IgvmArgs),
-    /// Build and push an image to GHCR using oras
+    /// Build and push an image to an OCI registry using oras
     Push(PushArgs),
     /// Pull build files from an OCI registry using oras
     Pull(PullArgs),
