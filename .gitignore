@@ -2,6 +2,9 @@
 output/
 target/
 
+# We use this particular OVMF to enable IGVM-compatible image builds
+!/output/OVMF.fd
+
 # mkosi build artifacts
 mkosi.cache/
 mkosi.crt
