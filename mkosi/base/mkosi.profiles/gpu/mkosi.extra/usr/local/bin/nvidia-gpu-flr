@@ -45,14 +45,22 @@ echo "nvidia-gpu-flr: reset $reset_count device(s); loading driver"
 modprobe nvidia
 modprobe nvidia_uvm
 
-# Wait until the driver has bound ALL the GPUs we reset before returning — so
-# nvidia-persistenced (ordered after us) enumerates and HOLDS every one. In CC
-# mode a GPU whose session isn't held by persistenced gets torn down by the
-# next transient client (e.g. nvidia-smi), and it can't re-attach without
-# another FLR. At high GPU count the per-GPU SPDM attach is slow and staggered,
-# so persistenced starting the instant modprobe returns would hold only the
-# early GPUs (observed at 8: nvidia-smi -L drops 8 -> 4). Reading the /proc gpus
-# directory is teardown-free (unlike nvidia-smi, which opens each device).
+# Wait until the driver has BOUND all the GPUs we reset before returning, so
+# nvidia-persistenced (ordered after us) enumerates every one. Precision about
+# what this loop does and does not guarantee:
+#   - /proc/driver/nvidia/gpus/ entries appear at PCI *probe* time. nvidia's
+#     probe is synchronous with modprobe, so in practice this is satisfied
+#     immediately (observed: same-second at 8 GPUs) — the loop is insurance
+#     against async/slow probe, ensuring persistenced's device scan can't miss
+#     a late-binding GPU.
+#   - The slow part — the per-GPU SPDM attach and session HOLD — is serialized
+#     by nvidia-persistenced itself: it is Type=forking and its parent only
+#     exits (=> systemd "active", => nvidia-cc-ready and attestation-api may
+#     start) after its device init completes. That, not this loop, is what
+#     guarantees all sessions are held before anything else touches a GPU.
+# Do NOT poll here with nvidia-smi — it opens each device and, pre-hold, that
+# teardown kills the session (observed at 8 GPUs: nvidia-smi -L drops 8 -> 2
+# when run during the persistenced activation window). /proc reads are free.
 for _ in $(seq 1 90); do
     bound=$(ls /proc/driver/nvidia/gpus/ 2>/dev/null | wc -l)
     [[ "$bound" -ge "$reset_count" ]] && break

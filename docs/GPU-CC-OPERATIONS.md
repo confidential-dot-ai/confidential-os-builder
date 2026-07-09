@@ -97,9 +97,16 @@ Wiring, per stack:
   `vsock connect to CID 2:4050 failed: No such device`.
 
 **Hardening:** vsock is a host↔guest channel, so it's fenced at the unit level.
-`attestation-api.service` is the ONLY unit whose `RestrictAddressFamilies=`
-includes `AF_VSOCK`; every other unit (nvidia-*, sshd) is fenced to `AF_UNIX`.
-The image ships no vsock listeners; the sole traffic is the outbound GetQuote.
+`attestation-api.service` is the only unit whose `RestrictAddressFamilies=`
+includes `AF_VSOCK`; the nvidia-* units are fenced to `AF_UNIX` and sshd (and
+everything it spawns — SSH sessions inherit the seccomp filter) to
+UNIX/INET/INET6/NETLINK. Precisely stated, units WITHOUT a fence (e.g.
+cloud-init and whatever operator userdata runs) can still create vsock
+sockets; the residual exposure is bounded by the dm-verity read-only measured
+rootfs (no persistent implant), the fixed appliance service set, and the
+absence of any vsock LISTENER (nothing to connect *in* to). The per-unit fences
+are belt-and-suspenders, not an airtight sandbox — systemd has no clean global
+knob to deny a whole address family image-wide.
 
 ## 5. Attestation shape
 

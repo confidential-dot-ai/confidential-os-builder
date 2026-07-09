@@ -7,6 +7,11 @@ Description=NVIDIA Persistence Daemon
 # fresh FLR. It must attach only AFTER nvidia-gpu-flr resets the GPU (the CC
 # SPDM precondition — see /usr/local/bin/nvidia-gpu-flr).
 After=systemd-modules-load.service nvidia-gpu-flr.service
+# Wants (not Requires) for the FLR unit deliberately: Requires= propagates
+# stops, so an operator re-running the oneshot at runtime would take
+# persistenced down with it — destroying every held CC session (unrecoverable
+# without another FLR). If nvidia-gpu-flr genuinely failed on a GPU boot the
+# attach would fail loudly anyway (RmInitAdapter 0x22).
 Wants=nvidia-gpu-flr.service syslog.target
 
 [Service]
