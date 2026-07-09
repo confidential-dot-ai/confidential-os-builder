@@ -29,3 +29,9 @@ PROGRESS*.md
 /mkosi/base/mkosi.local
 /mkosi/base/mkosi.extra/usr/lib/modules/
 .claude/
+
+# iasl build artifacts (dsdt.asl is the source)
+mkosi/base/acpi-tables/dsdt.aml
+mkosi/base/acpi-tables/dsdt.hex
+mkosi/base/acpi-tables/dsdt.pre
+mkosi/base/acpi-tables/dsdt.src
