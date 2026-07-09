@@ -159,11 +159,11 @@ The digest is deterministic: same inputs always produce the same digest, regardl
 ## Examples
 
 ```bash
-# Build an IGVM from firmware
-./examples/build.sh --firmware OVMF.fd -o guest.igvm
+# Build an IGVM from firmware + UKI
+FIRMWARE=OVMF.fd KERNEL=my-uki.efi ./examples/build.sh -o guest.igvm
 
-# Build with a kernel and 2 vCPUs
-./examples/build.sh --firmware OVMF.fd --kernel my-uki.efi --smp 2 -o guest.igvm
+# Build with 2 vCPUs
+FIRMWARE=OVMF.fd KERNEL=my-uki.efi ./examples/build.sh --smp 2 -o guest.igvm
 
 # Measure an existing IGVM file
 ./examples/measure.sh guest.igvm
