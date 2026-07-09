@@ -103,21 +103,26 @@ DefinitionBlock ("dsdt.aml", "DSDT", 1, "BOCHS ", "BXPC    ", 0x00000002)
                     0x0000000000000000, 0x0000000800000000, 0x000000FFFFFFFFFF,
                     0x0000000000000000, 0x000000F800000000)
 
-                /* 64-bit MMIO window (high): 32TiB..64TiB. Covers the region
-                 * where OVMF places very large BARs (observed: 56TiB base for
-                 * B200 GPUs, whose resizable BAR2 is 256GiB — one GPU needs a
-                 * ~384GiB bridge window, so 8 GPUs need ~3TiB). RAM can never
-                 * reach 32TiB on supported hosts, so unlike the low window
-                 * this one is immune to the RAM-conflict drop; 64TiB is the
-                 * 46-bit physical-address ceiling of this host's CPUs.
-                 * Without this window, multi-GPU guests fail driver probe
-                 * with "BAR0 is 0M @ 0x0" (kernel can't claim the
-                 * firmware-placed BARs: "can't claim; no compatible bridge
-                 * window" -> "can't assign; no space"). */
+                /* 64-bit MMIO window (high): 2TiB..64TiB. Covers wherever OVMF
+                 * places very large device BARs. B200 resizable BAR2 is
+                 * 256GiB; one GPU needs a ~384GiB bridge window, so 8 GPUs need
+                 * ~3TiB. OVMF's placement base depends on its 64-bit MMIO
+                 * aperture: with the default aperture it lands near 56TiB;
+                 * raising it (fw_cfg opt/ovmf/X-PciMmio64Mb, needed to fit 4+
+                 * of these BARs plus the boot-disk BAR) relocates it toward
+                 * ~2TiB. This single wide window covers both. RAM can never
+                 * reach 2TiB on supported hosts, so unlike the low window it is
+                 * immune to Linux's RAM-conflict drop; 64TiB is the 46-bit
+                 * physical-address ceiling of this host's CPUs. Without it,
+                 * multi-GPU guests fail driver probe with "BAR0 is 0M @ 0x0"
+                 * (kernel can't claim the firmware-placed BARs: "can't claim;
+                 * no compatible bridge window"). NOTE: 4+ GPUs ALSO require the
+                 * OVMF aperture raise above — the window here is necessary but
+                 * not sufficient on its own. */
                 QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     Cacheable, ReadWrite,
-                    0x0000000000000000, 0x0000200000000000, 0x00003FFFFFFFFFFF,
-                    0x0000000000000000, 0x0000200000000000)
+                    0x0000000000000000, 0x0000020000000000, 0x00003FFFFFFFFFFF,
+                    0x0000000000000000, 0x00003E0000000000)
             })
         }
     }
