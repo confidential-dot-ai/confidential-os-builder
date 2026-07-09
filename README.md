@@ -295,10 +295,12 @@ output/<name>/
 │                    per-fragment shas, optional SNP measurement
 ├── OVMF.fd          Firmware (copy of the --firmware input; bundled here so the
 │                    output dir is self-contained for `steep run` and `steep push`)
+├── OVMF.tdx.fd      TDX firmware (copy of the --tdx-firmware input; present for
+│                    --platform tdx/both — its hash is the manifest's TDX `mrtd`)
 └── guest-smp<N>.igvm  one IGVM per --smp value (absent when --platform tdx / --skip-igvm)
 ```
 
-The manifest is the authoritative description of what's in the build. To verify an image you got from elsewhere, compare `manifest.json`'s `outputs.uki.sha256` and (with IGVM) `measurement.snp_launch_digest` against the published expected values for the build inputs you trust.
+The manifest is the authoritative description of what's in the build. To verify an image you got from elsewhere, compare `manifest.json`'s `outputs.uki.sha256`, the `snp_variants[]` entry matching your vCPU count (`snp_variants[].measurement.snp_launch_digest`), and/or the `tdx` measurement block against the published expected values for the build inputs you trust.
 
 
 Steep uses `mkosi` to build base image for Ubuntu 26.04 (Resolute Raccoon).
