@@ -24,6 +24,18 @@ attach per reset. Two consequences the image must honour:
   transient client (`nvidia-smi`) tears the session down and the next attach
   fails — with no way to recover short of another FLR. It also needs
   `libnvidia-cfg.so` staged, or it dies at init (silently, pre-fix).
+- **persistenced must start only after ALL GPUs are bound.** The per-GPU SPDM
+  attach is slow and staggered; at 8 GPUs, persistenced starting the instant
+  `modprobe` returns holds only the early GPUs, and the rest get torn down.
+  `nvidia-gpu-flr` therefore blocks until `/proc/driver/nvidia/gpus/` lists all
+  reset devices (a teardown-free check — do NOT poll with `nvidia-smi`, which
+  opens each device) before it returns, so persistenced (ordered after it)
+  enumerates and holds every one.
+- **Gotcha — the boot activation window.** Running `nvidia-smi` *before*
+  persistenced has finished holding all GPUs can tear down the not-yet-held
+  sessions (seen at 8: `nvidia-smi -L` drops 8→2). Once persistenced is
+  `active` and holding them, `nvidia-smi` is safe, and the attestation NVML
+  collection never tears sessions down. Just don't poke GPUs during early boot.
 
 Failure signature when this is wrong: `NVRM: osInitNvMapping: *** Cannot attach
 gpu` → `RmInitAdapter failed! (0x22:0x56:894)`, `nvidia-smi: No devices were
@@ -105,18 +117,21 @@ clock-independent, verification is not).
 | 1 | ✅ CC Ready, attest | ✅ CC Ready, attest |
 | 2 | ✅ NVLE, attest ×2 | ✅ NVLE, attest ×2, vsock |
 | 4 | ✅ NVLE, attest ×4 (needs fw_cfg aperture) | ✅ NVLE, attest ×4, vsock (no aperture tuning) |
-| 8 | (not run) | ⏳ see below |
+| 8 | (not run) | ✅ NVLE, attest ×8, vsock (no aperture tuning) |
 
-**8-GPU:** first attempt attached 5/8 (the FLR-ordering race in item 1);
-`nvidia-gpu-flr` was changed to FLR-before-modprobe to fix it — re-validation
-in progress. Aperture is NOT the limiter at 8 (the failures were CC/FLR, not
-`BAR0 is 0`). Update this row when confirmed.
+**8-GPU** was the acid test for item 1. The first attempt attached 5/8 (the
+FLR-ordering race) and then dropped held sessions (persistenced starting before
+all 8 bound). Both are fixed: FLR-before-modprobe + wait-for-all-bound. Result:
+all 8 attach cleanly (0 `RmInitAdapter` failures), persistenced holds all 8, and
+`POST /attest {nvidia_gpu:true}` returns 8 evidence entries in ~0.33s with no
+teardown. Aperture is NOT the limiter at 8 — KubeVirt's virt-launcher maps 8×
+256 GiB fine (the failures were CC/FLR, not `BAR0 is 0`).
 
 ## KubeVirt parity checklist (for `confai launch` on TDX+GPU)
 
 - [x] Multi-GPU BAR window — in the image (DSDT), no per-launch tuning ≤4 GPU.
 - [x] vsock — `autoattachVSOCK` (confai) + `VSOCK` gate (KubeVirt CR).
-- [ ] 8-GPU FLR ordering — fix landed, re-validating.
+- [x] 8-GPU FLR ordering + session retention — fixed (FLR-before-modprobe + wait-for-all-bound); all 8 attest.
 - [ ] Publish `attestation-api-gpu` (Dockerfile.gpu) + pin its digest in
       `attest-gpu/mkosi.sync` (currently pre-staged via `steep-fetch-attest-gpu`).
 - [ ] Guest time source (NTP or host-time) so in-guest `/verify` isn't skewed.

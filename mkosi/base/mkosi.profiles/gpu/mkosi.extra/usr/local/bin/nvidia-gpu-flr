@@ -1,20 +1,24 @@
 #!/bin/bash
-# nvidia-gpu-flr — Function-Level Reset every NVIDIA GPU before the driver's
-# first attach. Runs once at boot (nvidia-gpu-flr.service), after the nvidia
-# module loads and BEFORE nvidia-persistenced attaches.
+# nvidia-gpu-flr — Function-Level Reset every NVIDIA GPU, THEN load the driver.
+# Runs once at boot (nvidia-gpu-flr.service), before nvidia-persistenced.
 #
-# WHY (validated on a live B200 CVM — see docs/GPU-IMAGE-PLAN.md):
+# WHY (validated on real B200s, 1..8 GPUs — see docs/GPU-IMAGE-PLAN.md):
 # In confidential-compute mode the GPU refuses to establish an SPDM session
-# unless the function was freshly FLR-reset — and the FLR the host performs
-# when the VM opens the vfio device does not count by the time the guest
-# driver attaches. Without this reset the very first RmInitAdapter fails
-# (policy check misreads the GPU -> "Disabling GSP offload -- GPU not
-# supported" -> "Cannot attach gpu", error 0x22:0x56:894) and nvidia-smi
-# reports "No devices were found". One in-guest FLR immediately before the
-# first attach yields a clean SPDM-capable state; nvidia-persistenced then
-# attaches once and HOLDS the session for the life of the VM.
+# unless the function was freshly FLR-reset, and only ONE attach is allowed per
+# FLR. The critical ordering consequence: the very FIRST driver probe of each
+# GPU must land on a freshly-FLR'd function. So we do NOT auto-load nvidia via
+# modules-load.d (that would let the kernel probe all GPUs before any FLR).
+# Instead we FLR every GPU here — with no driver bound, so the reset is clean —
+# and only then modprobe the driver, so its first probe is the good one.
 #
-# Safe on a GPU-less boot: no 0x10de devices -> no-op.
+# Getting this wrong is silent at 1 GPU and racy at 8: with modules-load.d
+# auto-loading nvidia first, the pre-FLR probe fails and the post-FLR re-attach
+# recovers 5/8 GPUs but leaves ~3 stuck at "osInitNvMapping: Cannot attach gpu
+# / RmInitAdapter failed (0x22:0x56:894)". FLR-before-first-probe fixes all 8.
+#
+# nvidia-persistenced then performs and HOLDS that one good attach for the life
+# of the VM (in CC mode a torn-down session can't be re-established without
+# another FLR). Safe on a GPU-less boot: no 0x10de devices -> no-op.
 set -euo pipefail
 
 reset_count=0
@@ -31,7 +35,27 @@ if [[ "$reset_count" -eq 0 ]]; then
     exit 0
 fi
 
-# Give the device(s) a moment to come fully back before persistenced attaches
-# (an FLR takes ~1s to complete on B200).
+# Let the FLR(s) settle (~1s each on B200) before the driver's first probe.
 sleep 3
-echo "nvidia-gpu-flr: reset $reset_count device(s)."
+
+# NOW load the driver — this is the first time anything touches the freshly
+# reset GPUs, so every SPDM session establishes cleanly. modprobe nvidia_uvm
+# pulls nvidia; list both so a missing dep is obvious.
+echo "nvidia-gpu-flr: reset $reset_count device(s); loading driver"
+modprobe nvidia
+modprobe nvidia_uvm
+
+# Wait until the driver has bound ALL the GPUs we reset before returning — so
+# nvidia-persistenced (ordered after us) enumerates and HOLDS every one. In CC
+# mode a GPU whose session isn't held by persistenced gets torn down by the
+# next transient client (e.g. nvidia-smi), and it can't re-attach without
+# another FLR. At high GPU count the per-GPU SPDM attach is slow and staggered,
+# so persistenced starting the instant modprobe returns would hold only the
+# early GPUs (observed at 8: nvidia-smi -L drops 8 -> 4). Reading the /proc gpus
+# directory is teardown-free (unlike nvidia-smi, which opens each device).
+for _ in $(seq 1 90); do
+    bound=$(ls /proc/driver/nvidia/gpus/ 2>/dev/null | wc -l)
+    [[ "$bound" -ge "$reset_count" ]] && break
+    sleep 2
+done
+echo "nvidia-gpu-flr: $bound/$reset_count GPU(s) bound and ready for persistenced"
