@@ -17,7 +17,7 @@ You can use the base images built by `steep` without installing the tool.
 
 ```
 mkdir steep-base; cd steep-base
-oras pull ghcr.io/lunal-dev/steep/base:latest
+oras pull ghcr.io/confidential-dot-ai/steep/base:latest
 qemu-system-x86_64 \
   -machine q35 \
   -kernel uki.efi \
@@ -31,7 +31,7 @@ qemu-system-x86_64 \
 Steep runs on Ubuntu Linux. Clone the steep repo and run `bin/setup` to install everything you'll need (mkosi v26, qemu utils, swtpm, rust, cargo-nextest).
 
 ```bash
-git clone https://github.com/confidential-ai/steep.git
+git clone https://github.com/confidential-dot-ai/steep.git
 cd steep
 bin/setup
 bin/steep --help # builds steep using cargo and then runs it
@@ -162,7 +162,7 @@ steep pull [OPTIONS] <NAME>
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--registry <URL>` | `ghcr.io/lunal-dev` | Registry root. |
+| `--registry <URL>` | `ghcr.io/confidential-dot-ai` | Registry root. |
 | `--name <NAME>` | `<DIR basename>` (push) / required (pull) | Image name segment. |
 | `--tag <TAG>` | `latest` | Image tag. |
 
