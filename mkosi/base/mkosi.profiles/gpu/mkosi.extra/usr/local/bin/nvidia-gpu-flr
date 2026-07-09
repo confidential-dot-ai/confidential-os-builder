@@ -1,0 +1,37 @@
+#!/bin/bash
+# nvidia-gpu-flr — Function-Level Reset every NVIDIA GPU before the driver's
+# first attach. Runs once at boot (nvidia-gpu-flr.service), after the nvidia
+# module loads and BEFORE nvidia-persistenced attaches.
+#
+# WHY (validated on a live B200 CVM — see docs/GPU-IMAGE-PLAN.md):
+# In confidential-compute mode the GPU refuses to establish an SPDM session
+# unless the function was freshly FLR-reset — and the FLR the host performs
+# when the VM opens the vfio device does not count by the time the guest
+# driver attaches. Without this reset the very first RmInitAdapter fails
+# (policy check misreads the GPU -> "Disabling GSP offload -- GPU not
+# supported" -> "Cannot attach gpu", error 0x22:0x56:894) and nvidia-smi
+# reports "No devices were found". One in-guest FLR immediately before the
+# first attach yields a clean SPDM-capable state; nvidia-persistenced then
+# attaches once and HOLDS the session for the life of the VM.
+#
+# Safe on a GPU-less boot: no 0x10de devices -> no-op.
+set -euo pipefail
+
+reset_count=0
+for dev in /sys/bus/pci/devices/*; do
+    [[ "$(cat "$dev/vendor" 2>/dev/null)" == "0x10de" ]] || continue
+    [[ -f "$dev/reset" ]] || { echo "nvidia-gpu-flr: $(basename "$dev") has no reset method; skipping" >&2; continue; }
+    echo "nvidia-gpu-flr: FLR $(basename "$dev")"
+    echo 1 > "$dev/reset"
+    reset_count=$((reset_count + 1))
+done
+
+if [[ "$reset_count" -eq 0 ]]; then
+    echo "nvidia-gpu-flr: no NVIDIA devices present; nothing to do."
+    exit 0
+fi
+
+# Give the device(s) a moment to come fully back before persistenced attaches
+# (an FLR takes ~1s to complete on B200).
+sleep 3
+echo "nvidia-gpu-flr: reset $reset_count device(s)."

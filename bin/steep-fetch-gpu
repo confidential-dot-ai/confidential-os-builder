@@ -200,10 +200,17 @@ stage_bin() { # name mode
   install -D -m"${2:-0755}" "$f" "$STAGE/usr/bin/$n"
 }
 
-# NVML — the ONLY hard runtime dependency of the attestation collector and
-# the CC-ready tooling (nvidia-smi links it). NVIDIA-ML lib + smi + persistenced
+# NVML — the hard runtime dependency of the attestation collector and the
+# CC-ready tooling (nvidia-smi links it). NVIDIA-ML lib + smi + persistenced
 # + modprobe (setuid, creates /dev/nvidia* nodes; see Stage 3 open question).
 stage_lib libnvidia-ml.so
+# libnvidia-cfg: nvidia-persistenced dlopens it at init and exits without it.
+# LOAD-BEARING for CC: persistenced is what HOLDS the driver attach — in CC
+# mode the GPU forbids re-establishing the SPDM session without a fresh FLR,
+# so if persistenced is down every transient client (nvidia-smi) tears down
+# the session on exit and the next attach fails with RmInitAdapter 0x22.
+# Found the hard way on a live B200 (see docs/GPU-IMAGE-PLAN.md).
+stage_lib libnvidia-cfg.so
 stage_bin nvidia-smi
 stage_bin nvidia-persistenced
 stage_bin nvidia-modprobe 4755   # setuid root — creates device nodes on demand

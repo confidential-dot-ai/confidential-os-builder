@@ -1,13 +1,19 @@
 [Unit]
 Description=NVIDIA Persistence Daemon
 # Modules are loaded by systemd-modules-load.service (see
-# /etc/modules-load.d/nvidia.conf); the daemon keeps the driver resident and
-# holds UVM state so per-VM GPU init is fast and CC state survives client exit.
-After=systemd-modules-load.service
-Wants=syslog.target
+# /etc/modules-load.d/nvidia.conf). The daemon performs the FIRST driver
+# attach and HOLDS it for the life of the VM — load-bearing in CC mode, where
+# the GPU forbids re-establishing the SPDM session after teardown without a
+# fresh FLR. It must attach only AFTER nvidia-gpu-flr resets the GPU (the CC
+# SPDM precondition — see /usr/local/bin/nvidia-gpu-flr).
+After=systemd-modules-load.service nvidia-gpu-flr.service
+Wants=nvidia-gpu-flr.service syslog.target
 
 [Service]
 Type=forking
+# Skip (not fail) on a GPU-less boot — keeps the image degraded-nothing when
+# booted without a GPU attached.
+ExecCondition=/bin/sh -c 'grep -qx 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null'
 # --uvm-persistence-mode was the load-bearing flag on b200-dev-1 (checkpoint
 # 006): it keeps nvidia_uvm resident. persistenced creates the /dev/nvidia*
 # nodes via the setuid nvidia-modprobe we stage. Tolerate a GPU-less boot —
