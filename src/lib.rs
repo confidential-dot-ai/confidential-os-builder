@@ -58,19 +58,6 @@ pub struct KernelArgs {
 }
 
 #[derive(clap::Args)]
-pub struct BaseArgs {
-    /// Force mkosi to rebuild the image even if it exists
-    #[arg(short, long)]
-    pub force: bool,
-}
-
-#[derive(clap::Args)]
-pub struct CloudInitArgs {
-    /// Path to cloud-init configuration directory
-    pub dir: PathBuf,
-}
-
-#[derive(clap::Args)]
 pub struct RunArgs {
     /// Output directory from steep build
     #[arg(default_value = "output/base")]

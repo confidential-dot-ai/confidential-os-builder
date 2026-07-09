@@ -155,17 +155,6 @@ pub fn write_manifest(manifest: &BuildManifest, path: &Path) -> anyhow::Result<(
     Ok(())
 }
 
-/// Parse the igvm-tools manifest JSON to extract measurement data.
-/// The igvm-tools manifest nests the measurement under a "measurement" key.
-pub fn parse_igvm_manifest(json: &str) -> anyhow::Result<Measurement> {
-    let value: serde_json::Value = serde_json::from_str(json)?;
-    let measurement_value = value
-        .get("measurement")
-        .ok_or_else(|| anyhow::anyhow!("igvm manifest missing 'measurement' key"))?;
-    let measurement: Measurement = serde_json::from_value(measurement_value.clone())?;
-    Ok(measurement)
-}
-
 /// Read a manifest from a JSON file. Rejects any `version` other than
 /// [`MANIFEST_VERSION`] before attempting field-by-field deserialization,
 /// so a v2 manifest fails with a clear error instead of a confusing

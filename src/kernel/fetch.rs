@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use sha2::{Digest, Sha256};
 
+pub use crate::manifest::sha256_file;
 use crate::tools;
 
 /// Download `linux-<version>.tar.xz` to `cache_dir`, verify SHA256.
@@ -53,14 +53,6 @@ pub fn fetch(version: &str, expected_sha256: &str, cache_dir: &Path) -> Result<P
         ));
     }
     Ok(dest)
-}
-
-/// Compute SHA256 of a file as a lowercase hex string.
-pub fn sha256_file(path: &Path) -> Result<String> {
-    let mut f = fs_err::File::open(path)?;
-    let mut h = Sha256::new();
-    std::io::copy(&mut f, &mut h)?;
-    Ok(hex::encode(h.finalize()))
 }
 
 /// Map a kernel semver to the cdn.kernel.org subdirectory.
