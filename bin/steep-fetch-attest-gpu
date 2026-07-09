@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# steep-fetch-attest-gpu — stage the GPU-capable attestation-api binary +
+# NVIDIA libnvat (and libnvat's versioned ICU deps) into mkosi.local for the
+# `attest-gpu` profile, WITHOUT going through GHCR.
+#
+# This is the local/dev path used to validate the attest-gpu profile before the
+# attestation-rs `-gpu` OCI image is published. The production path is the
+# profile's mkosi.sync pulling that pinned image by digest; this helper just
+# pre-stages the same content so mkosi.sync's pre-staged escape hatch skips the
+# pull. Run it AFTER steep-fetch-gpu and BEFORE `steep build ... --profile
+# gpu --profile attest-gpu` (build.rs wipes mkosi.local on exit, so all staging
+# must precede one build).
+#
+# Why we bundle libnvat's ICU: libnvat dynamically links a *versioned* libicu
+# soname (e.g. libicuuc.so.74) fixed at ITS build time. steep's guest base may
+# ship a different ICU major (resolute → 76). Bundling the exact libicu*.so.NN
+# libnvat needs lets it load regardless of the base's ICU; the sonames differ so
+# they coexist. libxml2.so.2 / libstdc++.so.6 have stable sonames and come from
+# the base image's packages (see attest-gpu/mkosi.conf).
+
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$DIR"
+
+# Inputs (override via env). Defaults match a host build of attestation-rs with
+# the pinned libnvat installed (tdx-checkpoints/026):
+#   NVAT_USE_SYSTEM_LIB=1 cargo build -p attestation-api --release --features nvidia-gpu-attest
+ATTEST_GPU_BIN="${ATTEST_GPU_BIN:-../attestation-rs/target/release/attestation-api}"
+LIBNVAT="${LIBNVAT:-/usr/lib/x86_64-linux-gnu/libnvat.so.1.2.0}"
+STAGE="mkosi/base/mkosi.local/mkosi.extra"
+
+die() { printf 'steep-fetch-attest-gpu: %s\n' "$*" >&2; exit 1; }
+
+[[ -f "$ATTEST_GPU_BIN" ]] || die "attestation-api-gpu binary not found at $ATTEST_GPU_BIN (set ATTEST_GPU_BIN)."
+[[ -f "$LIBNVAT" ]] || die "libnvat not found at $LIBNVAT (set LIBNVAT; build per tdx-checkpoints/026)."
+# Sanity: the binary must actually be the GPU-collector build.
+ldd "$ATTEST_GPU_BIN" 2>/dev/null | grep -q libnvat || die "$ATTEST_GPU_BIN does not link libnvat — is it the --features nvidia-gpu-attest build?"
+
+LIBDIR="$STAGE/usr/lib/x86_64-linux-gnu"
+mkdir -p "$STAGE/usr/local/bin" "$LIBDIR"
+
+echo "staging attestation-api (gpu) binary"
+install -m0755 "$ATTEST_GPU_BIN" "$STAGE/usr/local/bin/attestation-api"
+
+echo "staging libnvat + soname symlinks"
+soname="$(basename "$LIBNVAT")"                 # libnvat.so.1.2.0
+install -m0755 "$LIBNVAT" "$LIBDIR/$soname"
+ln -sf "$soname" "$LIBDIR/libnvat.so.1"
+ln -sf "libnvat.so.1" "$LIBDIR/libnvat.so"
+
+# Bundle libnvat's deps that the steep base doesn't ship at a matching soname:
+# libicu*.so.NN (versioned major differs across distros) and libxml2.so.2
+# (resolute has no `libxml2` apt package, and its own build drags the same
+# versioned ICU). Everything else libnvat needs — libz, liblzma, libstdc++,
+# libgcc_s — has a stable soname present in the base. Auto-discovered via ldd
+# so the exact versions libnvat was built against travel with it.
+echo "bundling libnvat's versioned deps (ICU + libxml2)"
+for lib in $(ldd "$LIBNVAT" 2>/dev/null | awk '/libicu|libxml2/{print $3}'); do
+    [[ -f "$lib" ]] || continue
+    b="$(basename "$lib")"
+    install -m0644 "$(readlink -f "$lib")" "$LIBDIR/$b"
+    echo "  bundled $b"
+done
+
+echo "steep-fetch-attest-gpu done — staged under $STAGE"

@@ -27,7 +27,12 @@ enabled = false
 
 [attestation]
 enabled = true
-# This TDX host runs QGS on vsock, so the quote path is vsock-first.
+# vsock: fetch quotes from the host's QGS over AF_VSOCK (CID 2, port 4050) —
+# the GPU-image kernel enables vsock for exactly this (kernel/gpu.config).
+# The ConfigFS-TSM path also works but is far too slow for a serving endpoint
+# (~1s+/quote); it remains the fallback if you set "auto". The launch stack
+# must give the guest a vsock device (manual: -device vhost-vsock-pci;
+# KubeVirt: autoattachVSOCK) and run QGS on the host.
 tdx_quote_method = "vsock"
 # GPU is NOT a platform here — it is a per-request add-on (see header).
 platforms = ["tdx"]

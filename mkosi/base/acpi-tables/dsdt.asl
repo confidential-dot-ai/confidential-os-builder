@@ -93,11 +93,31 @@ DefinitionBlock ("dsdt.aml", "DSDT", 1, "BOCHS ", "BXPC    ", 0x00000002)
                     Cacheable, ReadWrite,
                     0x00000000, 0xC0000000, 0xFEBFFFFF, 0x00000000, 0x3EC00000)
 
-                /* 64-bit MMIO window. */
+                /* 64-bit MMIO window (low): 32GiB..1TiB. Used by firmware for
+                 * device BARs on small-memory guests. NOTE: Linux drops a
+                 * host-bridge window ENTIRELY if any part of it overlaps
+                 * System RAM, so guests with >=32GiB of RAM lose this window
+                 * — the high window below exists for exactly that case. */
                 QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     Cacheable, ReadWrite,
                     0x0000000000000000, 0x0000000800000000, 0x000000FFFFFFFFFF,
                     0x0000000000000000, 0x000000F800000000)
+
+                /* 64-bit MMIO window (high): 32TiB..64TiB. Covers the region
+                 * where OVMF places very large BARs (observed: 56TiB base for
+                 * B200 GPUs, whose resizable BAR2 is 256GiB — one GPU needs a
+                 * ~384GiB bridge window, so 8 GPUs need ~3TiB). RAM can never
+                 * reach 32TiB on supported hosts, so unlike the low window
+                 * this one is immune to the RAM-conflict drop; 64TiB is the
+                 * 46-bit physical-address ceiling of this host's CPUs.
+                 * Without this window, multi-GPU guests fail driver probe
+                 * with "BAR0 is 0M @ 0x0" (kernel can't claim the
+                 * firmware-placed BARs: "can't claim; no compatible bridge
+                 * window" -> "can't assign; no space"). */
+                QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    Cacheable, ReadWrite,
+                    0x0000000000000000, 0x0000200000000000, 0x00003FFFFFFFFFFF,
+                    0x0000000000000000, 0x0000200000000000)
             })
         }
     }

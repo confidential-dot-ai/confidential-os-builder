@@ -10,5 +10,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/nvidia-gpu-flr
 
+# vsock fence: only attestation-api may use AF_VSOCK (see kernel/gpu.config).
+RestrictAddressFamilies=AF_UNIX
+
 [Install]
 WantedBy=multi-user.target

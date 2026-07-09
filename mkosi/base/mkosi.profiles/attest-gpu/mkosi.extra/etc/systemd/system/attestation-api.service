@@ -17,6 +17,19 @@ DeviceAllow=/dev/tdx_guest rwm
 DeviceAllow=/dev/nvidiactl rwm
 DeviceAllow=/dev/nvidia-uvm rwm
 DeviceAllow=char-nvidia-frontend rwm
+# --- vsock fence -------------------------------------------------------------
+# This is the ONLY unit in the image allowed AF_VSOCK: the TDX quote is fetched
+# from the host QGS over vsock (CID 2, port 4050). Every other unit carries a
+# RestrictAddressFamilies= line WITHOUT AF_VSOCK, so attestation is the sole
+# consumer of the host<->guest channel. UNIX for local plumbing (NVML <->
+# persistenced), INET/INET6 for the HTTP endpoint + NRAS egress, NETLINK for
+# trivial ifquery paths libc may take.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_VSOCK
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+LockPersonality=yes
+RestrictRealtime=yes
 
 [Install]
 WantedBy=multi-user.target

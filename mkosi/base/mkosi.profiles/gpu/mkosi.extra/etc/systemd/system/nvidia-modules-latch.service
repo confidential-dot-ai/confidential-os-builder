@@ -14,5 +14,8 @@ RemainAfterExit=yes
 # the point — no module may load for the rest of this boot.
 ExecStart=/sbin/sysctl -w kernel.modules_disabled=1
 
+# vsock fence: only attestation-api may use AF_VSOCK (see kernel/gpu.config).
+RestrictAddressFamilies=AF_UNIX
+
 [Install]
 WantedBy=multi-user.target

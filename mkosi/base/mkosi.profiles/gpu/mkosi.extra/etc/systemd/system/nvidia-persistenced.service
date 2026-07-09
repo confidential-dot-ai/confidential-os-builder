@@ -21,5 +21,9 @@ ExecCondition=/bin/sh -c 'grep -qx 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/n
 ExecStart=/usr/bin/nvidia-persistenced --uvm-persistence-mode --verbose
 ExecStopPost=-/bin/rm -rf /var/run/nvidia-persistenced
 
+# vsock fence: only attestation-api may use AF_VSOCK (see kernel/gpu.config).
+RestrictAddressFamilies=AF_UNIX
+
 [Install]
 WantedBy=multi-user.target
+
