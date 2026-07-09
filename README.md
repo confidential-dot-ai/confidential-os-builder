@@ -75,6 +75,8 @@ steep build [OPTIONS] [NAME]
 | `-e, --extra <DIR>` | (none) | Directory whose contents are recursively copied **on top of** mkosi's base image filesystem. File modes and symlinks are preserved. Use this to bake binaries, systemd units, configuration files, etc. into the verity root. Measured. |
 | `-p, --package <PKG>` | (none) | Extra apt package to install in the base image. Repeatable, also accepts comma-separated lists (`-p curl,jq,iproute2` or `-p curl -p jq`). Passed through to mkosi as `--package=`. |
 | `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after `required.config` + `hardening.config`. Omitted → steep's hardened required+hardening baseline kernel. Lets a project enable extra kernel symbols without modifying steep. The build rewrites `kernel/config-x86_64.snapshot` with the resolved config (see [Snapshots](#snapshots)). |
+| `--kernel-builder-package <PKG>` | (none) | Extra package installed into the kernel-builder tools tree (where the custom kernel is compiled), not the guest image. Repeatable and comma-separated. Use for build-time tools a fragment needs — e.g. `dwarves` (pahole) when the fragment enables `CONFIG_DEBUG_INFO_BTF`. |
+| `-s, --script <FILE>` | (none) | mkosi post-install script (`--postinst-script`) run inside the image build with network enabled, so it can download resources. Measured — the script's effects land in the verity root. |
 | `--profile dev` | off | Enable the `dev` profile: a systemd drop-in that gives root a passwordless autologin on the serial gettys, plus `console=ttyS0` on the measured cmdline. Useful for testing; changes the image measurement. Pair with `--kernel-config-fragment kernel/dev.config` to actually get ttyS0 output. **Don't ship with this on** — under the SNP threat model the host controls the serial port. |
 | `--platform <snp\|tdx\|both>` | `both` | Which confidential-VM platform(s) to measure for. `both` emits both `snp_variants[]` IGVM measurements AND a singleton `tdx` measurement block. `snp` is IGVM-only. `tdx` skips IGVM and only computes the TDX registers. The same UKI + disk artifacts feed both measurement paths. |
 | `--skip-igvm` | off | DEPRECATED — accepted as an alias for `--platform tdx` so older shell wrappers keep working. The combination `--skip-igvm --platform snp` is rejected (it asks for an SNP launch digest while also opting out of IGVM generation). |
@@ -108,12 +110,13 @@ steep build myimage \
 ### `steep run` — boot a built VM in QEMU
 
 ```bash
-steep run [OPTIONS] <DIR>
+steep run [OPTIONS] [DIR]
 ```
 
 | Arg / flag | Default | Purpose |
 |---|---|---|
-| `DIR` | required | Output directory from `steep build` (contains `manifest.json`). |
+| `DIR` | `output/base` | Output directory from `steep build` (contains `manifest.json`). |
+| `--scratch <SIZE>` | (none) | Attach a fresh ephemeral disk labeled `scratch`; the initrd encrypts it with a random key and mounts it as expanded writable space. See [Ephemeral scratch space](#ephemeral-scratch-space). |
 | `--port-forward HOST:GUEST` | (none) | Forward a host port to a guest port. Repeatable: `--port-forward 8080:80 --port-forward 2222:22`. |
 | `--qemu-bin <PATH>` | `qemu-system-x86_64` (env: `STEEP_QEMU_BIN`) | QEMU binary to invoke. |
 | `--firmware <PATH>` | (manifest, or arg) (env: `STEEP_FIRMWARE`) | OVMF firmware override. Needed when the image was built with `--skip-igvm` and you're booting on KVM (which needs the firmware separately rather than as part of an IGVM). |
@@ -163,7 +166,8 @@ steep pull [OPTIONS] <NAME>
 | Flag | Default | Purpose |
 |---|---|---|
 | `--registry <URL>` | `docker.io/confidentialai` | OCI Registry root. |
-| `--name <NAME>` | `<DIR basename>` (push) / required (pull) | Image name segment. |
+| `--name <NAME>` (push) | `<DIR basename>` | Image name segment. For `pull` the name is the positional `<NAME>` argument, not a flag. |
+| `--cdi` (push) | off | Pack everything into a single `tar+gzip` layer with `disk.raw` under `disk/` — the layout KubeVirt CDI's registry importer expects. |
 | `--tag <TAG>` | `latest` | Image tag. |
 
 ### `steep igvm` — generate additional IGVM SMP variants
