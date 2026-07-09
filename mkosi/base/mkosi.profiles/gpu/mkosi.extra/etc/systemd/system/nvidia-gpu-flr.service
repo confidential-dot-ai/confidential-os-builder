@@ -1,0 +1,14 @@
+[Unit]
+Description=FLR NVIDIA GPUs before first driver attach (CC SPDM precondition)
+# After the module is resident, strictly before anything can attach the GPU.
+# See /usr/local/bin/nvidia-gpu-flr for the full rationale.
+After=systemd-modules-load.service
+Before=nvidia-persistenced.service nvidia-cc-ready.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/nvidia-gpu-flr
+
+[Install]
+WantedBy=multi-user.target
