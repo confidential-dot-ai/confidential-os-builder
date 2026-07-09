@@ -171,7 +171,7 @@ steep pull [OPTIONS] <NAME>
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--registry <URL>` | `docker.io/confidentialai` | OCI Registry root. |
+| `--registry <URL>` | `ghcr.io/confidential-dot-ai/steep` (env: `STEEP_OCI_REGISTRY`) | Registry root — matches where CI publishes `base`, so `steep pull base` fetches the published image. |
 | `--name <NAME>` (push) | `<DIR basename>` | Image name segment. For `pull` the name is the positional `<NAME>` argument, not a flag. |
 | `--cdi` (push) | off | Pack everything into a single `tar+gzip` layer with `disk.raw` under `disk/` — the layout KubeVirt CDI's registry importer expects. |
 | `--tag <TAG>` | `latest` | Image tag. |

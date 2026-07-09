@@ -208,11 +208,11 @@ pub struct PushArgs {
     /// Directory to push (output from `steep build`)
     pub dir: PathBuf,
 
-    /// OCI registry (e.g. docker.io/confidentialai)
+    /// OCI registry (e.g. ghcr.io/confidential-dot-ai/steep)
     #[arg(
         long,
         env = "STEEP_OCI_REGISTRY",
-        default_value = "ghcr.io/confidential-dot-ai"
+        default_value = "docker.io/confidentialai"
     )]
     pub registry: String,
 
@@ -241,7 +241,7 @@ pub struct PullArgs {
     #[arg(
         long,
         env = "STEEP_OCI_REGISTRY",
-        default_value = "docker.io/confidentialai"
+        default_value = "ghcr.io/confidential-dot-ai/steep"
     )]
     pub registry: String,
 
