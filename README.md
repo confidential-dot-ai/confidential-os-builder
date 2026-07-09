@@ -8,8 +8,16 @@ SNP hardware.
 
 | Document | What it covers |
 |----------|---------------|
-| [Concepts](docs/CONCEPTS.md) | Architecture, boot steps, image structure to ensure security |
-| [Reproducibility](docs/REPRODUCIBILITY.md) | Changes needed, prior art, comparisons to other work |
+| [Tutorial](docs/TUTORIAL.md) | Guided first session: build, boot, deploy a workload, find the measurements |
+| [Verifying](docs/VERIFYING.md) | How a relying party verifies artifacts, attests running guests, reproduces builds |
+| [Threat model](docs/THREAT_MODEL.md) | What steep images defend against, trust assumptions, explicit non-goals |
+| [Deploying](docs/DEPLOYING.md) | Production host requirements, KubeVirt, scratch disks, operational policy |
+| [Manifest reference](docs/MANIFEST.md) | Every `manifest.json` field and its role in verification |
+| [Versioning](docs/VERSIONING.md) | Version scheme and what invalidates published measurements |
+| [Concepts](docs/CONCEPTS.md) | Ground-up explanations: UEFI, UKI, dm-verity, IGVM, measured boot |
+| [Architecture](docs/ARCHITECTURE.md) | Codebase map and design invariants, for contributors |
+| [Reproducibility](docs/REPRODUCIBILITY.md) | How bit-identical builds are achieved, prior art, open questions |
+| [FAQ](docs/FAQ.md) | Positioning vs. mkosi/Constellation, security model questions, practicalities |
 
 ## Running steep-built VMs
 
@@ -122,7 +130,7 @@ steep run [OPTIONS] [DIR]
 | Arg / flag | Default | Purpose |
 |---|---|---|
 | `DIR` | `output/base` | Output directory from `steep build` (contains `manifest.json`). |
-| `--scratch <SIZE>` | (none) | Attach a fresh ephemeral disk labeled `scratch`; the initrd encrypts it with a random key and mounts it as expanded writable space. See [Ephemeral scratch space](#ephemeral-scratch-space). |
+| `--scratch <SIZE>` | (none) | Attach a fresh ephemeral disk (virtio-block serial `confai-scratch`); the initrd encrypts it with a random key and mounts it as expanded writable space. See [Ephemeral scratch space](#ephemeral-scratch-space). |
 | `--port-forward HOST:GUEST` | (none) | Forward a host port to a guest port. Repeatable: `--port-forward 8080:80 --port-forward 2222:22`. |
 | `--qemu-bin <PATH>` | `qemu-system-x86_64` (env: `STEEP_QEMU_BIN`) | QEMU binary to invoke. |
 | `--firmware <PATH>` | (manifest, or arg) (env: `STEEP_FIRMWARE`) | OVMF firmware override. Needed when the image was built with `--skip-igvm` and you're booting on KVM (which needs the firmware separately rather than as part of an IGVM). |
@@ -192,9 +200,10 @@ Steep ships a hardened guest kernel built from `kernel/version` (linux 6.16.12) 
 |---|---|---|
 | `kernel/required.config` | Filesystems, dm-verity, SEV-SNP guest support, devtmpfs | Always |
 | `kernel/hardening.config` | Lockdown LSM, KASLR, stack protector, attack-surface trims (USB / PCI hotplug / DRM off, etc.) | Always |
+| `kernel/confidential.config` | Intel TDX guest support, `ACPI_TABLE_UPGRADE` for the trusted-DSDT override | Always, after hardening |
 | `--kernel-config-fragment <PATH>` | Whatever the caller's fragment enables — steep ships none | Only when the flag is passed |
 
-steep itself builds only `required + hardening` — a minimal hardened microVM kernel, and **steep carries no project-specific kernel config**. A project that needs extra kernel symbols (a wider networking stack, additional filesystems, cgroup features, …) keeps its own fragment file in its own repo and passes it via `--kernel-config-fragment`. steep merges it after `required + hardening`; nothing else about the build changes.
+steep itself builds only `required + hardening + confidential` — a minimal hardened confidential-microVM kernel, and **steep carries no project-specific kernel config**. A project that needs extra kernel symbols (a wider networking stack, additional filesystems, cgroup features, …) keeps its own fragment file in its own repo and passes it via `--kernel-config-fragment`. steep merges it last; nothing else about the build changes.
 
 ### Trusted DSDT (TDX BadAML mitigation)
 
@@ -255,17 +264,23 @@ RAM tmpfs, so build tasks that need more room run out of space. Attach an
 steep run output/NAME --scratch 20G
 ```
 
-This creates a fresh `scratch.raw` labeled `scratch` and attaches it writable.
-The initrd detects any whole-device `LABEL=scratch` disk, encrypts it with a
-random key generated in-guest at boot (never persisted), formats it, and uses
-it as the overlay upper layer — so the entire root filesystem gains the space
-transparently.
+This creates a fresh `scratch.raw` and attaches it as a virtio-blk device with
+the **virtio-block serial `confai-scratch`**. The initrd matches on that serial
+(not a filesystem label — the disk needs no formatting or partitioning at
+all), encrypts it with a random key generated in-guest at boot (never
+persisted), formats it, and uses it as the overlay upper layer — so the entire
+root filesystem gains the space transparently.
 
 The disk is **ephemeral**: the key is discarded on shutdown, so contents do not
 survive a reboot, and the host (untrusted on SNP) only ever sees ciphertext. In
-production, attach your own `LABEL=scratch` block device instead of using
-`--scratch`. A persistent `LABEL=data` disk continues to take the existing
-plaintext path mounted at `/data`.
+production, attach your own block device with `serial=confai-scratch` on the
+virtio-blk device instead of using `--scratch` (see
+[Deploying](docs/DEPLOYING.md#storage) for the QEMU arguments).
+
+Steep currently has no persistent-disk convention: everything in the guest is
+either measured-and-read-only or ephemeral. A workload that needs durable
+state must attach its own disk and bring its own encryption and integrity
+protection — see [Deploying](docs/DEPLOYING.md#persistent-data).
 
 ## Measurement Chain
 

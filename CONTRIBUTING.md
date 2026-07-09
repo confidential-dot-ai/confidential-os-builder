@@ -1,5 +1,9 @@
 # Contributing to steep
 
+Participation in this project is covered by our
+[Code of Conduct](CODE_OF_CONDUCT.md). A map of the codebase and the design
+invariants to preserve is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Setup
 
 Follow the [Installation](README.md#installation) section: clone, run

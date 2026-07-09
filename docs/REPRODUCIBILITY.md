@@ -18,9 +18,14 @@ This follows the same model as Constellation (Edgeless Systems) and is the stand
 Verifier checks:
   1. SNP attestation report is hardware-signed (AMD VCEK) ✓
   2. IGVM launch measurement matches published measurement ✓
-  3. Published measurement is signed by us (cosign/sigstore) ✓
+  3. Published measurement obtained via a trusted channel ✓
   4. (Optional) Verifier reproduces base image to confirm our toolchain is honest ✓
 ```
+
+Steep does not yet sign published measurements (cosign/sigstore signing is
+planned — Constellation's model, below); until then step 3 rests entirely on
+the channel the verifier fetched `manifest.json` from, e.g. this repository
+or their own build.
 
 The base image reproducibility serves as an **audit mechanism** — anyone can rebuild it to verify we aren't shipping a tampered base.
 

@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose new functionality or a change in behavior
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that steep currently can't, or makes harder than it should be?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How you imagine it working — CLI flags, config, behavior. Rough is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Measurement / security impact
+      description: |
+        Steep's core invariant is that everything executing in the guest is
+        measured and builds stay reproducible. Does your proposal add content
+        to images, change the boot chain, or introduce nondeterminism? How
+        does it stay inside the invariant?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you're using today, or other designs you rejected.
