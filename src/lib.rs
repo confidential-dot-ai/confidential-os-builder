@@ -220,8 +220,8 @@ pub struct PushArgs {
     /// Directory to push (output from `steep build`)
     pub dir: PathBuf,
 
-    /// OCI registry (e.g. ghcr.io/lunal-dev)
-    #[arg(long, default_value = "ghcr.io/lunal-dev")]
+    /// OCI registry (e.g. ghcr.io/confidential-dot-ai)
+    #[arg(long, default_value = "ghcr.io/confidential-dot-ai")]
     pub registry: String,
 
     /// Image name
@@ -245,8 +245,8 @@ pub struct PullArgs {
     /// Image name to pull (e.g. "base")
     pub name: String,
 
-    /// OCI registry (e.g. ghcr.io/lunal-dev)
-    #[arg(long, default_value = "ghcr.io/lunal-dev")]
+    /// OCI registry (e.g. ghcr.io/confidential-dot-ai)
+    #[arg(long, default_value = "ghcr.io/confidential-dot-ai")]
     pub registry: String,
 
     /// Image tag
