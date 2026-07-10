@@ -1,10 +1,11 @@
 # 🍵 steep, secure VM image builder
 
-Steep is a confidential VM image builder for AMD SEV-SNP. It produces
-bit-identical, attestable disk images from declarative configuration. The `build`
-command builds a dm-verity protected root filesystem, bundles it into a Unified
-Kernel Image (UKI), and optionally wraps it in an IGVM for measured launch on
-SNP hardware.
+Steep is a confidential VM image builder for AMD SEV-SNP and Intel TDX. It
+produces bit-identical, attestable disk images from declarative configuration.
+The `build` command builds a dm-verity protected root filesystem, bundles it
+into a Unified Kernel Image (UKI), wraps it in an IGVM for measured launch on
+SNP hardware, and precomputes the TDX measurement registers for the same
+artifacts (see [Scope](#scope)).
 
 | Document | What it covers |
 |----------|---------------|
@@ -49,9 +50,10 @@ The build host needs to be a real Linux system with `sudo` and the kernel/userns
 
 ### Developing
 
-`bin/test` runs the test suite (`cargo nextest run`); `bin/lint` runs clippy
-over all targets. Both are what CI runs, so a clean local pass should mean a
-green PR.
+`bin/test` runs the test suite (`cargo nextest run`); `bin/lint` runs rustfmt
+and clippy over all targets. CI runs both, plus a `cargo deny check` gate for
+dependency licenses and advisories (`deny.toml`) — if your change touches
+`Cargo.toml`/`Cargo.lock`, run that too before opening a PR.
 
 ## Scope
 
@@ -88,16 +90,16 @@ steep build [OPTIONS] [NAME]
 | `-c, --cloud-init <PATH>` | (none) | NoCloud `user-data` file baked into the verity root at `/var/lib/cloud/seed/nocloud/user-data`. Measured into the image. Standard cloud-init `#cloud-config` YAML — see [`examples/caddy.yaml`](examples/caddy.yaml) for a working example that serves a web page from the VM. |
 | `-e, --extra <DIR>` | (none) | Directory whose contents are recursively copied **on top of** mkosi's base image filesystem. File modes and symlinks are preserved. Use this to bake binaries, systemd units, configuration files, etc. into the verity root. Measured. |
 | `-p, --package <PKG>` | (none) | Extra apt package to install in the base image. Repeatable, also accepts comma-separated lists (`-p curl,jq,iproute2` or `-p curl -p jq`). Passed through to mkosi as `--package=`. |
-| `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after `required.config` + `hardening.config`. Omitted → steep's hardened required+hardening baseline kernel. Lets a project enable extra kernel symbols without modifying steep. The build rewrites `kernel/config-x86_64.snapshot` with the resolved config (see [Snapshots](#snapshots)). |
+| `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after steep's three always-applied fragments (`required.config` + `hardening.config` + `confidential.config`). Omitted → steep's hardened baseline kernel. Lets a project enable extra kernel symbols without modifying steep. The build rewrites `kernel/config-x86_64.snapshot` with the resolved config (see [Snapshots](#snapshots)). |
 | `--kernel-builder-package <PKG>` | (none) | Extra package installed into the kernel-builder tools tree (where the custom kernel is compiled), not the guest image. Repeatable and comma-separated. Use for build-time tools a fragment needs — e.g. `dwarves` (pahole) when the fragment enables `CONFIG_DEBUG_INFO_BTF`. |
 | `-s, --script <FILE>` | (none) | mkosi post-install script (`--postinst-script`) run inside the image build with network enabled, so it can download resources. Measured — the script's effects land in the verity root. |
-| `--profile dev` | off | Enable the `dev` profile: a systemd drop-in that gives root a passwordless autologin on the serial gettys, plus `console=ttyS0` on the measured cmdline. Useful for testing; changes the image measurement. Pair with `--kernel-config-fragment kernel/dev.config` to actually get ttyS0 output. **Don't ship with this on** — under the SNP threat model the host controls the serial port. |
+| `--profile <NAME>` | (none) | Enable an mkosi profile from `mkosi/base/mkosi.profiles/<NAME>/`. Repeatable and composable (`--profile attest --profile ssh`). Shipped profiles: `dev` — passwordless root autologin on the serial gettys plus `console=ttyS0` on the measured cmdline; pair with `--kernel-config-fragment kernel/dev.config` to actually get ttyS0 output; **don't ship with this on** — under the SNP threat model the host controls the serial port. `attest` — bakes the attestation-api HTTP service (pulled from GHCR, pinned by digest) into the verity root. `ssh` — bakes `openssh-server`; host keys are stripped for reproducibility and regenerated on first boot onto the unattested overlay. Every profile changes the image measurement. |
 | `--platform <snp\|tdx\|both>` | `both` | Which confidential-VM platform(s) to measure for. `both` emits both `snp_variants[]` IGVM measurements AND a singleton `tdx` measurement block. `snp` is IGVM-only. `tdx` skips IGVM and only computes the TDX registers. The same UKI + disk artifacts feed both measurement paths. |
 | `--skip-igvm` | off | DEPRECATED — accepted as an alias for `--platform tdx` so older shell wrappers keep working. The combination `--skip-igvm --platform snp` is rejected (it asks for an SNP launch digest while also opting out of IGVM generation). |
 | `--firmware <PATH>` | `output/OVMF.fd` (env: `STEEP_FIRMWARE`) | OVMF firmware binary used for SNP launch. Must be steep's edk2 build with the `IgvmHobArea` region (region type 0x200) — IGVM construction injects UKI/shim/cert bytes into that area. Ubuntu's stock OVMF does not have this region and will fail IGVM build. |
-| `--tdx-firmware <PATH>` | `/usr/share/ovmf/OVMF.fd` (env: `STEEP_TDX_FIRMWARE`) | OVMF firmware used for TDX measurement. Must be a build with TDVF code paths compiled in (the `ovmf` package binary works). Steep's IGVM-aware firmware does NOT include TDVF — a TDX guest booted on it hangs silently in firmware. The TDX `mrtd` in the manifest is the hash of THIS firmware, not `--firmware`. Ignored when `--platform snp`. |
+| `--tdx-firmware <PATH>` | `/usr/share/ovmf/OVMF.fd` (env: `STEEP_TDX_FIRMWARE`) | OVMF firmware used for TDX measurement. Must be a build with TDVF code paths compiled in (the `ovmf` package binary works). Steep's IGVM-aware firmware does NOT include TDVF — a TDX guest booted on it hangs silently in firmware. The TDX `mrtd` in the manifest is computed from THIS firmware's measured regions (not from `--firmware`, and not a plain file hash — that's `tdx.firmware.sha256`). Ignored when `--platform snp`. |
 | `--memory <SIZE>` | `4G` | VM memory recorded in `manifest.json` (`build.memory`). `steep run` reads this when booting the image; not used at build time. QEMU-style suffix (`512M`, `8G`, `64G`). |
-| `--smp <N>...` | `2 4 8 16` | vCPU counts to build IGVM variants for. Repeatable/space-separated. Each count produces a `guest-smp<N>.igvm` and an `snp_variants[]` manifest entry (SMP count is part of the SNP launch measurement). Recorded in `manifest.json`; `steep run` picks a variant from it. |
+| `--smp <N>...` | `2 4 8 16` | vCPU counts to build IGVM variants for. Repeatable/space-separated. Each count produces a `guest-smp<N>.igvm` and an `snp_variants[]` manifest entry (SMP count is part of the SNP launch measurement). Recorded in `manifest.json`; `steep run` boots the first entry (see [`steep run`](#steep-run--boot-a-built-vm-in-qemu)). |
 
 #### Examples
 
@@ -140,9 +142,47 @@ steep run [OPTIONS] [DIR]
 - **KVM** if `/dev/kvm` is present but SNP support is missing. Loads the UKI + OVMF directly. No measurement.
 - **Emulated** otherwise. Same as KVM but in software. Very slow; useful for CI smoke tests only.
 
+On the SEV-SNP tier, `steep run` always boots the **first** `snp_variants[]`
+entry in the manifest — with the default `--smp 2 4 8 16` build that means a
+2-vCPU guest. There is no `--smp` selector on `steep run` yet; to boot a
+different variant on SNP hardware, invoke QEMU directly with the matching
+`guest-smp<N>.igvm` (see [Deploying](docs/DEPLOYING.md)).
+
+Note: `steep run` needs the QEMU system emulator (`qemu-system-x86_64`),
+which `bin/setup` does **not** install (it only installs `qemu-utils`). On
+Ubuntu: `sudo apt install qemu-system-x86`.
+
+### Ephemeral scratch space
+
+A booted CVM's writable root is an overlay whose upper layer defaults to a 2G
+RAM tmpfs, so build tasks that need more room run out of space. Attach an
+**ephemeral encrypted scratch disk** to expand it:
+
+```bash
+steep run output/NAME --scratch 20G
+```
+
+This creates a fresh `scratch.raw` and attaches it as a virtio-blk device with
+the **virtio-block serial `confai-scratch`**. The initrd matches on that serial
+(not a filesystem label — the disk needs no formatting or partitioning at
+all), encrypts it with a random key generated in-guest at boot (never
+persisted), formats it, and uses it as the overlay upper layer — so the entire
+root filesystem gains the space transparently.
+
+The disk is **ephemeral**: the key is discarded on shutdown, so contents do not
+survive a reboot, and the host (untrusted on SNP) only ever sees ciphertext. In
+production, attach your own block device with `serial=confai-scratch` on the
+virtio-blk device instead of using `--scratch` (see
+[Deploying](docs/DEPLOYING.md#storage) for the QEMU arguments).
+
+Steep currently has no persistent-disk convention: everything in the guest is
+either measured-and-read-only or ephemeral. A workload that needs durable
+state must attach its own disk and bring its own encryption and integrity
+protection — see [Deploying](docs/DEPLOYING.md#persistent-data).
+
 ### `steep kernel` — (re)build the custom kernel
 
-Usually called transparently by `steep build`. Run directly when you've edited a fragment or bumped the kernel version.
+Usually called transparently by `steep build`. Run directly when you've edited a fragment or bumped the kernel version. (It's a maintenance helper, hidden from `steep --help`, but stable enough to document here.)
 
 ```bash
 steep kernel [OPTIONS]
@@ -151,7 +191,7 @@ steep kernel [OPTIONS]
 | Arg / flag | Default | Purpose |
 |---|---|---|
 | `-o, --output <DIR>` | `output/kernel` | Where the resulting `vmlinuz`, `manifest.json`, build cache live. |
-| `--kernel-config-fragment <PATH>` | (none) | Extra config fragment merged after required + hardening. Omitted → steep's baseline kernel. |
+| `--kernel-config-fragment <PATH>` | (none) | Extra config fragment merged after required + hardening + confidential. Omitted → steep's baseline kernel. |
 | `-f, --force` | off | Bypass the kernel cache. Forces a full rebuild even if the manifest fingerprint matches. |
 
 Every build rewrites `kernel/config-x86_64.snapshot` with the resolved `.config` (see [Snapshots](#snapshots)). Typical lifecycle when editing a fragment:
@@ -253,34 +293,6 @@ After a build, review the snapshot:
 - An **unexpected** change is worth investigating: a kernel version bump can silently enable/disable cascading dependencies, and build-environment differences (mkosi version, toolchain version) between developers can shift the resolved config.
 
 The snapshot reflects the most recent build's inputs. Building with `--kernel-config-fragment` resolves a different `.config` than steep's bare baseline, so the snapshot will show that fragment's effect; revert it with `git checkout kernel/config-x86_64.snapshot` if that build was a one-off.
-
-#### Ephemeral scratch space
-
-A booted CVM's writable root is an overlay whose upper layer defaults to a 2G
-RAM tmpfs, so build tasks that need more room run out of space. Attach an
-**ephemeral encrypted scratch disk** to expand it:
-
-```bash
-steep run output/NAME --scratch 20G
-```
-
-This creates a fresh `scratch.raw` and attaches it as a virtio-blk device with
-the **virtio-block serial `confai-scratch`**. The initrd matches on that serial
-(not a filesystem label — the disk needs no formatting or partitioning at
-all), encrypts it with a random key generated in-guest at boot (never
-persisted), formats it, and uses it as the overlay upper layer — so the entire
-root filesystem gains the space transparently.
-
-The disk is **ephemeral**: the key is discarded on shutdown, so contents do not
-survive a reboot, and the host (untrusted on SNP) only ever sees ciphertext. In
-production, attach your own block device with `serial=confai-scratch` on the
-virtio-blk device instead of using `--scratch` (see
-[Deploying](docs/DEPLOYING.md#storage) for the QEMU arguments).
-
-Steep currently has no persistent-disk convention: everything in the guest is
-either measured-and-read-only or ephemeral. A workload that needs durable
-state must attach its own disk and bring its own encryption and integrity
-protection — see [Deploying](docs/DEPLOYING.md#persistent-data).
 
 ## Measurement Chain
 

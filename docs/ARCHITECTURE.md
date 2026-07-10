@@ -81,7 +81,7 @@ verifiers can `cargo install` just the measurement tool.
 
 | Dir | Produces |
 |---|---|
-| `base/` | The Ubuntu guest rootfs → erofs+verity disk and UKI. `mkosi.conf.d/` splits config, `mkosi.extra/` is baked-in filesystem content, `mkosi.profiles/` holds the `dev` profile, `mkosi.repart/` defines the GPT layout, `acpi-tables/dsdt.asl` is the trusted DSDT source |
+| `base/` | The Ubuntu guest rootfs → erofs+verity disk and UKI. `mkosi.conf.d/` splits config, `mkosi.extra/` is baked-in filesystem content, `mkosi.profiles/` holds the `dev` (serial autologin), `attest` (attestation-api service, fetched from GHCR by digest), and `ssh` (openssh-server, host keys stripped for reproducibility) profiles, `mkosi.repart/` defines the GPT layout, `acpi-tables/dsdt.asl` is the trusted DSDT source |
 | `initrd/` | A minimal custom initrd; `mkosi.extra/init` is the entire early-boot logic — verity root setup, overlay assembly, scratch-disk detection/encryption |
 | `kernel-builder/` | A tools-tree image in which the guest kernel is compiled, isolating the toolchain from the host for reproducibility |
 
@@ -91,16 +91,18 @@ documented in [REPRODUCIBILITY.md](REPRODUCIBILITY.md).
 ### Everything else
 
 - `bin/` — `setup` (host deps), `steep` (cargo-build-and-run wrapper),
-  `test` (cargo-nextest), `lint` (clippy). `test`/`lint` are exactly what CI
-  runs.
+  `test` (cargo-nextest), `lint` (rustfmt + clippy). CI runs both, plus a
+  `cargo deny check` gate (licenses/advisories) and a release build that
+  `test`/`lint` don't cover locally.
 - `tests/` — integration tests: CLI surface (`cli.rs`), manifest round-trips
   (`manifest.rs`), kernel config resolution (`kernel.rs`), QEMU argument
   construction and scratch behavior (`qemu.rs`, `qemu_scratch.rs`), tool
   discovery (`tools.rs`), plus `e2e.sh` for full build-and-boot runs that
   need a capable host.
-- `.github/workflows/` — `test.yml` (bin/test on Linux x86/arm + macOS,
-  bin/lint on Linux); `base.yml` (builds the base image on every push to
-  `main` and publishes it to GHCR via oras, tagged `latest` + short SHA).
+- `.github/workflows/` — `test.yml` (bin/test on Linux x86/arm + macOS;
+  bin/lint, cargo-deny, and a build job on Linux); `base.yml` (builds the
+  base image on every push to `main` and publishes it to GHCR via oras,
+  tagged `latest` + short SHA).
 - `output/OVMF.fd` — the one committed binary: steep's IGVM-aware OVMF built
   from the [edk2 fork](https://github.com/confidential-dot-ai/edk2). It's
   checked in (despite `output/` being gitignored) so builds work without

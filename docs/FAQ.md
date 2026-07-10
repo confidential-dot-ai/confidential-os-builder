@@ -113,8 +113,12 @@ All are measured — each changes the image's digests, which is the point.
 By design: the attack surface is what you bake in, nothing more. For
 interactive debugging build a separate image with `--profile dev` (serial
 root autologin) — its measurement differs from production's, so it can't be
-confused for it. For production debugging, your workload has to bring its
-own (attested, authenticated) channel.
+confused for it. If your deployment genuinely needs SSH, `--profile ssh`
+bakes `openssh-server` into the measured rootfs (host keys are stripped at
+build time for reproducibility and regenerated on first boot, onto the
+unattested overlay) — that too changes the measurement. Otherwise, for
+production debugging your workload has to bring its own (attested,
+authenticated) channel.
 
 ### Can I run containers inside a steep guest?
 

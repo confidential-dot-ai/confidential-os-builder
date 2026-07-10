@@ -26,6 +26,11 @@ Initial public release.
   (TDX BadAML mitigation; enables topology-invariant TDX manifests).
 - Manifest schema v3: `snp_variants[]` + singleton `tdx` block.
 - `steep run` (SNP → KVM → emulated tier autodetection, port forwarding,
-  ephemeral encrypted scratch disks), `steep kernel`, `steep igvm`,
-  `steep push` / `steep pull` (OCI via oras, optional KubeVirt CDI layout).
+  ephemeral encrypted scratch disks), `steep igvm`,
+  `steep push` / `steep pull` (OCI via oras, optional KubeVirt CDI layout),
+  and `steep kernel` (a hidden helper subcommand for iterating on kernel
+  config out-of-band; `steep build` invokes the same machinery).
 - CI-published base image at `ghcr.io/confidential-dot-ai/steep/base`.
+
+[Unreleased]: https://github.com/confidential-dot-ai/steep/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/confidential-dot-ai/steep/releases/tag/v0.1.0

@@ -17,8 +17,13 @@ plain KVM or emulation for booting.
 ```bash
 git clone https://github.com/confidential-dot-ai/steep.git
 cd steep
-bin/setup        # installs mkosi v26, qemu, swtpm, rust, cargo-nextest
+bin/setup        # installs mkosi v26, qemu-utils, swtpm, iasl, ovmf, rust, cargo-nextest
+sudo apt install qemu-system-x86   # the emulator itself — bin/setup does NOT install it
 ```
+
+`bin/setup` installs everything `steep build` needs. The extra
+`qemu-system-x86` package provides `qemu-system-x86_64`, which `steep run`
+uses to boot images from step 2 onward.
 
 ## 1. Build the base image
 
@@ -43,7 +48,8 @@ When it finishes, look at what you got:
 
 ```bash
 ls output/base/
-# disk.raw  uki.efi  roothash  manifest.json  OVMF.fd  OVMF.tdx.fd  guest-smp2.igvm ...
+# OVMF.fd  OVMF.tdx.fd  combined-initrd.img  disk.raw  dsdt.aml
+# guest-smp2.igvm ...  manifest.json  roothash  uki.efi
 
 jq '{platform: .build.platform,
      uki: .outputs.uki.sha256,

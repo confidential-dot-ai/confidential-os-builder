@@ -14,29 +14,44 @@ can run mkosi builds images; only the *deployment* host needs TEE hardware.
 
 - **CPU/firmware**: EPYC Milan or later with SNP enabled in BIOS (SME/SNP
   options), and host SEV firmware recent enough for your kernel's KVM.
-- **Host kernel**: Linux 6.11 or later (first release with KVM SEV-SNP guest
-  support), with `kvm_amd` loaded with `sev_snp=1` (check
+- **Host kernel**: Linux 6.11 or later (the first release where KVM can
+  *host* SEV-SNP guests; guest-side kernel support is much older), with
+  `kvm_amd` loaded with `sev_snp=1` (check
   `/sys/module/kvm_amd/parameters/sev_snp`). `/dev/sev` must exist.
-- **QEMU**: a build with SNP *and* IGVM support — the `sev-snp-guest` object
-  and the `igvm-cfg` property (requires QEMU built against `libigvm`).
-  `steep run` probes for exactly these two features when deciding whether
-  the SNP tier is available; you can use the same probe:
-  `qemu-system-x86_64 -object help | grep sev-snp` and
-  `qemu-system-x86_64 -object sev-snp-guest,help | grep igvm`.
+- **QEMU**: a build with SNP *and* IGVM support — the `sev-snp-guest`
+  object and the `igvm-cfg` object type (requires QEMU built against
+  `libigvm`). `steep run` selects the SNP tier when a single
+  `qemu-system-x86_64 -object help` lists both `sev-snp-guest` and
+  `igvm-cfg` and `/dev/kvm` exists; you can run the same probe yourself:
+  `qemu-system-x86_64 -object help | grep -E 'sev-snp-guest|igvm-cfg'`
+  (both lines must appear).
 - **Guest artifacts**: the `guest-smp<N>.igvm` matching your vCPU count.
   The firmware is inside the IGVM — do not pass `-bios`/`-drive if=pflash`.
 
-The essential QEMU shape (this is what `steep run` generates; add your own
-networking and management options):
+The essential QEMU shape (these are the arguments `steep run` generates,
+minus its console plumbing; add your own networking, console, and
+management options). The IGVM is supplied as a dedicated `igvm-cfg` object
+referenced from the `-machine` line — it is *not* a property of the
+`sev-snp-guest` object:
 
 ```bash
 qemu-system-x86_64 \
-  -machine q35,confidential-guest-support=sev0 \
-  -object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,igvm-file=guest-smp4.igvm \
+  -enable-kvm \
+  -cpu EPYC-Genoa \
+  -machine q35,confidential-guest-support=sev0,igvm-cfg=igvm0,memory-backend=ram1,kernel-irqchip=split \
+  -object igvm-cfg,id=igvm0,file=guest-smp4.igvm \
+  -object memory-backend-memfd,id=ram1,size=8G,share=true \
+  -object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1 \
+  -drive file=disk.raw,format=raw,if=none,id=root0,readonly=on \
+  -device virtio-blk-pci,drive=root0 \
   -smp 4 -m 8G \
-  -drive file=disk.raw,format=raw,if=virtio \
   -nographic
 ```
+
+Keep `-m` and the `memory-backend-memfd` size identical, and attach disks
+as explicit `-device virtio-blk-pci` entries (not `-drive if=virtio`) so
+PCI slot order — and therefore guest device naming — stays deterministic.
+`cbitpos=51` is correct for the Milan/Genoa parts steep targets.
 
 **vCPU count must match an IGVM variant** — SMP is part of the launch
 measurement. Memory size is not; size it freely. If you need a vCPU count
@@ -54,9 +69,11 @@ steep igvm output/myimage --smp 12 --firmware output/OVMF.fd
   TDX-enabled stacks — e.g. Ubuntu's intel-tdx builds — are the practical
   path today).
 - **Guest artifacts**: `uki.efi` + `disk.raw`, booted with the TDVF-capable
-  firmware recorded in the manifest (`OVMF.tdx.fd` in the output dir — its
-  hash *is* the manifest's `mrtd`, so using any other firmware binary fails
-  attestation). The IGVM files are not used on TDX.
+  firmware recorded in the manifest (`OVMF.tdx.fd` in the output dir). The
+  manifest's `mrtd` is computed from this firmware's measured regions —
+  note it is *not* the file's SHA-256 (that's `tdx.firmware.sha256`) — so
+  booting any other firmware binary fails attestation. The IGVM files are
+  not used on TDX.
 - Memory and vCPU count are both free to vary — the manifest's TDX block is
   topology-invariant by design.
 
@@ -141,6 +158,7 @@ plaintext storage as published.
   allowlist — an attacker can keep launching the old, correctly-measured
   image forever.
 - **Keep the manifest with the fleet config.** `steep run` reads `memory`
-  and picks IGVM variants from it; your orchestration should similarly
-  treat the manifest as the source of truth for how the image expects to be
-  launched.
+  from it (and boots the first `snp_variants[]` entry — there is no variant
+  selector yet); your orchestration should similarly treat the manifest as
+  the source of truth for how the image expects to be launched, matching
+  the deployed vCPU count to the right `snp_variants[]` entry.

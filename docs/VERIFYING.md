@@ -31,7 +31,7 @@ See [MANIFEST.md](MANIFEST.md) for the full schema. The fields for verification 
 | `snp_variants[].measurement.snp_launch_digest` | SEV-SNP launch digest, one per vCPU count |
 | `snp_variants[].igvm.sha256` | The IGVM file that produces that digest |
 | `tdx.mrtd`, `tdx.rtmr1`, `tdx.rtmr2` | TDX reference registers |
-| `tdx.firmware.sha256` | The TDVF/OVMF binary whose hash is `mrtd` |
+| `tdx.firmware.sha256` | File hash of the TDVF/OVMF binary that `mrtd` was computed from (the two values are different: `mrtd` measures the firmware's measured regions, not the whole file) |
 
 ## 1. Artifact verification (offline)
 
@@ -74,10 +74,17 @@ against the manifest and validates the signature chain up to the CPU vendor.
 guest driver in (`CONFIG_SEV_GUEST=y`), so `/dev/sev-guest` is always
 available. Using [`snpguest`](https://github.com/virtee/snpguest):
 
+The anti-replay property depends on the **verifier** choosing the nonce:
+generate 64 random bytes on the verifier, send them to the guest, and later
+check they round-tripped through the signed report. A nonce the guest picks
+for itself proves nothing about freshness to you.
+
 ```bash
-# request.bin: 64 bytes of verifier-chosen nonce — ALWAYS use a fresh random
-# nonce per attestation, or you may be replayed an old report.
+# On the verifier: generate the nonce and get it to the guest
 head -c 64 /dev/urandom > request.bin
+scp request.bin guest:   # or however you talk to your workload
+
+# In the guest: request a report over the verifier's nonce
 snpguest report report.bin request.bin
 ```
 
@@ -85,7 +92,7 @@ snpguest report report.bin request.bin
 
 ```bash
 # 1. Fetch the AMD certificate chain (ARK → ASK → VCEK) for the chip
-snpguest fetch ca pem milan ./certs        # or the guest's actual CPU model
+snpguest fetch ca pem ./certs --report report.bin   # or: snpguest fetch ca pem ./certs milan
 snpguest fetch vcek pem ./certs report.bin
 
 # 2. Verify the chain and the report signature
@@ -122,8 +129,9 @@ client works (e.g. Intel's `trustauthority-cli`, `go-tdx-guest`, or a
    Library, Intel Trust Authority, or an equivalent QVL service. This proves
    the quote came from a genuine TDX module on genuine hardware.
 2. Compare the quote's measurement registers against the manifest:
-   - `MRTD` must equal `tdx.mrtd` — this is the hash of the TDVF firmware
-     (`OVMF.tdx.fd`, whose file hash is recorded in `tdx.firmware.sha256`).
+   - `MRTD` must equal `tdx.mrtd` — the measurement of the TDVF firmware's
+     measured regions (`OVMF.tdx.fd`; the *file's* SHA-256 is recorded
+     separately in `tdx.firmware.sha256`).
    - `RTMR[1]` must equal `tdx.rtmr1` — UKI PE image identity + GPT + boot
      service constants.
    - `RTMR[2]` must equal `tdx.rtmr2` — the UKI section measurement chain
@@ -155,9 +163,17 @@ dmesg | grep "Table Upgrade: override"
 ## 3. Build reproduction (audit)
 
 The strongest check: rebuild the image yourself and confirm the publisher
-isn't shipping a tampered toolchain. Steep's base image is bit-identical
-across builds of the same inputs (see
-[REPRODUCIBILITY.md](REPRODUCIBILITY.md)).
+isn't shipping a tampered toolchain.
+
+A caveat on scope first. What [REPRODUCIBILITY.md](REPRODUCIBILITY.md)
+establishes today is that the **base image** (same roothash and UKI SHA-256)
+is bit-identical across **consecutive builds with the same pinned
+toolchain**. Reproduction across independent hosts is the goal and requires
+matching the publisher's environment exactly — same steep commit, same
+`bin/setup`-installed tool versions (mkosi in particular), same Ubuntu
+package snapshot state. It has not been validated as broadly as the
+consecutive-build case, so treat a mismatch as a signal to bisect, not as
+proof of tampering.
 
 ```bash
 git clone https://github.com/confidential-dot-ai/steep.git && cd steep
@@ -168,12 +184,12 @@ diff <(jq -S 'del(.build.timestamp)' output/base/manifest.json) \
      <(jq -S 'del(.build.timestamp)' /path/to/published/manifest.json)
 ```
 
-Matching `outputs.*.sha256` and measurement values across independent build
-hosts means the published artifacts are exactly what the source at that
-commit produces. Reproducibility is sensitive to the pinned toolchain
-versions (`bin/setup` installs the expected mkosi); if you get a mismatch,
-first compare `inputs.*` hashes in the two manifests to bisect which input
-diverged.
+If everything matches (`outputs.*.sha256` and the measurement values), the
+published artifacts are exactly what the source at that commit produces. If
+something differs, compare the `inputs.*` hashes in the two manifests first
+— they bisect the divergence to a specific input (kernel binary, config
+fragments, initrd, firmware, base image) rather than leaving you staring at
+two different launch digests.
 
 ## Verification checklist
 

@@ -13,9 +13,13 @@ requirements (real Linux, sudo, user namespaces) apply to development too.
 ## Before you open a PR
 
 - `bin/test` — full test suite (cargo-nextest). Must pass.
-- `bin/lint` — clippy over all targets. Must be warning-free.
+- `bin/lint` — rustfmt + clippy over all targets. Must be warning-free.
+- `cargo deny check` — dependency licenses and advisories (`deny.toml`).
+  Only needed when you've touched `Cargo.toml`/`Cargo.lock`, but CI gates
+  on it either way.
 
-CI runs `bin/test` on Linux (x86 and arm) and macOS, and `bin/lint` on Linux.
+CI runs `bin/test` on Linux (x86 and arm) and macOS, and `bin/lint`,
+`cargo deny check`, and a release build on Linux.
 
 Image-building integration tests need the mkosi host capabilities described
 in the README; the pure-Rust unit tests run anywhere.

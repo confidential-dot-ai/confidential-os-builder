@@ -183,8 +183,10 @@ pub struct BuildArgs {
     /// Repeatable. Profiles compose extra config (packages, systemd units,
     /// files) into the base image at build time. Each enabled profile may
     /// also trigger pre-build hooks (e.g. fetching binaries from GHCR).
-    /// Currently supported: `attest` (bakes the attestation-api HTTP service)
-    /// and `dev` (serial-console autologin + ttyS0 output for debugging).
+    /// Currently supported: `attest` (bakes the attestation-api HTTP
+    /// service), `ssh` (bakes openssh-server; host keys regenerate on
+    /// first boot), and `dev` (serial-console autologin + ttyS0 output for
+    /// debugging).
     #[arg(long = "profile", value_name = "NAME")]
     pub profiles: Vec<String>,
 }
