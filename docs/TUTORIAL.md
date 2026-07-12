@@ -132,10 +132,10 @@ room, attach an ephemeral encrypted scratch disk:
 bin/steep run output/web --scratch 20G
 ```
 
-The initrd encrypts it with a random key generated in-guest (never written
-anywhere), formats it, and uses it as the overlay's upper layer — the whole
-filesystem transparently gains 20G. Contents are ciphertext to the host and
-unrecoverable after shutdown.
+The initrd encrypts it with a random key generated in-guest (held only in
+RAM, never persisted), formats it, and uses it as the overlay's upper
+layer — the whole filesystem transparently gains 20G. Contents are
+ciphertext to the host and unrecoverable after shutdown.
 
 ## 5. Ship it
 
