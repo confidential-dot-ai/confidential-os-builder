@@ -18,6 +18,7 @@ artifacts (see [Scope](#scope)).
 | [Concepts](docs/CONCEPTS.md) | Ground-up explanations: UEFI, UKI, dm-verity, IGVM, measured boot |
 | [Architecture](docs/ARCHITECTURE.md) | Codebase map and design invariants, for contributors |
 | [Reproducibility](docs/REPRODUCIBILITY.md) | How bit-identical builds are achieved, prior art, open questions |
+| [Kernel configuration](docs/KERNEL_CONFIGURATION.md) | The hardened kernel config: every KSPP recommendation we deviate from, and why |
 | [FAQ](docs/FAQ.md) | Positioning vs. mkosi/Constellation, security model questions, practicalities |
 
 ## Running steep-built VMs
@@ -50,8 +51,8 @@ The build host needs to be a real Linux system with `sudo` and the kernel/userns
 
 ### Developing
 
-`bin/test` runs the test suite (`cargo nextest run`); `bin/lint` runs rustfmt
-and clippy over all targets. CI runs both, plus a `cargo deny check` gate for
+`bin/test` runs the test suite (`cargo nextest run`); `bin/lint` applies
+rustfmt (rewriting files in place) and runs clippy over all targets. CI runs both, plus a `cargo deny check` gate for
 dependency licenses and advisories (`deny.toml`) — if your change touches
 `Cargo.toml`/`Cargo.lock`, run that too before opening a PR.
 
@@ -192,6 +193,7 @@ steep kernel [OPTIONS]
 |---|---|---|
 | `-o, --output <DIR>` | `output/kernel` | Where the resulting `vmlinuz`, `manifest.json`, build cache live. |
 | `--kernel-config-fragment <PATH>` | (none) | Extra config fragment merged after required + hardening + confidential. Omitted → steep's baseline kernel. |
+| `--kernel-builder-package <PKG>` | (none) | Extra package installed into the kernel-builder tools tree (where the custom kernel is compiled), not the guest image. Repeatable and comma-separated. Use for build-time tools a fragment needs — e.g. `dwarves` (pahole) when the fragment enables `CONFIG_DEBUG_INFO_BTF`. |
 | `-f, --force` | off | Bypass the kernel cache. Forces a full rebuild even if the manifest fingerprint matches. |
 
 Every build rewrites `kernel/config-x86_64.snapshot` with the resolved `.config` (see [Snapshots](#snapshots)). Typical lifecycle when editing a fragment:
