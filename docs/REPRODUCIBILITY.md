@@ -47,6 +47,29 @@ The base image reproducibility serves as an **audit mechanism** — anyone can r
 | `SOURCE_DATE_EPOCH=0` | Propagated to dpkg/apt for timestamp clamping |
 | `SYSTEMD_REPART_MKFS_OPTIONS_EXT4=-E hash_seed=<fixed>` | Deterministic ext4 directory hash seed (undocumented for ext4 but confirmed working on systemd 257) |
 
+### apt mirror pinning
+
+Identical package *versions* across builds are enforced by pinning
+`Mirror=` (and `ToolsTreeMirror=`) in `mkosi/base/mkosi.conf` and
+`mkosi/kernel-builder/mkosi.conf` to a point-in-time
+`snapshot.ubuntu.com` URL. Bumping that timestamp is the deliberate act
+that picks up security updates — and changes the roothash.
+
+> **Current status:** as of 2026-07-06 both mirrors are temporarily
+> reverted to the rolling `archive.ubuntu.com` mirror because of a
+> snapshot-service outage (see the `TEMP` comment in each mkosi.conf).
+> Until the pin is restored, package versions — and therefore
+> measurements — can drift between builds.
+
+mkosi itself is pinned to v26 — `bin/setup` and CI install exactly
+`mkosi.git@v26`, and `mkosi.conf` enforces `MinimumVersion=26` as a
+floor — since mkosi's own behavior is part of the build's determinism.
+The Rust toolchain that builds the `steep` binary is *not* pinned:
+steep's contributions to the measured artifacts (the DSDT early-cpio,
+the IGVM file, the precomputed measurements) are deterministic data
+derived from fixed inputs, so the compiler version doesn't affect
+artifact bytes the way a package-set change would.
+
 ### mkosi.finalize
 
 Reproducibility cleanup:
@@ -54,6 +77,7 @@ Reproducibility cleanup:
 - Delete dpkg/apt/alternatives logs, journal dir
 - Delete apt cache, ldconfig aux-cache, man cache
 - Delete random seeds, cargo cache
+- Delete SSH host keys (regenerated per-VM on first boot)
 
 ## Sources of Non-Determinism We Fixed
 
@@ -65,6 +89,7 @@ Reproducibility cleanup:
 | File mtimes (wallclock) | `SourceDateEpoch=0` |
 | `/etc/machine-id` (random UUID) | Truncated in finalize |
 | `/var/lib/dbus/machine-id` (random UUID) | Truncated in finalize |
+| SSH host keys (random bytes at package install) | Deleted in finalize; regenerated per-VM on first boot |
 | Log file content (wallclock timestamps) | Deleted in finalize |
 | apt cache (timestamps in binary cache) | Deleted in finalize |
 | `Incremental=true` (stale cache) | Set to `false` |
@@ -117,7 +142,7 @@ Adding packages to `Packages=` in mkosi.conf should remain reproducible as long 
 - [Reproducible Arch images with mkosi — Jelle van der Waa](https://vdwaa.nl/mkosi-reproducible-arch-images.html)
 - [edgelesssys/reproducible-mkosi](https://github.com/edgelesssys/reproducible-mkosi)
 - [Reproducible builds for confidential computing — Edgeless Systems](https://www.edgeless.systems/blog/reproducible-builds-for-confidential-computing)
-- [systemd/systemd#28656 — reproducible verity salt and UUID](https://github.com/systemd/systemd/issues/28656)
+- [systemd/systemd#28695 — reproducible verity salt and UUID](https://github.com/systemd/systemd/pull/28695)
 - [systemd/mkosi#2957 — reproducible UKI](https://github.com/systemd/mkosi/issues/2957)
 - [systemd/mkosi#1112 — reproducible builds tracking](https://github.com/systemd/mkosi/issues/1112)
 - [systemd/mkosi#2962 — Environment= space-splitting bug](https://github.com/systemd/mkosi/issues/2962)
