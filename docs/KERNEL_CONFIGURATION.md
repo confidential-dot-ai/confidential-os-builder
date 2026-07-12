@@ -6,9 +6,10 @@ to. That said, we also need our VMs to be useful runners for
 [c8s](https://confidential.ai/docs/c8s), our system for running confidential and
 attested workloads on Kubernetes.
 
-Our kernel builder is located in the `./kernel` directory, and uses `mkosi` to
-reproducibly install the tools used to build our kernel before it is included in
-a Confidential VM image.
+Our kernel configuration (fragments plus the pinned version) lives in the
+`./kernel` directory; the build itself runs inside a `mkosi` tools tree defined
+in `mkosi/kernel-builder/`, so the toolchain used to compile the kernel is
+reproducibly installed and isolated from the host.
 
 Below, you can find a list of every suggestion from the [Kernel Self-Protection
 Program's Recommended Settings
@@ -89,8 +90,10 @@ movement.
 **Why we deviate.** Level 3 would break all debugging and any workload feature
 that legitimately uses ptrace, with no opt-out short of a reboot. steep runs
 arbitrary customer workloads inside the guest and cannot assume none of them
-need ptrace. We compile Yama in (`CONFIG_SECURITY_YAMA=y`, in the LSM stack),
-which enforces ancestor-only attach as the baseline. Documented in the header of
+need ptrace. We compile Yama in (`CONFIG_SECURITY_YAMA=y`, in the LSM stack) so
+the `kernel.yama.ptrace_scope` sysctl exists, but we ship it at the kernel
+default of 0 (classic ptrace permissions) — workloads that want ancestor-only
+attach can raise it to 1 at runtime. Documented in the header of
 `mkosi/base/mkosi.extra/etc/sysctl.d/99-kspp-hardening.conf`.
 
 ### sysctl `user.max_user_namespaces = 0`
