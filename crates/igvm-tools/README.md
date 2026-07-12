@@ -76,12 +76,17 @@ igvm-tools measure my-guest.igvm
 
 This parses the IGVM file and computes the SNP launch digest without building anything.
 
+Pass `-v` / `--verbose` for a per-page measurement trace (see
+`examples/measure.sh`).
+
 ### Options
 
 | Flag                | Default  | Description                                       |
 | ------------------- | -------- | ------------------------------------------------- |
 | `--firmware FILE`   | required | OVMF firmware image                               |
-| `--kernel FILE`     | —        | Kernel/UKI EFI binary (measured in digest)        |
+| `--kernel FILE`     | —        | UKI EFI binary, or a plain kernel image when `--cmdline` is given (measured in digest) |
+| `--cmdline STRING`  | —        | Wrap `--kernel` into a UKI (via `ukify`) with this kernel command line; the cmdline is embedded and measured |
+| `--initrd FILE`     | —        | Initrd embedded in the synthesized UKI; only valid together with `--cmdline` |
 | `--shim FILE`       | —        | Shim EFI binary (unmeasured, verified at runtime) |
 | `--vars FILE`       | —        | UEFI variable store                               |
 | `--pk FILE`         | —        | Secure boot PK certificate (.auth)                |
@@ -95,6 +100,9 @@ This parses the IGVM file and computes the SNP launch digest without building an
 | `--manifest FILE`   | —        | Output JSON manifest with digest and input hashes |
 | `--meta`            | —        | Print OVMF metadata regions                       |
 | `-v, --verbose`     | —        | Print per-page measurement trace                  |
+
+`--cmdline` / `--initrd` require `ukify` on `PATH` (Debian/Ubuntu:
+`systemd-ukify`).
 
 ### JSON manifest
 
