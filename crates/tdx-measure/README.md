@@ -6,11 +6,12 @@ Offline TDX measurement computation and attestation verification.
 
 This crate is the TDX counterpart to `igvm-tools` (SEV-SNP launch
 digest). It computes the expected values of the TDX measurement
-registers (MRTD and RTMR[0..3]) from the same inputs the hypervisor
-uses at launch, so a build system can publish the expected measurement
-alongside the artifact for downstream attestation.
+registers (MRTD, RTMR[1], and RTMR[2]; RTMR[0] additionally requires
+dumped ACPI blobs — see `acpi-extract/` below) from the same inputs the
+hypervisor uses at launch, so a build system can publish the expected
+measurement alongside the artifact for downstream attestation.
 
-The library exposes four modules:
+The library exposes five modules:
 
 - `tdvf` — parse the TDVF metadata table out of an OVMF/TDVF firmware
   binary, compute MRTD by simulating `MEM.PAGE.ADD` + `MR.EXTEND`, and
@@ -20,8 +21,14 @@ The library exposes four modules:
   boot.
 - `pe` — PE/COFF parsing and Authenticode SHA-384 hashing of UKI
   binaries.
+- `esp` — read systemd-boot's PE binary out of the FAT32 ESP inside a
+  disk image, so RTMR[1] can cover the bootloader actually on disk.
 - `ccel` — parse a CCEL (CC Event Log) blob, replay it into RTMRs, and
   extract per-event data such as UEFI variables.
+
+The crate root exposes `measure_uki_topology_invariant()`, the
+high-level entry point that returns a `UkiMeasurement`
+(MRTD + RTMR[1] + RTMR[2]) — this is what `steep build` calls.
 
 The included `tdx-measure` CLI exposes `measure`, `verify`, `inspect`,
 and `extract-platform` subcommands. The CLI is gated behind the `cli`
