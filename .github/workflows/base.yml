@@ -69,7 +69,7 @@ jobs:
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
           REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${REPO}/base"
+          IMAGE="ghcr.io/${REPO}"
 
           # include the needed OVMF firmware in the published files
           cp output/OVMF.fd mkosi/base/mkosi.output/OVMF.fd
@@ -79,6 +79,6 @@ jobs:
           # prevent symlink from becoming a second copy of the image
           rm image
 
-          oras push "${IMAGE}:${SHORT_SHA},latest" \
+          oras push "${IMAGE}:base,base-${SHORT_SHA}" \
             --artifact-type application/vnd.steep.base.v1 \
             ./*

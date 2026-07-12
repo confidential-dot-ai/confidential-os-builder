@@ -101,8 +101,9 @@ documented in [REPRODUCIBILITY.md](REPRODUCIBILITY.md).
   need a capable host.
 - `.github/workflows/` — `test.yml` (bin/test on Linux x86/arm + macOS;
   bin/lint, cargo-deny, and a build job on Linux); `base.yml` (builds the
-  base image on every push to `main` and publishes it to GHCR via oras,
-  tagged `latest` + short SHA).
+  base image on every push to `main` and publishes it to GHCR via oras as
+  `ghcr.io/confidential-dot-ai/steep:base`, plus a pinned `base-<short SHA>`
+  tag).
 - `output/OVMF.fd` — the one committed binary: steep's IGVM-aware OVMF built
   from the [edk2 fork](https://github.com/confidential-dot-ai/edk2). It's
   checked in (despite `output/` being gitignored) so builds work without

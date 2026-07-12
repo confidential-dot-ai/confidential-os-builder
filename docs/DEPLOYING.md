@@ -83,9 +83,10 @@ steep igvm output/myimage --smp 12 --firmware output/OVMF.fd
 included) through any OCI registry via `oras`:
 
 ```bash
-steep push output/web --tag v1                    # defaults to ghcr.io/confidential-dot-ai/steep
+steep push output/web                             # pushes ghcr.io/confidential-dot-ai/steep:web
 steep push output/web --registry ghcr.io/you/imgs --tag v1
-steep pull web --registry ghcr.io/you/imgs --tag v1
+steep pull ghcr.io/you/imgs:v1                    # lands in output/v1
+steep pull ghcr.io/you/imgs:v1 output/web         # or an explicit directory
 ```
 
 Verify what you pulled before booting it — hashes in the manifest, then the
