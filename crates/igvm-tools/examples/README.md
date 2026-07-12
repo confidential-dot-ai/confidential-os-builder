@@ -7,7 +7,8 @@ produce both.
 ## Quick start
 
 ```bash
-cargo build --release
+# All commands below run from crates/igvm-tools/
+cargo install --path .   # the example scripts invoke `igvm-tools` from $PATH
 
 # Build an IGVM (prints the expected SNP launch digest)
 FIRMWARE=path/to/OVMF.fd KERNEL=path/to/uki.efi ./examples/build.sh -o guest.igvm
