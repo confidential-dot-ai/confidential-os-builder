@@ -8,6 +8,21 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Changed
+
+- `steep push` now defaults to the registry `ghcr.io/confidential-dot-ai/steep`
+  (previously `docker.io/confidentialai`) and addresses images as
+  `<registry>:<tag>`, with the tag defaulting to the pushed directory's
+  basename — `steep push output/base` publishes
+  `ghcr.io/confidential-dot-ai/steep:base`. The `--name` flag is removed.
+- `steep pull` now takes a full image reference and an optional destination
+  directory (`steep pull ghcr.io/confidential-dot-ai/steep:base [DIR]`),
+  defaulting to `output/<tag>`; the `--registry` and `--tag` flags are
+  removed.
+- CI now publishes the base image as `ghcr.io/confidential-dot-ai/steep:base`
+  (plus a pinned `base-<short-sha>` tag) instead of
+  `ghcr.io/confidential-dot-ai/steep/base:latest`.
+
 ## [0.1.0] — 2026-07-09
 
 Initial public release.

@@ -26,7 +26,7 @@ You can use the base images built by `steep` without installing the tool.
 
 ```
 mkdir steep-base; cd steep-base
-oras pull ghcr.io/confidential-dot-ai/steep/base:latest
+oras pull ghcr.io/confidential-dot-ai/steep:base
 qemu-system-x86_64 \
   -machine q35 \
   -kernel uki.efi \
@@ -214,15 +214,22 @@ Uses `oras` (must be on PATH).
 
 ```bash
 steep push [OPTIONS] <DIR>
-steep pull [OPTIONS] <NAME>
+steep pull <IMAGE> [DIR]
 ```
+
+Push builds the image reference as `<registry>:<tag>`, so `steep push
+output/base` pushes `ghcr.io/confidential-dot-ai/steep:base`. Pull takes a
+full image reference and lands in `output/<tag>` unless you pass an explicit
+directory: `steep pull ghcr.io/confidential-dot-ai/steep:base` fetches the
+CI-published base image into `output/base`.
+
+Push flags:
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--registry <URL>` | `ghcr.io/confidential-dot-ai/steep` (env: `STEEP_OCI_REGISTRY`) | Registry root — matches where CI publishes `base`, so `steep pull base` fetches the published image. |
-| `--name <NAME>` (push) | `<DIR basename>` | Image name segment. For `pull` the name is the positional `<NAME>` argument, not a flag. |
-| `--cdi` (push) | off | Pack everything into a single `tar+gzip` layer with `disk.raw` under `disk/` — the layout KubeVirt CDI's registry importer expects. |
-| `--tag <TAG>` | `latest` | Image tag. |
+| `--registry <URL>` | `ghcr.io/confidential-dot-ai/steep` (env: `STEEP_OCI_REGISTRY`) | Registry repository — matches where CI publishes `base`. |
+| `--cdi` | off | Pack everything into a single `tar+gzip` layer with `disk.raw` under `disk/` — the layout KubeVirt CDI's registry importer expects. |
+| `--tag <TAG>` | basename of `<DIR>` | Image tag. |
 
 ### `steep igvm` — generate additional IGVM SMP variants
 

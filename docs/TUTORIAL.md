@@ -140,8 +140,8 @@ unrecoverable after shutdown.
 ## 5. Ship it
 
 ```bash
-bin/steep push output/web --tag v1        # to ghcr.io/… via oras
-bin/steep pull web --tag v1               # on another machine
+bin/steep push output/web                              # pushes ghcr.io/confidential-dot-ai/steep:web via oras
+bin/steep pull ghcr.io/confidential-dot-ai/steep:web   # on another machine, pulls it into output/web
 ```
 
 Publish `manifest.json` through a channel your verifiers trust — it carries

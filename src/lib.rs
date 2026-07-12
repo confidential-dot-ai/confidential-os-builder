@@ -214,17 +214,13 @@ pub struct PushArgs {
     #[arg(
         long,
         env = "STEEP_OCI_REGISTRY",
-        default_value = "docker.io/confidentialai"
+        default_value = "ghcr.io/confidential-dot-ai/steep"
     )]
     pub registry: String,
 
-    /// Image name
+    /// Image tag [default: the basename of <DIR>]
     #[arg(long)]
-    pub name: Option<String>,
-
-    /// Image tag
-    #[arg(long, default_value = "latest")]
-    pub tag: String,
+    pub tag: Option<String>,
 
     /// Build a CDI-compatible single-layer tar+gzip image (for KubeVirt CDI importer).
     ///
@@ -236,20 +232,11 @@ pub struct PushArgs {
 
 #[derive(clap::Args)]
 pub struct PullArgs {
-    /// Image name to pull (e.g. "base")
-    pub name: String,
+    /// Image reference to pull (e.g. "ghcr.io/confidential-dot-ai/steep:base")
+    pub image: String,
 
-    /// OCI registry
-    #[arg(
-        long,
-        env = "STEEP_OCI_REGISTRY",
-        default_value = "ghcr.io/confidential-dot-ai/steep"
-    )]
-    pub registry: String,
-
-    /// Image tag
-    #[arg(long, default_value = "latest")]
-    pub tag: String,
+    /// Directory to pull into [default: output/<tag from IMAGE>]
+    pub dir: Option<PathBuf>,
 }
 
 pub mod commands {
