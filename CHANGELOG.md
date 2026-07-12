@@ -31,7 +31,7 @@ Initial public release.
 
 - `steep build` — reproducible dm-verity + UKI image pipeline on mkosi, with
   cloud-init/`--extra`/`--package`/`--script` content injection.
-- Hardened pinned guest kernel (Linux 6.12.x) with fragment-based
+- Hardened pinned guest kernel (Linux 6.16.x) with fragment-based
   configuration and a committed resolved-config snapshot lockfile.
 - AMD SEV-SNP support: per-SMP IGVM generation and offline launch-digest
   computation (`crates/igvm-tools`), QEMU+KVM semantics.
