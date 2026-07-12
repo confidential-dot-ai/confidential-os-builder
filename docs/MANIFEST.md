@@ -22,11 +22,11 @@ shape.
     "timestamp": "2026-07-09T12:34:56Z",
     "memory": "4G",
     "format": "raw",
-    "platform": "both"
+    "platform": "multi"
   },
   "inputs": {
     "kernel": {
-      "linux_version": "6.12.94",
+      "linux_version": "6.16.12",
       "vmlinuz_sha256": "…",
       "required_config_sha256": "…",
       "hardening_config_sha256": "…",
@@ -69,6 +69,13 @@ Fields typed as *file entry* are `{ "path": "...", "sha256": "..." }`.
 across hosts — resolve it relative to the directory containing the manifest.
 `sha256` is the lowercase-hex SHA-256 of the file contents.
 
+The firmware paths are deterministic rather than taken from the source
+files' names: `steep build` always records `OVMF.fd` for `inputs.firmware`
+(SNP) and `OVMF.tdx.fd` for `tdx.firmware`, matching the copies it writes
+into `output/` — the two source firmware files often both ship as
+`OVMF.fd`, so recording source basenames would collide in a
+`--platform both` build.
+
 ## Fields
 
 ### `version` (integer)
@@ -83,7 +90,7 @@ Schema version. Currently `3`. v3 introduced per-SMP SNP variants in
 | `timestamp` | Wall-clock time of the build (UTC). The **only** field expected to differ between two reproducible builds of the same inputs — exclude it when diffing manifests. | No — informational |
 | `memory` | The `--memory` value. Read by `steep run` to size the VM; not part of any measurement (on TDX this is exactly what the RTMR[0]-unpinning design absorbs). | No — runtime default |
 | `format` | Output image format (`raw`). | No |
-| `platform` | Which measurement passes ran: `snp`, `tdx`, or `both`. Tells a verifier which measurement blocks to expect. | Indirectly |
+| `platform` | Which measurement passes ran: `snp`, `tdx`, or `multi` (written for `--platform both` builds). Tells a verifier which measurement blocks to expect. | Indirectly |
 
 ### `inputs` — what went into the build
 
