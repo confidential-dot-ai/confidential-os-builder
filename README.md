@@ -271,8 +271,7 @@ OEM Revision in the ASL are chosen to match QEMU's emission exactly so the
 override condition in Linux's `acpi_table_initrd_override` actually fires —
 a single trailing-byte mismatch falls through to the install-only path and
 leaves the VMM's DSDT live. The runtime override is verifiable via
-`dmesg | grep "Table Upgrade: override"` (the `override` keyword is the
-load-bearing signal — `install` alone is a no-op).
+`dmesg | grep "Table Upgrade: override"`.
 
 The trusted DSDT bytes are part of the initrd, which is part of the UKI
 and the IGVM file, so the override is itself attested:

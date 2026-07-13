@@ -67,14 +67,6 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         None
     };
 
-    // The dual-firmware split (commit 78337a2) means the legacy single
-    // `firmware: Option<PathBuf>` is no longer load-bearing — every
-    // downstream consumer now reads `snp_firmware` or `tdx_firmware`
-    // directly. Keep this alias bound but underscore-prefixed as
-    // documentation of the prior contract, in case a follow-up wants
-    // a single-firmware fallback path (e.g. a future KVM-only tier).
-    let _firmware = snp_firmware.clone().or_else(|| tdx_firmware.clone());
-
     // Validate memory format before it reaches QEMU arg interpolation
     qemu::validate_memory(&args.memory)?;
 
