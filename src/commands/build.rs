@@ -710,6 +710,13 @@ fn assemble_initrd_with_trusted_dsdt(
     let combined = output.join("combined-initrd.img");
     concat_files(&[&early_cpio, mkosi_initrd], &combined)?;
 
+    // The mkosi initrd's gzip header carries the compression wall-clock
+    // time — the one non-deterministic input to every downstream
+    // measurement. Patch it in the combined copy (mkosi's own output is
+    // root-owned) so consecutive builds are bit-identical.
+    let early_cpio_len = fs_err::metadata(&early_cpio)?.len();
+    zero_gzip_mtime(&combined, early_cpio_len)?;
+
     // Staging tree and intermediate cpio are throwaway once concatenation
     // succeeds; leaving them around would just clutter the output dir.
     fs_err::remove_dir_all(&staging)?;
@@ -861,6 +868,37 @@ fn zero_mtimes(root: &Path) -> anyhow::Result<()> {
     walk(root, epoch).map_err(Into::into)
 }
 
+/// Zero the MTIME field of the gzip member that starts at `offset` in `path`.
+///
+/// mkosi's `CompressOutput=gzip` stamps the compression wall-clock time into
+/// bytes 4..8 of the gzip header (`SourceDateEpoch=0` does not reach gzip,
+/// which has no SOURCE_DATE_EPOCH support). Those four bytes are the only
+/// non-deterministic bytes in the combined initrd, and they cascade into the
+/// UKI, the disk image, every SNP launch digest, and RTMR[1]/RTMR[2] — so
+/// consecutive builds of identical content would publish different reference
+/// measurements. MTIME=0 is defined by RFC 1952 as "no timestamp available";
+/// the kernel's initramfs unpacker never reads it.
+fn zero_gzip_mtime(path: &Path, offset: u64) -> anyhow::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut file = fs_err::OpenOptions::new().read(true).write(true).open(path)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut header = [0u8; 4];
+    file.read_exact(&mut header)?;
+    // ID1=0x1f ID2=0x8b (gzip magic), CM=8 (deflate) per RFC 1952
+    if header[0..3] != [0x1f, 0x8b, 0x08] {
+        anyhow::bail!(
+            "expected a gzip (deflate) member at offset {} of {}, found {:02x?} — \
+             cannot normalize initrd MTIME for reproducible builds",
+            offset,
+            path.display(),
+            &header[0..3],
+        );
+    }
+    file.seek(SeekFrom::Start(offset + 4))?;
+    file.write_all(&[0u8; 4])?;
+    Ok(())
+}
+
 /// Concatenate the byte streams of `parts` (in order) into `out`.
 fn concat_files(parts: &[&Path], out: &Path) -> anyhow::Result<()> {
     let mut sink = fs_err::File::create(out)?;
@@ -876,6 +914,72 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
+
+    fn gzip_with_mtime(payload: &[u8], mtime: u32) -> Vec<u8> {
+        use std::io::Write;
+        let mut enc = flate2::GzBuilder::new()
+            .mtime(mtime)
+            .write(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn zero_gzip_mtime_zeroes_only_the_mtime_field() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("combined.img");
+        // gzip member preceded by other bytes, as in the combined initrd
+        // (early cpio || gzipped mkosi initrd)
+        let prefix = b"EARLY-CPIO-BYTES";
+        let gz = gzip_with_mtime(b"initrd payload", 0x6a54_4bad);
+        let mut original = prefix.to_vec();
+        original.extend_from_slice(&gz);
+        fs_err::write(&path, &original).unwrap();
+
+        zero_gzip_mtime(&path, prefix.len() as u64).unwrap();
+
+        let patched = fs_err::read(&path).unwrap();
+        let off = prefix.len();
+        let mut expected = original.clone();
+        expected[off + 4..off + 8].fill(0);
+        assert_eq!(patched, expected);
+        // the member must still decompress to the same payload
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(
+            &mut flate2::read::GzDecoder::new(&patched[off..]),
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(out, b"initrd payload");
+    }
+
+    #[test]
+    fn zero_gzip_mtime_makes_time_shifted_archives_identical() {
+        // The regression this guards: identical payloads compressed at
+        // different wall-clock times produce different bytes until the
+        // MTIME field is normalized.
+        let a = gzip_with_mtime(b"same initrd", 0x6a54_4bad);
+        let b = gzip_with_mtime(b"same initrd", 0x6a54_4c30);
+        assert_ne!(a, b);
+
+        let dir = TempDir::new().unwrap();
+        let pa = dir.path().join("a");
+        let pb = dir.path().join("b");
+        fs_err::write(&pa, &a).unwrap();
+        fs_err::write(&pb, &b).unwrap();
+        zero_gzip_mtime(&pa, 0).unwrap();
+        zero_gzip_mtime(&pb, 0).unwrap();
+
+        assert_eq!(fs_err::read(&pa).unwrap(), fs_err::read(&pb).unwrap());
+    }
+
+    #[test]
+    fn zero_gzip_mtime_rejects_non_gzip_data() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("not-gzip");
+        fs_err::write(&path, b"070701-plain-cpio-not-gzip").unwrap();
+        assert!(zero_gzip_mtime(&path, 0).is_err());
+    }
 
     #[test]
     fn copy_extra_copies_files_at_root() {
