@@ -16,9 +16,8 @@ build on the manifest should do the same. See
 
 ## What invalidates published measurements
 
-This is the question that matters operationally: **when does upgrading
-something force you to re-publish expected measurements and update verifier
-allowlists?**
+**When does upgrading something force you to re-publish expected measurements
+and update verifier allowlists?**
 
 A build's measurements change whenever any measured input changes:
 
@@ -36,7 +35,7 @@ A build's measurements change whenever any measured input changes:
 | vCPU/memory shape at deployment (TDX) | No — the TDX block is topology-invariant |
 | `steep push`/`pull`, registry, tags | No — transport only |
 
-Practical consequences:
+If you're using Steep to build your images:
 
 - **Pin the steep commit** you build releases with, alongside your image
   config, so you can reproduce byte-identical artifacts later
