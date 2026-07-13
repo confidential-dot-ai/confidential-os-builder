@@ -1,6 +1,6 @@
 [Unit]
 Description=TEE Attestation REST API
-Documentation=https://github.com/lunal-dev/attestation-rs
+Documentation=https://github.com/confidential-dot-ai/attestation-rs
 After=network-online.target
 Wants=network-online.target
 

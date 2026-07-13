@@ -2,4 +2,5 @@
 set -eou pipefail
 set -x
 
-cargo clippy --all-targets "$@"
+cargo fmt --all
+cargo clippy --all-targets "$@" -- -D warnings

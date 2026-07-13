@@ -508,9 +508,18 @@ fn test_parse_size_suffixes() {
     assert_eq!(parse_size_to_bytes("1024").unwrap(), 1024);
     assert_eq!(parse_size_to_bytes("1K").unwrap(), 1024);
     assert_eq!(parse_size_to_bytes("2M").unwrap(), 2 * 1024 * 1024);
-    assert_eq!(parse_size_to_bytes("20G").unwrap(), 20u64 * 1024 * 1024 * 1024);
-    assert_eq!(parse_size_to_bytes("1T").unwrap(), 1024u64 * 1024 * 1024 * 1024);
-    assert_eq!(parse_size_to_bytes("4g").unwrap(), 4u64 * 1024 * 1024 * 1024);
+    assert_eq!(
+        parse_size_to_bytes("20G").unwrap(),
+        20u64 * 1024 * 1024 * 1024
+    );
+    assert_eq!(
+        parse_size_to_bytes("1T").unwrap(),
+        1024u64 * 1024 * 1024 * 1024
+    );
+    assert_eq!(
+        parse_size_to_bytes("4g").unwrap(),
+        4u64 * 1024 * 1024 * 1024
+    );
 }
 
 #[test]

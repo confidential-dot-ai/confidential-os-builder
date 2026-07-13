@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/confidential-dot-ai/steep/security/advisories/new
+    about: Report measurement/attestation-breaking issues privately — never in a public issue.

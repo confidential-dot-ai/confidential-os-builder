@@ -18,7 +18,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha384};
 
-use crate::rtmr::{sha384, rtmr_extend};
+use crate::rtmr::{rtmr_extend, sha384};
 
 /// Pre-computed ACPI measurement hashes for RTMR[0].
 ///
@@ -38,11 +38,7 @@ pub struct AcpiHashes {
 
 impl AcpiHashes {
     /// Compute from raw ACPI blobs.
-    pub fn from_files(
-        tables_path: &Path,
-        rsdp_path: &Path,
-        loader_path: &Path,
-    ) -> Result<Self> {
+    pub fn from_files(tables_path: &Path, rsdp_path: &Path, loader_path: &Path) -> Result<Self> {
         let tables = fs::read(tables_path)
             .with_context(|| format!("failed to read ACPI tables: {}", tables_path.display()))?;
         let rsdp = fs::read(rsdp_path)
@@ -88,7 +84,11 @@ impl AcpiHashes {
         }
         for (i, d) in acpi_digests[..3].iter().enumerate() {
             if d.len() != 48 {
-                bail!("ACPI digest {} from CCEL has wrong length: {} (expected 48)", i, d.len());
+                bail!(
+                    "ACPI digest {} from CCEL has wrong length: {} (expected 48)",
+                    i,
+                    d.len()
+                );
             }
         }
 
@@ -130,7 +130,11 @@ impl AcpiHashes {
                 tables_hash.len()
             );
         }
-        Ok(Self { loader_hash, rsdp_hash, tables_hash })
+        Ok(Self {
+            loader_hash,
+            rsdp_hash,
+            tables_hash,
+        })
     }
 }
 
@@ -167,8 +171,8 @@ impl BootVars {
             let num = u16::from_le_bytes([chunk[0], chunk[1]]);
             let filename = format!("Boot{:04X}.bin", num);
             let path = dir.join(&filename);
-            let data = fs::read(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?;
+            let data =
+                fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
             entries.push(data);
         }
 
@@ -248,16 +252,20 @@ fn encode_guid(guid_str: &str) -> Result<Vec<u8>> {
 }
 
 /// Measure an EFI variable event (for Secure Boot vars in RTMR[0]).
-fn measure_efi_variable(vendor_guid: &str, var_name: &str, var_data: Option<&[u8]>) -> Result<Vec<u8>> {
+fn measure_efi_variable(
+    vendor_guid: &str,
+    var_name: &str,
+    var_data: Option<&[u8]>,
+) -> Result<Vec<u8>> {
     let mut data = Vec::new();
     data.extend_from_slice(&encode_guid(vendor_guid)?);
     // UnicodeNameLength: count of UTF-16 code units (not UTF-8 bytes)
-    let utf16_len = u64::try_from(var_name.encode_utf16().count())
-        .context("var name length overflow")?;
+    let utf16_len =
+        u64::try_from(var_name.encode_utf16().count()).context("var name length overflow")?;
     data.extend_from_slice(&utf16_len.to_le_bytes());
 
-    let data_size = u64::try_from(var_data.map_or(0, |d| d.len()))
-        .context("var data size overflow")?;
+    let data_size =
+        u64::try_from(var_data.map_or(0, |d| d.len())).context("var data size overflow")?;
     data.extend_from_slice(&data_size.to_le_bytes());
 
     // Variable name as UTF-16LE
@@ -298,8 +306,11 @@ impl<'a> Tdvf<'a> {
             bail!("Invalid TDVF footer GUID");
         }
 
-        let tables_len =
-            usize::from(u16::from_le_bytes(fw[offset - 18..offset - 16].try_into().context("reading table length")?));
+        let tables_len = usize::from(u16::from_le_bytes(
+            fw[offset - 18..offset - 16]
+                .try_into()
+                .context("reading table length")?,
+        ));
         if tables_len == 0 || tables_len > offset - 18 {
             bail!("Invalid TDVF tables length");
         }
@@ -314,8 +325,11 @@ impl<'a> Tdvf<'a> {
                 break;
             }
             let tbl_guid = &tables[tbl_offset - 16..tbl_offset];
-            let entry_len =
-                usize::from(u16::from_le_bytes(tables[tbl_offset - 18..tbl_offset - 16].try_into().context("reading entry length")?));
+            let entry_len = usize::from(u16::from_le_bytes(
+                tables[tbl_offset - 18..tbl_offset - 16]
+                    .try_into()
+                    .context("reading entry length")?,
+            ));
             if entry_len > tbl_offset - 18 {
                 bail!("Invalid TDVF entry length");
             }
@@ -331,8 +345,11 @@ impl<'a> Tdvf<'a> {
         if data.len() < 4 {
             bail!("TDVF metadata entry too short");
         }
-        let meta_offset_raw_u32 =
-            u32::from_le_bytes(data[data.len() - 4..].try_into().context("reading metadata offset")?);
+        let meta_offset_raw_u32 = u32::from_le_bytes(
+            data[data.len() - 4..]
+                .try_into()
+                .context("reading metadata offset")?,
+        );
         let meta_offset_raw = usize::try_from(meta_offset_raw_u32)
             .context("TDVF metadata offset exceeds addressable range")?;
         if meta_offset_raw > fw.len() {
@@ -351,13 +368,20 @@ impl<'a> Tdvf<'a> {
         if &tdvf_meta_desc[..4] != b"TDVF" {
             bail!("Invalid TDVF descriptor");
         }
-        let version = u32::from_le_bytes(tdvf_meta_desc[8..12].try_into().context("reading TDVF version")?);
+        let version = u32::from_le_bytes(
+            tdvf_meta_desc[8..12]
+                .try_into()
+                .context("reading TDVF version")?,
+        );
         if version != 1 {
             bail!("Unsupported TDVF version: {}", version);
         }
-        let num_sections = usize::try_from(
-            u32::from_le_bytes(tdvf_meta_desc[12..16].try_into().context("reading section count")?)
-        ).context("section count exceeds addressable range")?;
+        let num_sections = usize::try_from(u32::from_le_bytes(
+            tdvf_meta_desc[12..16]
+                .try_into()
+                .context("reading section count")?,
+        ))
+        .context("section count exceeds addressable range")?;
 
         let sections_end = tdvf_meta_offset
             .checked_add(16)
@@ -380,12 +404,22 @@ impl<'a> Tdvf<'a> {
             let sec_off = tdvf_meta_offset + 16 + 32 * i;
             let sec = &fw[sec_off..sec_off + 32];
             let s = TdvfSection {
-                data_offset: u32::from_le_bytes(sec[0..4].try_into().context("reading data_offset")?),
-                raw_data_size: u32::from_le_bytes(sec[4..8].try_into().context("reading raw_data_size")?),
-                memory_address: u64::from_le_bytes(sec[8..16].try_into().context("reading memory_address")?),
-                memory_data_size: u64::from_le_bytes(sec[16..24].try_into().context("reading memory_data_size")?),
+                data_offset: u32::from_le_bytes(
+                    sec[0..4].try_into().context("reading data_offset")?,
+                ),
+                raw_data_size: u32::from_le_bytes(
+                    sec[4..8].try_into().context("reading raw_data_size")?,
+                ),
+                memory_address: u64::from_le_bytes(
+                    sec[8..16].try_into().context("reading memory_address")?,
+                ),
+                memory_data_size: u64::from_le_bytes(
+                    sec[16..24].try_into().context("reading memory_data_size")?,
+                ),
                 sec_type: u32::from_le_bytes(sec[24..28].try_into().context("reading sec_type")?),
-                attributes: u32::from_le_bytes(sec[28..32].try_into().context("reading attributes")?),
+                attributes: u32::from_le_bytes(
+                    sec[28..32].try_into().context("reading attributes")?,
+                ),
             };
 
             if s.memory_address % PAGE_SIZE != 0 {
@@ -398,8 +432,7 @@ impl<'a> Tdvf<'a> {
                 bail!("Section {} memory_data_size not page-aligned", i);
             }
             // Validate section data is within firmware bounds
-            let fw_len_u64 = u64::try_from(fw.len())
-                .context("firmware length overflow")?;
+            let fw_len_u64 = u64::try_from(fw.len()).context("firmware length overflow")?;
             let data_end = u64::from(s.data_offset)
                 .checked_add(u64::from(s.raw_data_size))
                 .context("section data_offset + raw_data_size overflow")?;
@@ -468,13 +501,11 @@ impl<'a> Tdvf<'a> {
                         buf[16..24].copy_from_slice(&gpa.to_le_bytes());
                         h.update(buf);
 
-                        let chunk_offset = usize::try_from(
-                            u64::from(s.data_offset) + page * PAGE_SIZE
-                        ).context("MR.EXTEND chunk offset overflow")?
-                            + i * MR_EXTEND_GRANULARITY;
-                        h.update(
-                            &self.fw[chunk_offset..chunk_offset + MR_EXTEND_GRANULARITY],
-                        );
+                        let chunk_offset =
+                            usize::try_from(u64::from(s.data_offset) + page * PAGE_SIZE)
+                                .context("MR.EXTEND chunk offset overflow")?
+                                + i * MR_EXTEND_GRANULARITY;
+                        h.update(&self.fw[chunk_offset..chunk_offset + MR_EXTEND_GRANULARITY]);
                     }
                 }
             }
@@ -558,7 +589,9 @@ impl<'a> Tdvf<'a> {
         let mut td_hob_base_addr = 0x809000u64;
         for s in &self.sections {
             if matches!(s.sec_type, TDVF_SECTION_TD_HOB | TDVF_SECTION_TEMP_MEM) {
-                let accept_end = s.memory_address.checked_add(s.memory_data_size)
+                let accept_end = s
+                    .memory_address
+                    .checked_add(s.memory_data_size)
                     .context("section memory_address + memory_data_size overflow")?;
                 memory_acceptor.accept(s.memory_address, accept_end);
             }
@@ -608,10 +641,16 @@ impl<'a> Tdvf<'a> {
             // INVARIANT: last_start < 0x8000_0000 for standard q35 TDX layouts.
             // Firmware sections occupy low memory, leaving the large region above them.
             if last_start >= 0x8000_0000 {
-                bail!("TD HOB: last memory range starts at 0x{:x}, expected below 0x80000000", last_start);
+                bail!(
+                    "TD HOB: last memory range starts at 0x{:x}, expected below 0x80000000",
+                    last_start
+                );
             }
             if last_end < 0x8000_0000 {
-                bail!("TD HOB: last memory range ends at 0x{:x}, expected above 0x80000000", last_end);
+                bail!(
+                    "TD HOB: last memory range ends at 0x{:x}, expected above 0x80000000",
+                    last_end
+                );
             }
             add_resource_hob(0x07, last_start, 0x8000_0000u64 - last_start);
             add_resource_hob(0x07, 0x1_0000_0000, last_end - 0x8000_0000u64);
@@ -620,9 +659,8 @@ impl<'a> Tdvf<'a> {
         }
 
         // Fix up EfiEndOfHobList
-        let end_of_hob_list = td_hob_base_addr
-            + u64::try_from(td_hob.len()).context("TD HOB size overflow")?
-            + 8;
+        let end_of_hob_list =
+            td_hob_base_addr + u64::try_from(td_hob.len()).context("TD HOB size overflow")? + 8;
         td_hob[48..56].copy_from_slice(&end_of_hob_list.to_le_bytes());
 
         Ok(sha384(&td_hob))
@@ -631,10 +669,13 @@ impl<'a> Tdvf<'a> {
     fn measure_cfv(&self) -> Result<Vec<u8>> {
         for section in &self.sections {
             if section.sec_type == TDVF_SECTION_TD_CFV {
-                let start = usize::try_from(section.data_offset)
-                    .context("CFV data_offset overflow")?;
-                let end = start.checked_add(usize::try_from(section.raw_data_size)
-                    .context("CFV raw_data_size overflow")?)
+                let start =
+                    usize::try_from(section.data_offset).context("CFV data_offset overflow")?;
+                let end = start
+                    .checked_add(
+                        usize::try_from(section.raw_data_size)
+                            .context("CFV raw_data_size overflow")?,
+                    )
                     .context("CFV offset + size overflow")?;
                 if end > self.fw.len() {
                     bail!("CFV section extends beyond firmware");
@@ -652,7 +693,8 @@ struct MemoryAcceptor {
 
 impl MemoryAcceptor {
     fn new(start: u64, size: u64) -> Result<Self> {
-        let end = start.checked_add(size)
+        let end = start
+            .checked_add(size)
             .context("MemoryAcceptor: start + size overflow")?;
         Ok(Self {
             ranges: vec![(false, start, end)],
@@ -721,11 +763,9 @@ mod tests {
 
     #[test]
     fn test_measure_efi_variable_no_data() {
-        let result = measure_efi_variable(
-            "8BE4DF61-93CA-11D2-AA0D-00E098032B8C",
-            "SecureBoot",
-            None,
-        ).unwrap();
+        let result =
+            measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "SecureBoot", None)
+                .unwrap();
         assert_eq!(result.len(), 48); // SHA-384
     }
 
@@ -735,7 +775,8 @@ mod tests {
             "8BE4DF61-93CA-11D2-AA0D-00E098032B8C",
             "SecureBoot",
             Some(&[0x01]),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(result.len(), 48);
 
         // With different data, the hash should differ
@@ -743,37 +784,22 @@ mod tests {
             "8BE4DF61-93CA-11D2-AA0D-00E098032B8C",
             "SecureBoot",
             Some(&[0x00]),
-        ).unwrap();
+        )
+        .unwrap();
         assert_ne!(result, result2);
     }
 
     #[test]
     fn test_measure_efi_variable_different_names() {
-        let h1 = measure_efi_variable(
-            "8BE4DF61-93CA-11D2-AA0D-00E098032B8C",
-            "PK",
-            None,
-        ).unwrap();
-        let h2 = measure_efi_variable(
-            "8BE4DF61-93CA-11D2-AA0D-00E098032B8C",
-            "KEK",
-            None,
-        ).unwrap();
+        let h1 = measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "PK", None).unwrap();
+        let h2 = measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "KEK", None).unwrap();
         assert_ne!(h1, h2);
     }
 
     #[test]
     fn test_measure_efi_variable_deterministic() {
-        let h1 = measure_efi_variable(
-            "D719B2CB-3D3A-4596-A3BC-DAD00E67656F",
-            "db",
-            None,
-        ).unwrap();
-        let h2 = measure_efi_variable(
-            "D719B2CB-3D3A-4596-A3BC-DAD00E67656F",
-            "db",
-            None,
-        ).unwrap();
+        let h1 = measure_efi_variable("D719B2CB-3D3A-4596-A3BC-DAD00E67656F", "db", None).unwrap();
+        let h2 = measure_efi_variable("D719B2CB-3D3A-4596-A3BC-DAD00E67656F", "db", None).unwrap();
         assert_eq!(h1, h2);
     }
 
@@ -860,41 +886,34 @@ mod tests {
     /// Pin the exact Secure Boot variable digests used in RTMR[0] events 3-7.
     #[test]
     fn test_efi_variable_golden_values() {
-        let sb = measure_efi_variable(
-            "8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "SecureBoot", None,
-        ).unwrap();
+        let sb = measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "SecureBoot", None)
+            .unwrap();
         assert_eq!(
             hex::encode(&sb),
             "9dc3a1f80bcec915391dcda5ffbb15e7419f77eab462bbf72b42166fb70d50325e37b36f93537a863769bcf9bedae6fb",
         );
 
-        let pk = measure_efi_variable(
-            "8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "PK", None,
-        ).unwrap();
+        let pk = measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "PK", None).unwrap();
         assert_eq!(
             hex::encode(&pk),
             "6f2e3cbc14f9def86980f5f66fd85e99d63e69a73014ed8a5633ce56eca5b64b692108c56110e22acadcef58c3250f1b",
         );
 
-        let kek = measure_efi_variable(
-            "8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "KEK", None,
-        ).unwrap();
+        let kek =
+            measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "KEK", None).unwrap();
         assert_eq!(
             hex::encode(&kek),
             "d607c0efb41c0d757d69bca0615c3a9ac0b1db06c557d992e906c6b7dee40e0e031640c7bfd7bcd35844ef9edeadc6f9",
         );
 
-        let db = measure_efi_variable(
-            "D719B2CB-3D3A-4596-A3BC-DAD00E67656F", "db", None,
-        ).unwrap();
+        let db = measure_efi_variable("D719B2CB-3D3A-4596-A3BC-DAD00E67656F", "db", None).unwrap();
         assert_eq!(
             hex::encode(&db),
             "08a74f8963b337acb6c93682f934496373679dd26af1089cb4eaf0c30cf260a12e814856385ab8843e56a9acea19e127",
         );
 
-        let dbx = measure_efi_variable(
-            "D719B2CB-3D3A-4596-A3BC-DAD00E67656F", "dbx", None,
-        ).unwrap();
+        let dbx =
+            measure_efi_variable("D719B2CB-3D3A-4596-A3BC-DAD00E67656F", "dbx", None).unwrap();
         assert_eq!(
             hex::encode(&dbx),
             "18cc6e01f0c6ea99aa23f8a280423e94ad81d96d0aeb5180504fc0f7a40cb3619dd39bd6a95ec1680a86ed6ab0f9828d",
@@ -906,11 +925,14 @@ mod tests {
     fn test_rtmr0_secboot_chain_golden_value() {
         use crate::rtmr::rtmr_extend;
 
-        let sb = measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "SecureBoot", None).unwrap();
+        let sb = measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "SecureBoot", None)
+            .unwrap();
         let pk = measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "PK", None).unwrap();
-        let kek = measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "KEK", None).unwrap();
+        let kek =
+            measure_efi_variable("8BE4DF61-93CA-11D2-AA0D-00E098032B8C", "KEK", None).unwrap();
         let db = measure_efi_variable("D719B2CB-3D3A-4596-A3BC-DAD00E67656F", "db", None).unwrap();
-        let dbx = measure_efi_variable("D719B2CB-3D3A-4596-A3BC-DAD00E67656F", "dbx", None).unwrap();
+        let dbx =
+            measure_efi_variable("D719B2CB-3D3A-4596-A3BC-DAD00E67656F", "dbx", None).unwrap();
         let sep = crate::rtmr::sha384(&[0x00, 0x00, 0x00, 0x00]);
 
         let mut mr = vec![0u8; 48];

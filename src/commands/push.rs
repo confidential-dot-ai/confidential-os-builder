@@ -37,17 +37,28 @@ pub fn run(args: &PushArgs) -> anyhow::Result<()> {
         anyhow::bail!("no files found in {}", dir.display());
     }
 
-    let name = args
-        .name
-        .clone()
-        .unwrap_or_else(|| args.dir.file_name().unwrap().to_string_lossy().to_string());
-    let image_ref = format!("{}/{}:{}", args.registry, name, args.tag);
+    let image_ref = image_ref(&args.registry, args.tag.as_deref(), &dir)?;
 
     if args.cdi {
         push_cdi(&dir, &files, &image_ref)
     } else {
         push_default(&dir, &files, &image_ref)
     }
+}
+
+/// Build the OCI image reference `<registry>:<tag>`, deriving the tag from the
+/// pushed directory's basename when no explicit tag is given.
+fn image_ref(registry: &str, tag: Option<&str>, dir: &Path) -> anyhow::Result<String> {
+    let tag = match tag {
+        Some(t) => t.to_string(),
+        None => dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .ok_or_else(|| {
+                anyhow::anyhow!("cannot derive a tag from {}; pass --tag", dir.display())
+            })?,
+    };
+    Ok(format!("{registry}:{tag}"))
 }
 
 fn push_default(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<()> {
@@ -100,9 +111,9 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap());
-    let tarball_basename = tarball_path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("tarball path has no basename: {}", tarball_path.display()))?;
+    let tarball_basename = tarball_path.file_name().ok_or_else(|| {
+        anyhow::anyhow!("tarball path has no basename: {}", tarball_path.display())
+    })?;
 
     // Stage a minimal OCI image config alongside the tarball. CDI's
     // registry importer rejects artifacts whose top-level `artifactType`
@@ -185,6 +196,46 @@ mod tests {
 
     fn write(dir: &Path, name: &str, bytes: &[u8]) {
         fs_err::write(dir.join(name), bytes).unwrap();
+    }
+
+    #[test]
+    fn image_ref_defaults_tag_to_directory_basename() {
+        let r = image_ref(
+            "ghcr.io/confidential-dot-ai/steep",
+            None,
+            Path::new("output/base"),
+        )
+        .unwrap();
+        assert_eq!(r, "ghcr.io/confidential-dot-ai/steep:base");
+    }
+
+    #[test]
+    fn image_ref_uses_explicit_tag_over_directory_basename() {
+        let r = image_ref(
+            "ghcr.io/confidential-dot-ai/steep",
+            Some("v1"),
+            Path::new("output/web"),
+        )
+        .unwrap();
+        assert_eq!(r, "ghcr.io/confidential-dot-ai/steep:v1");
+    }
+
+    #[test]
+    fn image_ref_ignores_trailing_slash_on_directory() {
+        let r = image_ref(
+            "ghcr.io/confidential-dot-ai/steep",
+            None,
+            Path::new("output/base/"),
+        )
+        .unwrap();
+        assert_eq!(r, "ghcr.io/confidential-dot-ai/steep:base");
+    }
+
+    #[test]
+    fn image_ref_errors_when_tag_underivable() {
+        let err =
+            image_ref("ghcr.io/confidential-dot-ai/steep", None, Path::new("..")).unwrap_err();
+        assert!(err.to_string().contains("--tag"), "got: {err}");
     }
 
     #[test]

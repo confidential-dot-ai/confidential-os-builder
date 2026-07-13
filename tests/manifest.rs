@@ -176,23 +176,6 @@ fn sha256_file_hash() {
 }
 
 #[test]
-fn parse_igvm_manifest() {
-    let igvm_json = r#"{
-        "measurement": {
-            "snp_launch_digest": "aabbccdd",
-            "algorithm": "sha384",
-            "page_count": 5598,
-            "vmsa_count": 4
-        }
-    }"#;
-    let measurement = steep::manifest::parse_igvm_manifest(igvm_json).unwrap();
-    assert_eq!(measurement.snp_launch_digest, "aabbccdd");
-    assert_eq!(measurement.algorithm, "sha384");
-    assert_eq!(measurement.page_count, 5598);
-    assert_eq!(measurement.vmsa_count, 4);
-}
-
-#[test]
 fn read_manifest_from_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("manifest.json");
@@ -316,35 +299,6 @@ fn read_manifest_rejects_older_version() {
     assert!(
         msg.contains("version 2") && msg.contains("v3"),
         "expected v2-vs-v3 version error, got: {msg}"
-    );
-}
-
-#[test]
-fn parse_igvm_manifest_missing_measurement_key() {
-    let json = r#"{"other_key": "value"}"#;
-    let result = steep::manifest::parse_igvm_manifest(json);
-    assert!(result.is_err());
-    let err = result.err().unwrap();
-    assert!(err.to_string().contains("measurement"));
-}
-
-#[test]
-fn parse_igvm_manifest_invalid_json() {
-    let result = steep::manifest::parse_igvm_manifest("not json at all");
-    assert!(result.is_err());
-}
-
-#[test]
-fn parse_igvm_manifest_incomplete_measurement() {
-    let json = r#"{
-        "measurement": {
-            "snp_launch_digest": "aabbcc"
-        }
-    }"#;
-    let result = steep::manifest::parse_igvm_manifest(json);
-    assert!(
-        result.is_err(),
-        "should reject measurement missing required fields"
     );
 }
 

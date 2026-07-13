@@ -58,19 +58,6 @@ pub struct KernelArgs {
 }
 
 #[derive(clap::Args)]
-pub struct BaseArgs {
-    /// Force mkosi to rebuild the image even if it exists
-    #[arg(short, long)]
-    pub force: bool,
-}
-
-#[derive(clap::Args)]
-pub struct CloudInitArgs {
-    /// Path to cloud-init configuration directory
-    pub dir: PathBuf,
-}
-
-#[derive(clap::Args)]
 pub struct RunArgs {
     /// Output directory from steep build
     #[arg(default_value = "output/base")]
@@ -196,7 +183,10 @@ pub struct BuildArgs {
     /// Repeatable. Profiles compose extra config (packages, systemd units,
     /// files) into the base image at build time. Each enabled profile may
     /// also trigger pre-build hooks (e.g. fetching binaries from GHCR).
-    /// Currently supported: `attest` (bakes the attestation-api HTTP service).
+    /// Currently supported: `attest` (bakes the attestation-api HTTP
+    /// service), `ssh` (bakes openssh-server; host keys regenerate on
+    /// first boot), and `dev` (serial-console autologin + ttyS0 output for
+    /// debugging).
     #[arg(long = "profile", value_name = "NAME")]
     pub profiles: Vec<String>,
 }
@@ -220,17 +210,17 @@ pub struct PushArgs {
     /// Directory to push (output from `steep build`)
     pub dir: PathBuf,
 
-    /// OCI registry (e.g. ghcr.io/lunal-dev)
-    #[arg(long, default_value = "ghcr.io/lunal-dev")]
+    /// OCI registry (e.g. ghcr.io/confidential-dot-ai/steep)
+    #[arg(
+        long,
+        env = "STEEP_OCI_REGISTRY",
+        default_value = "ghcr.io/confidential-dot-ai/steep"
+    )]
     pub registry: String,
 
-    /// Image name
+    /// Image tag [default: the basename of <DIR>]
     #[arg(long)]
-    pub name: Option<String>,
-
-    /// Image tag
-    #[arg(long, default_value = "latest")]
-    pub tag: String,
+    pub tag: Option<String>,
 
     /// Build a CDI-compatible single-layer tar+gzip image (for KubeVirt CDI importer).
     ///
@@ -242,16 +232,11 @@ pub struct PushArgs {
 
 #[derive(clap::Args)]
 pub struct PullArgs {
-    /// Image name to pull (e.g. "base")
-    pub name: String,
+    /// Image reference to pull (e.g. "ghcr.io/confidential-dot-ai/steep:base")
+    pub image: String,
 
-    /// OCI registry (e.g. ghcr.io/lunal-dev)
-    #[arg(long, default_value = "ghcr.io/lunal-dev")]
-    pub registry: String,
-
-    /// Image tag
-    #[arg(long, default_value = "latest")]
-    pub tag: String,
+    /// Directory to pull into [default: output/<tag from IMAGE>]
+    pub dir: Option<PathBuf>,
 }
 
 pub mod commands {

@@ -44,7 +44,7 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 /// present in the resolved `.config`, failing the build if `olddefconfig`
 /// silently dropped any (unmet Kconfig dependency or removed symbol).
 ///
-/// Merge order is load-bearing: `confidential.config` deliberately re-enables
+/// Merge order is important: `confidential.config` deliberately re-enables
 /// options the `hardening.config` fragment turned off (e.g.
 /// `CONFIG_ACPI_TABLE_UPGRADE=y` overriding the `# is not set` line) — last
 /// fragment wins under `merge_config.sh`, so the confidential fragment MUST

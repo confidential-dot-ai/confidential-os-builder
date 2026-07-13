@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::{igvm, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform};
 
 pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
-    tracing::info!("sealing base image with dm-verity + UKI");
+    tracing::info!("building base image with dm-verity + UKI");
 
     // Resolve the requested platform set. --skip-igvm is the historical
     // way to ask for "no SNP measurement", which now corresponds to
@@ -66,14 +66,6 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     } else {
         None
     };
-
-    // The dual-firmware split (commit 78337a2) means the legacy single
-    // `firmware: Option<PathBuf>` is no longer load-bearing — every
-    // downstream consumer now reads `snp_firmware` or `tdx_firmware`
-    // directly. Keep this alias bound but underscore-prefixed as
-    // documentation of the prior contract, in case a follow-up wants
-    // a single-firmware fallback path (e.g. a future KVM-only tier).
-    let _firmware = snp_firmware.clone().or_else(|| tdx_firmware.clone());
 
     // Validate memory format before it reaches QEMU arg interpolation
     qemu::validate_memory(&args.memory)?;
@@ -142,7 +134,6 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     fs_err::create_dir_all(&dir)?;
     let output = dir.canonicalize()?;
 
-    // Inject debug autologin if --debug (enables passwordless root on serial console)
     // Inject cloud-init user-data into mkosi.local/mkosi.extra seed directory (measured in verity root)
     let seed_dir = PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/var/lib/cloud/seed/nocloud");
     if let Some(ref ci) = args.cloud_init {
@@ -371,7 +362,10 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         }
         out
     } else {
-        println!("\n=== Step 4a: Skipping IGVM (platform = {:?}) ===", platform);
+        println!(
+            "\n=== Step 4a: Skipping IGVM (platform = {:?}) ===",
+            platform
+        );
         Vec::new()
     };
 
@@ -405,8 +399,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("TDX firmware path required for TDX measurement"))?;
         let disk_bytes = fs_err::read(&disk_path)?;
-        let m = tdx_measure::measure_uki_topology_invariant(fw_bytes, &uki_bytes, Some(&disk_bytes))
-            .map_err(|e| anyhow::anyhow!("TDX measurement failed: {e}"))?;
+        let m =
+            tdx_measure::measure_uki_topology_invariant(fw_bytes, &uki_bytes, Some(&disk_bytes))
+                .map_err(|e| anyhow::anyhow!("TDX measurement failed: {e}"))?;
         println!("  MRTD:    {}", m.mrtd);
         println!("  RTMR[1]: {}", m.rtmr1);
         println!("  RTMR[2]: {}", m.rtmr2);
@@ -426,7 +421,10 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             firmware: tdx_fw_entry,
         })
     } else {
-        println!("\n=== Step 4b: Skipping TDX measurement (platform = {:?}) ===", platform);
+        println!(
+            "\n=== Step 4b: Skipping TDX measurement (platform = {:?}) ===",
+            platform
+        );
         None
     };
 
@@ -673,7 +671,10 @@ fn assemble_initrd_with_trusted_dsdt(
     tools::run_command_streaming("iasl", &["-p", &dsdt_aml_str, &dsdt_asl_str])
         .map_err(|e| anyhow::anyhow!("iasl failed compiling {}: {}", dsdt_asl.display(), e))?;
     if !dsdt_aml.exists() {
-        anyhow::bail!("iasl reported success but {} is missing", dsdt_aml.display());
+        anyhow::bail!(
+            "iasl reported success but {} is missing",
+            dsdt_aml.display()
+        );
     }
 
     // Stage the AML in the path layout CONFIG_ACPI_TABLE_UPGRADE expects:
@@ -700,6 +701,13 @@ fn assemble_initrd_with_trusted_dsdt(
     // ultimately measure as `.initrd`.
     let combined = output.join("combined-initrd.img");
     concat_files(&[&early_cpio, mkosi_initrd], &combined)?;
+
+    // The mkosi initrd's gzip header carries the compression wall-clock
+    // time — the one non-deterministic input to every downstream
+    // measurement. Patch it in the combined copy (mkosi's own output is
+    // root-owned) so consecutive builds are bit-identical.
+    let early_cpio_len = fs_err::metadata(&early_cpio)?.len();
+    zero_gzip_mtime(&combined, early_cpio_len)?;
 
     // Staging tree and intermediate cpio are throwaway once concatenation
     // succeeds; leaving them around would just clutter the output dir.
@@ -814,7 +822,10 @@ fn build_early_cpio(root: &Path, out: &Path) -> anyhow::Result<()> {
         );
     }
     if !sort_status.success() {
-        anyhow::bail!("sort failed sorting cpio input (exit {:?})", sort_status.code());
+        anyhow::bail!(
+            "sort failed sorting cpio input (exit {:?})",
+            sort_status.code()
+        );
     }
     if !cpio_output.status.success() {
         anyhow::bail!(
@@ -849,6 +860,37 @@ fn zero_mtimes(root: &Path) -> anyhow::Result<()> {
     walk(root, epoch).map_err(Into::into)
 }
 
+/// Zero the MTIME field of the gzip member that starts at `offset` in `path`.
+///
+/// mkosi's `CompressOutput=gzip` stamps the compression wall-clock time into
+/// bytes 4..8 of the gzip header (`SourceDateEpoch=0` does not reach gzip,
+/// which has no SOURCE_DATE_EPOCH support). Those four bytes are the only
+/// non-deterministic bytes in the combined initrd, and they cascade into the
+/// UKI, the disk image, every SNP launch digest, and RTMR[1]/RTMR[2] — so
+/// consecutive builds of identical content would publish different reference
+/// measurements. MTIME=0 is defined by RFC 1952 as "no timestamp available";
+/// the kernel's initramfs unpacker never reads it.
+fn zero_gzip_mtime(path: &Path, offset: u64) -> anyhow::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut file = fs_err::OpenOptions::new().read(true).write(true).open(path)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut header = [0u8; 4];
+    file.read_exact(&mut header)?;
+    // ID1=0x1f ID2=0x8b (gzip magic), CM=8 (deflate) per RFC 1952
+    if header[0..3] != [0x1f, 0x8b, 0x08] {
+        anyhow::bail!(
+            "expected a gzip (deflate) member at offset {} of {}, found {:02x?} — \
+             cannot normalize initrd MTIME for reproducible builds",
+            offset,
+            path.display(),
+            &header[0..3],
+        );
+    }
+    file.seek(SeekFrom::Start(offset + 4))?;
+    file.write_all(&[0u8; 4])?;
+    Ok(())
+}
+
 /// Concatenate the byte streams of `parts` (in order) into `out`.
 fn concat_files(parts: &[&Path], out: &Path) -> anyhow::Result<()> {
     let mut sink = fs_err::File::create(out)?;
@@ -864,6 +906,72 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
+
+    fn gzip_with_mtime(payload: &[u8], mtime: u32) -> Vec<u8> {
+        use std::io::Write;
+        let mut enc = flate2::GzBuilder::new()
+            .mtime(mtime)
+            .write(Vec::new(), flate2::Compression::default());
+        enc.write_all(payload).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn zero_gzip_mtime_zeroes_only_the_mtime_field() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("combined.img");
+        // gzip member preceded by other bytes, as in the combined initrd
+        // (early cpio || gzipped mkosi initrd)
+        let prefix = b"EARLY-CPIO-BYTES";
+        let gz = gzip_with_mtime(b"initrd payload", 0x6a54_4bad);
+        let mut original = prefix.to_vec();
+        original.extend_from_slice(&gz);
+        fs_err::write(&path, &original).unwrap();
+
+        zero_gzip_mtime(&path, prefix.len() as u64).unwrap();
+
+        let patched = fs_err::read(&path).unwrap();
+        let off = prefix.len();
+        let mut expected = original.clone();
+        expected[off + 4..off + 8].fill(0);
+        assert_eq!(patched, expected);
+        // the member must still decompress to the same payload
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(
+            &mut flate2::read::GzDecoder::new(&patched[off..]),
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(out, b"initrd payload");
+    }
+
+    #[test]
+    fn zero_gzip_mtime_makes_time_shifted_archives_identical() {
+        // The regression this guards: identical payloads compressed at
+        // different wall-clock times produce different bytes until the
+        // MTIME field is normalized.
+        let a = gzip_with_mtime(b"same initrd", 0x6a54_4bad);
+        let b = gzip_with_mtime(b"same initrd", 0x6a54_4c30);
+        assert_ne!(a, b);
+
+        let dir = TempDir::new().unwrap();
+        let pa = dir.path().join("a");
+        let pb = dir.path().join("b");
+        fs_err::write(&pa, &a).unwrap();
+        fs_err::write(&pb, &b).unwrap();
+        zero_gzip_mtime(&pa, 0).unwrap();
+        zero_gzip_mtime(&pb, 0).unwrap();
+
+        assert_eq!(fs_err::read(&pa).unwrap(), fs_err::read(&pb).unwrap());
+    }
+
+    #[test]
+    fn zero_gzip_mtime_rejects_non_gzip_data() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("not-gzip");
+        fs_err::write(&path, b"070701-plain-cpio-not-gzip").unwrap();
+        assert!(zero_gzip_mtime(&path, 0).is_err());
+    }
 
     #[test]
     fn copy_extra_copies_files_at_root() {
@@ -1062,7 +1170,9 @@ mod tests {
         // The aml file's bytes should appear verbatim somewhere in the
         // archive (newc stores file data inline after each header).
         assert!(
-            bytes.windows(b"DSDT-fake-aml".len()).any(|w| w == b"DSDT-fake-aml"),
+            bytes
+                .windows(b"DSDT-fake-aml".len())
+                .any(|w| w == b"DSDT-fake-aml"),
             "cpio archive should embed the staged file data"
         );
     }

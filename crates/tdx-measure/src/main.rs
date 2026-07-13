@@ -188,8 +188,7 @@ fn cmd_measure(
     // Parse firmware once (used for both MRTD and RTMR[0])
     let fw_data = firmware_path
         .map(|fp| {
-            fs::read(fp)
-                .with_context(|| format!("Failed to read firmware: {}", fp.display()))
+            fs::read(fp).with_context(|| format!("Failed to read firmware: {}", fp.display()))
         })
         .transpose()?;
     let tdvf_meta = fw_data
@@ -197,10 +196,7 @@ fn cmd_measure(
         .map(|data| tdvf::Tdvf::parse(data).context("Failed to parse TDVF metadata"))
         .transpose()?;
 
-    let mrtd = tdvf_meta
-        .as_ref()
-        .map(|t| t.mrtd())
-        .transpose()?;
+    let mrtd = tdvf_meta.as_ref().map(|t| t.mrtd()).transpose()?;
 
     // Load platform data from CCEL, or individual sources.
     // --platform-ccel provides both ACPI hashes and boot variables.
@@ -253,10 +249,13 @@ fn cmd_measure(
         }
         Some(bv)
     } else if let Some(dir) = boot_vars_dir {
-        let bv = tdvf::BootVars::load_from_dir(dir)
-            .context("Failed to load boot variables")?;
+        let bv = tdvf::BootVars::load_from_dir(dir).context("Failed to load boot variables")?;
         if !json {
-            eprintln!("Boot vars: {} entries from {}", bv.entries.len(), dir.display());
+            eprintln!(
+                "Boot vars: {} entries from {}",
+                bv.entries.len(),
+                dir.display()
+            );
         }
         Some(bv)
     } else {
@@ -291,8 +290,12 @@ fn cmd_measure(
                 serde_json::Value::String(format!("{}/15", rtmr0_events)),
             );
             let mut missing = Vec::new();
-            if !has_acpi { missing.push("ACPI tables (--acpi-*)"); }
-            if !has_boot_vars { missing.push("boot variables (--boot-vars or --boot-vars-ccel)"); }
+            if !has_acpi {
+                missing.push("ACPI tables (--acpi-*)");
+            }
+            if !has_boot_vars {
+                missing.push("boot variables (--boot-vars or --boot-vars-ccel)");
+            }
             if !missing.is_empty() {
                 result.insert(
                     "rtmr0_note".into(),
@@ -329,8 +332,12 @@ fn cmd_measure(
             println!("RTMR[0]: {} ({}/15 events)", hex::encode(r), rtmr0_events);
             if !has_acpi || !has_boot_vars {
                 let mut missing = Vec::new();
-                if !has_acpi { missing.push("ACPI tables"); }
-                if !has_boot_vars { missing.push("boot variables"); }
+                if !has_acpi {
+                    missing.push("ACPI tables");
+                }
+                if !has_boot_vars {
+                    missing.push("boot variables");
+                }
                 println!("         (partial: excludes {})", missing.join(", "));
             }
         } else {
@@ -341,18 +348,18 @@ fn cmd_measure(
         if disk_path.is_none() {
             println!("         (without GPT event -- provide --disk for exact value)");
         }
-        println!("RTMR[2]: {} ({}/14 events)", hex::encode(&rtmr2_partial), computed_count);
+        println!(
+            "RTMR[2]: {} ({}/14 events)",
+            hex::encode(&rtmr2_partial),
+            computed_count
+        );
         println!("RTMR[3]: {}", hex::encode([0u8; 48]));
     }
 
     Ok(())
 }
 
-fn cmd_verify(
-    ccel_path: &Path,
-    tdreport_path: &Path,
-    uki_path: Option<&Path>,
-) -> Result<()> {
+fn cmd_verify(ccel_path: &Path, tdreport_path: &Path, uki_path: Option<&Path>) -> Result<()> {
     let ccel_data = fs::read(ccel_path)
         .with_context(|| format!("Failed to read CCEL: {}", ccel_path.display()))?;
     let report_data = fs::read(tdreport_path)
@@ -427,13 +434,13 @@ fn cmd_verify(
         let sections = pe::parse_sections(&uki_data)?;
         let precomputed = rtmr::precompute_rtmr2_digests(&sections)?;
 
-        let ccel_rtmr2: Vec<&ccel::CcelEvent> =
-            events.iter().filter(|e| e.mr_index == 3).collect();
+        let ccel_rtmr2: Vec<&ccel::CcelEvent> = events.iter().filter(|e| e.mr_index == 3).collect();
 
         let mut ok_count = 0;
         for (i, (kind, name, digest)) in precomputed.iter().enumerate() {
             if i < ccel_rtmr2.len() {
-                let matched = ccel::digests_equal(digest.as_slice(), ccel_rtmr2[i].sha384_digest.as_slice());
+                let matched =
+                    ccel::digests_equal(digest.as_slice(), ccel_rtmr2[i].sha384_digest.as_slice());
                 if matched {
                     ok_count += 1;
                 }
@@ -482,10 +489,7 @@ fn cmd_verify(
     Ok(())
 }
 
-fn cmd_inspect(
-    ccel_path: &Path,
-    tdreport_path: Option<&Path>,
-) -> Result<()> {
+fn cmd_inspect(ccel_path: &Path, tdreport_path: Option<&Path>) -> Result<()> {
     let ccel_data = fs::read(ccel_path)
         .with_context(|| format!("Failed to read CCEL: {}", ccel_path.display()))?;
 
@@ -601,8 +605,15 @@ fn cmd_extract_platform(ccel_path: &Path, output_dir: &Path) -> Result<()> {
 
     println!("\nUsage:");
     println!("  tdx-measure measure --uki <uki.efi> --firmware <OVMF.fd> --disk <disk.img> \\");
-    println!("    --platform-ccel {}  # or use extracted files:", ccel_path.display());
-    println!("    --acpi-hashes {} --boot-vars {}", acpi_path.display(), boot_dir.display());
+    println!(
+        "    --platform-ccel {}  # or use extracted files:",
+        ccel_path.display()
+    );
+    println!(
+        "    --acpi-hashes {} --boot-vars {}",
+        acpi_path.display(),
+        boot_dir.display()
+    );
 
     Ok(())
 }
@@ -650,7 +661,10 @@ mod tests {
 
     #[test]
     fn test_parse_memory_size_terabytes() {
-        assert_eq!(parse_memory_size("1T").unwrap(), 1024u64 * 1024 * 1024 * 1024);
+        assert_eq!(
+            parse_memory_size("1T").unwrap(),
+            1024u64 * 1024 * 1024 * 1024
+        );
     }
 
     #[test]

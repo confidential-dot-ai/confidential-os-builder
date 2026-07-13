@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in steep misbehaves (build failures, wrong measurements, boot problems)
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! **If this could break measurement or attestation
+        guarantees, do not file it here** — use
+        [private vulnerability reporting](https://github.com/confidential-dot-ai/steep/security/advisories/new)
+        instead (see SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you run, what did you expect, what happened instead?
+      placeholder: |
+        Ran `steep build myimage --extra ./extra --smp 4` and ...
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command and output
+      description: The full command line and the relevant output/error (trim megabytes of build logs to the failing section).
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Steep version / commit
+      description: "`git rev-parse HEAD` in your steep checkout"
+    validations:
+      required: true
+  - type: textarea
+    id: host
+    attributes:
+      label: Build/run host
+      description: OS and version, mkosi version (`mkosi --version`), QEMU version if a `steep run` issue, and whether the host has SEV-SNP/TDX/KVM available.
+      placeholder: |
+        Ubuntu 24.04 bare metal, mkosi 26, qemu 10.x, /dev/kvm present, no SNP
+    validations:
+      required: true
+  - type: textarea
+    id: manifest
+    attributes:
+      label: manifest.json
+      description: For build/measurement/boot issues, paste the affected build's `manifest.json` — it pins every input and saves a round-trip. For reproducibility mismatches, paste both manifests.
+      render: json
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Kernel config fragments passed, cloud-init/extra content shape, kernel snapshot diff, dmesg from the guest, etc.

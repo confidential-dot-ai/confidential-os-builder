@@ -1,27 +1,30 @@
 # Examples
 
-Prebuilt OVMF firmware and a UKI are included in `prebuilt/` so you can build and measure IGVM files without any extra setup.
+Building an IGVM takes two inputs: a patched OVMF firmware and a UKI. The
+["Building the inputs"](#building-the-inputs) section below documents how to
+produce both.
 
 ## Quick start
 
 ```bash
-cargo build --release
+# All commands below run from crates/igvm-tools/
+cargo install --path .   # the example scripts invoke `igvm-tools` from $PATH
 
 # Build an IGVM (prints the expected SNP launch digest)
-./examples/build.sh -o guest.igvm
+FIRMWARE=path/to/OVMF.fd KERNEL=path/to/uki.efi ./examples/build.sh -o guest.igvm
 
 # Build with SMP 2
-./examples/build.sh --smp 2 -o guest-smp2.igvm
+FIRMWARE=path/to/OVMF.fd KERNEL=path/to/uki.efi ./examples/build.sh --smp 2 -o guest-smp2.igvm
 
 # Measure an existing IGVM
 ./examples/measure.sh guest.igvm
 ```
 
-## What's in `prebuilt/`
+## Building the inputs
 
-### `OVMF.fd` (4 MB)
+### `OVMF.fd`
 
-Patched OVMF firmware built from our [edk2 fork](https://github.com/lunal-dev/edk2)
+Patched OVMF firmware built from our [edk2 fork](https://github.com/confidential-dot-ai/edk2)
 
 The patch adds IGVM-aware PVALIDATE handling — when booting via IGVM, pages loaded through `SNP_LAUNCH_UPDATE` are already validated by the PSP. Without the patch, OVMF re-validates these pages and the guest silently terminates.
 
@@ -31,7 +34,7 @@ The patch adds IGVM-aware PVALIDATE handling — when booting via IGVM, pages lo
 # Prerequisites (Ubuntu/Debian)
 sudo apt install build-essential nasm iasl uuid-dev python3
 
-git clone https://github.com/lunal-dev/edk2.git
+git clone https://github.com/confidential-dot-ai/edk2.git
 cd edk2
 git checkout OvmfPkg-PlatformPei-skip-pvalidate-igvm-pages
 git submodule update --init    # ~2 GB, takes 5-10 min
@@ -43,7 +46,7 @@ build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE -DSMM_REQUIRE=FALSE
 
 > **Do NOT use `OvmfPkg/AmdSev/AmdSevX64.dsc`** — it fails with `0x404` page-not-validated errors under IGVM+SNP.
 
-### `uki.efi` (20 MB)
+### `uki.efi`
 
 Unified Kernel Image containing:
 - Linux 6.17.0-14-generic (Ubuntu 25.10)

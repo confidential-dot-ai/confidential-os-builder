@@ -12,7 +12,9 @@ use sha2::{Digest, Sha384};
 
 fn read_le<T: FromLeBytes>(data: &[u8], offset: usize) -> Result<T> {
     let size = mem::size_of::<T>();
-    let end = offset.checked_add(size).context("offset overflow in read_le")?;
+    let end = offset
+        .checked_add(size)
+        .context("offset overflow in read_le")?;
     if end > data.len() {
         bail!(
             "Read out of bounds at offset 0x{:x} (need {} bytes, have {})",
@@ -73,7 +75,8 @@ pub fn authenticode_sha384(data: &[u8]) -> Result<Vec<u8>> {
 
     // Size of headers
     let size_of_headers: u32 = read_le(data, opt_hdr_offset + 60)?;
-    let size_of_headers = usize::try_from(size_of_headers).context("PE SizeOfHeaders exceeds addressable range")?;
+    let size_of_headers =
+        usize::try_from(size_of_headers).context("PE SizeOfHeaders exceeds addressable range")?;
 
     // Validate all header offsets are within data before slicing
     if cert_dir_end > data.len() {
@@ -131,7 +134,8 @@ pub fn authenticode_sha384(data: &[u8]) -> Result<Vec<u8>> {
 
     // Hash each section's raw data
     for (offset, size) in &sections {
-        let end = offset.checked_add(*size)
+        let end = offset
+            .checked_add(*size)
             .context("section offset+size overflow")?;
         if end > data.len() {
             bail!(
@@ -153,11 +157,11 @@ pub fn authenticode_sha384(data: &[u8]) -> Result<Vec<u8>> {
 
     if data.len() > sum_of_bytes_hashed {
         if cert_table_addr > 0 && cert_table_size > 0 {
-            let ct_addr = usize::try_from(cert_table_addr)
-                .context("cert table address overflow")?;
-            let ct_size = usize::try_from(cert_table_size)
-                .context("cert table size overflow")?;
-            let ct_end = ct_addr.checked_add(ct_size)
+            let ct_addr =
+                usize::try_from(cert_table_addr).context("cert table address overflow")?;
+            let ct_size = usize::try_from(cert_table_size).context("cert table size overflow")?;
+            let ct_end = ct_addr
+                .checked_add(ct_size)
                 .context("cert table addr + size overflow")?;
             // Hash trailing data before the certificate table
             if ct_addr > sum_of_bytes_hashed {
@@ -209,23 +213,26 @@ pub fn parse_sections(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
 
         // Section name: 8 bytes, NUL-padded
         let name_bytes = &data[off..off + 8];
-        let name = str::from_utf8(
-            &name_bytes[..name_bytes.iter().position(|&b| b == 0).unwrap_or(8)],
-        )
-        .unwrap_or("")
-        .to_string();
+        let name =
+            str::from_utf8(&name_bytes[..name_bytes.iter().position(|&b| b == 0).unwrap_or(8)])
+                .unwrap_or("")
+                .to_string();
 
         let virtual_size: u32 = read_le(data, off + 8)?;
         let raw_offset: u32 = read_le(data, off + 20)?;
 
         let start = usize::try_from(raw_offset).context("section raw offset overflow")?;
         let vsize = usize::try_from(virtual_size).context("section virtual size overflow")?;
-        let end = start.checked_add(vsize)
+        let end = start
+            .checked_add(vsize)
             .context("section offset + virtual_size overflow")?;
         if end > data.len() {
             bail!(
                 "PE section '{}' (offset 0x{:x}, virtual_size 0x{:x}) extends beyond file (0x{:x})",
-                name, start, vsize, data.len()
+                name,
+                start,
+                vsize,
+                data.len()
             );
         }
         sections.push((name, data[start..end].to_vec()));
@@ -326,7 +333,11 @@ mod tests {
         let pe = build_minimal_pe();
         let result = authenticode_sha384(&pe);
         // Should succeed on a valid (if empty) PE
-        assert!(result.is_ok(), "authenticode_sha384 failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "authenticode_sha384 failed: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap().len(), 48);
     }
 

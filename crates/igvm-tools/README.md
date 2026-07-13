@@ -1,5 +1,8 @@
 # igvm-tools
 
+> Vendored into [steep](https://github.com/confidential-dot-ai/steep) from the
+> original `igvm-tools` repository; developed in-tree since. AGPL-3.0.
+
 Build and measure IGVM files for AMD SEV-SNP confidential VMs running on **QEMU+KVM**.
 
 
@@ -12,13 +15,13 @@ Other VMMs (cloud-hypervisor, Firecracker, Hyper-V) process IGVM directives diff
 ### Roadmap
 
 - **Additional VMMs** — support for cloud-hypervisor and other IGVM-capable VMMs is planned.
-- **Intel TDX** — TDX uses a fundamentally different measurement model (MRTD via `TDH.MR.EXTEND`) and is not yet supported. TDX support is planned for a future release.
+- **Intel TDX** — TDX uses a fundamentally different measurement model (MRTD via `TDH.MR.EXTEND`). Intel TDX measurement is handled by the sibling [`tdx-measure`](../tdx-measure) crate; igvm-tools itself is SNP-only.
 
 ## Install
 
 ```bash
-git clone https://github.com/lunal-dev/igvm-tools.git
-cargo install --path .
+git clone https://github.com/confidential-dot-ai/steep.git
+cargo install --path steep/crates/igvm-tools
 ```
 
 ## OVMF firmware
@@ -28,7 +31,7 @@ igvm-tools requires a patched OVMF firmware with IGVM metadata support (paramete
 Use our patched edk2 fork:
 
 ```bash
-git clone https://github.com/lunal-dev/edk2.git
+git clone https://github.com/confidential-dot-ai/edk2.git
 cd edk2
 git checkout OvmfPkg-PlatformPei-skip-pvalidate-igvm-pages
 git submodule update --init
@@ -73,12 +76,17 @@ igvm-tools measure my-guest.igvm
 
 This parses the IGVM file and computes the SNP launch digest without building anything.
 
+Pass `-v` / `--verbose` for a per-page measurement trace (see
+`examples/measure.sh`).
+
 ### Options
 
 | Flag                | Default  | Description                                       |
 | ------------------- | -------- | ------------------------------------------------- |
 | `--firmware FILE`   | required | OVMF firmware image                               |
-| `--kernel FILE`     | —        | Kernel/UKI EFI binary (measured in digest)        |
+| `--kernel FILE`     | —        | UKI EFI binary, or a plain kernel image when `--cmdline` is given (measured in digest) |
+| `--cmdline STRING`  | —        | Wrap `--kernel` into a UKI (via `ukify`) with this kernel command line; the cmdline is embedded and measured |
+| `--initrd FILE`     | —        | Initrd embedded in the synthesized UKI; only valid together with `--cmdline` |
 | `--shim FILE`       | —        | Shim EFI binary (unmeasured, verified at runtime) |
 | `--vars FILE`       | —        | UEFI variable store                               |
 | `--pk FILE`         | —        | Secure boot PK certificate (.auth)                |
@@ -92,6 +100,9 @@ This parses the IGVM file and computes the SNP launch digest without building an
 | `--manifest FILE`   | —        | Output JSON manifest with digest and input hashes |
 | `--meta`            | —        | Print OVMF metadata regions                       |
 | `-v, --verbose`     | —        | Print per-page measurement trace                  |
+
+`--cmdline` / `--initrd` require `ukify` on `PATH` (Debian/Ubuntu:
+`systemd-ukify`).
 
 ### JSON manifest
 
@@ -156,11 +167,11 @@ The digest is deterministic: same inputs always produce the same digest, regardl
 ## Examples
 
 ```bash
-# Build an IGVM from firmware
-./examples/build.sh --firmware OVMF.fd -o guest.igvm
+# Build an IGVM from firmware + UKI
+FIRMWARE=OVMF.fd KERNEL=my-uki.efi ./examples/build.sh -o guest.igvm
 
-# Build with a kernel and 2 vCPUs
-./examples/build.sh --firmware OVMF.fd --kernel my-uki.efi --smp 2 -o guest.igvm
+# Build with 2 vCPUs
+FIRMWARE=OVMF.fd KERNEL=my-uki.efi ./examples/build.sh --smp 2 -o guest.igvm
 
 # Measure an existing IGVM file
 ./examples/measure.sh guest.igvm

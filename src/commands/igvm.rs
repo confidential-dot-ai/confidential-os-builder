@@ -1,4 +1,4 @@
-use crate::manifest::{self, BuildManifest, FileEntry, SnpVariant, Measurement};
+use crate::manifest::{self, BuildManifest, FileEntry, Measurement, SnpVariant};
 use crate::IgvmArgs;
 
 /// Generate IGVM files for multiple SMP counts from an existing sealed output.
@@ -119,7 +119,11 @@ pub fn run(args: &IgvmArgs) -> anyhow::Result<()> {
 /// Replace any existing variant with the same SMP count, or append if absent.
 /// Ensures `variants[]` has at most one entry per SMP.
 pub(crate) fn upsert_variant(manifest: &mut BuildManifest, variant: SnpVariant) {
-    if let Some(existing) = manifest.snp_variants.iter_mut().find(|v| v.smp == variant.smp) {
+    if let Some(existing) = manifest
+        .snp_variants
+        .iter_mut()
+        .find(|v| v.smp == variant.smp)
+    {
         *existing = variant;
     } else {
         manifest.snp_variants.push(variant);
@@ -217,4 +221,3 @@ mod tests {
         assert!(digests.contains(&"d4"));
     }
 }
-

@@ -155,7 +155,11 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
     // Cache key = mkosi.conf hash + the extra-package list. The packages come
     // via flags, not mkosi.conf, so they must be folded in here or a changed
     // --kernel-builder-package list would silently reuse a stale tree.
-    let stamp_key = format!("{}\n{}", fetch::sha256_file(Path::new(TOOLS_TREE_CONF))?, extra_packages.join(","));
+    let stamp_key = format!(
+        "{}\n{}",
+        fetch::sha256_file(Path::new(TOOLS_TREE_CONF))?,
+        extra_packages.join(",")
+    );
 
     if !force && tree.exists() {
         if let Ok(stamped) = fs_err::read_to_string(stamp_path) {

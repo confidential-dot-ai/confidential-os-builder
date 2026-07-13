@@ -19,7 +19,7 @@
 
 use std::io::Cursor;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 /// Path to the UEFI removable-media fallback bootloader inside the ESP.
 /// Same path mkosi uses when it lays down systemd-boot.
@@ -59,7 +59,10 @@ pub fn read_esp_file(disk: &[u8], path: &str) -> Result<Vec<u8>> {
             .context("reading size_of_partition_entry from GPT header")?,
     );
     if entry_size < 128 {
-        bail!("GPT partition entry size {} below the 128-byte minimum", entry_size);
+        bail!(
+            "GPT partition entry size {} below the 128-byte minimum",
+            entry_size
+        );
     }
 
     // EFI System Partition GUID per the UEFI spec, little-endian on disk.

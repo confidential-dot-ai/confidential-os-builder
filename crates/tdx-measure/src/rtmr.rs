@@ -127,32 +127,50 @@ fn compute_gpt_event_hash(disk: &[u8]) -> Result<Vec<u8>> {
         anyhow::bail!("Invalid GPT signature");
     }
 
-    let partition_entry_lba =
-        u64::from_le_bytes(gpt_header[72..80].try_into().context("reading partition entry LBA")?);
-    let num_entries = usize::try_from(
-        u32::from_le_bytes(gpt_header[80..84].try_into().context("reading num entries")?)
-    ).context("GPT num_entries overflow")?;
-    let entry_size = usize::try_from(
-        u32::from_le_bytes(gpt_header[84..88].try_into().context("reading entry size")?)
-    ).context("GPT entry_size overflow")?;
+    let partition_entry_lba = u64::from_le_bytes(
+        gpt_header[72..80]
+            .try_into()
+            .context("reading partition entry LBA")?,
+    );
+    let num_entries = usize::try_from(u32::from_le_bytes(
+        gpt_header[80..84]
+            .try_into()
+            .context("reading num entries")?,
+    ))
+    .context("GPT num_entries overflow")?;
+    let entry_size = usize::try_from(u32::from_le_bytes(
+        gpt_header[84..88]
+            .try_into()
+            .context("reading entry size")?,
+    ))
+    .context("GPT entry_size overflow")?;
 
     if entry_size < 128 {
-        anyhow::bail!("GPT partition entry size {} is below minimum 128", entry_size);
+        anyhow::bail!(
+            "GPT partition entry size {} is below minimum 128",
+            entry_size
+        );
     }
 
     let entries_offset = partition_entry_lba
         .checked_mul(512)
         .context("GPT partition_entry_lba * 512 overflow")?;
-    let entries_offset = usize::try_from(entries_offset)
-        .context("GPT entries offset exceeds addressable range")?;
+    let entries_offset =
+        usize::try_from(entries_offset).context("GPT entries offset exceeds addressable range")?;
 
     // Collect valid (non-zero type GUID) partition entries
     let mut valid_entries = Vec::new();
     for i in 0..num_entries {
-        let off = entries_offset.checked_add(i.checked_mul(entry_size)
-            .context("GPT entry offset overflow")?)
+        let off = entries_offset
+            .checked_add(
+                i.checked_mul(entry_size)
+                    .context("GPT entry offset overflow")?,
+            )
             .context("GPT entry offset overflow")?;
-        if off.checked_add(entry_size).map_or(true, |end| end > disk.len()) {
+        if off
+            .checked_add(entry_size)
+            .map_or(true, |end| end > disk.len())
+        {
             break;
         }
         let entry = &disk[off..off + entry_size];
@@ -165,7 +183,9 @@ fn compute_gpt_event_hash(disk: &[u8]) -> Result<Vec<u8>> {
     let mut gpt_event = Vec::new();
     gpt_event.extend_from_slice(gpt_header);
     gpt_event.extend_from_slice(
-        &u64::try_from(valid_entries.len()).context("GPT entry count overflow")?.to_le_bytes(),
+        &u64::try_from(valid_entries.len())
+            .context("GPT entry count overflow")?
+            .to_le_bytes(),
     );
     for entry in valid_entries {
         gpt_event.extend_from_slice(entry);
@@ -482,7 +502,10 @@ mod tests {
         // No "EFI PART" signature at offset 512
         let result = compute_gpt_event_hash(&disk);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid GPT signature"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid GPT signature"));
     }
 
     #[test]
@@ -494,9 +517,7 @@ mod tests {
 
     #[test]
     fn test_precompute_rtmr2_single_section() {
-        let sections = vec![
-            (".linux".to_string(), vec![0xDE, 0xAD]),
-        ];
+        let sections = vec![(".linux".to_string(), vec![0xDE, 0xAD])];
         let digests = precompute_rtmr2_digests(&sections).unwrap();
         // .linux produces 2 events: name + data
         assert_eq!(digests.len(), 2);
@@ -508,9 +529,7 @@ mod tests {
 
     #[test]
     fn test_precompute_rtmr2_cmdline_event() {
-        let sections = vec![
-            (".cmdline".to_string(), b"root=/dev/vda1\n".to_vec()),
-        ];
+        let sections = vec![(".cmdline".to_string(), b"root=/dev/vda1\n".to_vec())];
         let digests = precompute_rtmr2_digests(&sections).unwrap();
         // .cmdline produces: name + data + loadopts (UTF-16LE) = 3 events
         assert_eq!(digests.len(), 3);

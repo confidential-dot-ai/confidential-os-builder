@@ -82,7 +82,7 @@ So most drivers are compiled as **modules** — separate files that can be loade
 
 You load them with `insmod /path/to/module.ko` or `modprobe module-name` (which also handles dependencies). Once loaded, the driver is part of the running kernel — it can register device types, filesystems, crypto algorithms, whatever it provides.
 
-Our initrd carries specific `.ko` files for dm-verity, dm-bufio (buffer I/O layer that dm-verity needs), and overlay. The init script loads them with `insmod` before trying to set up verity or overlayfs.
+Steep's kernel takes the opposite approach: the build applies `mod2yesconfig`, which converts every `=m` option to `=y` — a **module-less kernel**. dm-verity, dm-bufio, overlayfs, virtio, and erofs are all compiled in, so our initrd carries no `.ko` files at all and the init script never runs `insmod`. Nothing can be loaded into the kernel after boot, which also shrinks the attack surface (see `kernel/hardening.config`: `CONFIG_MODULES` is unset).
 
 ---
 
@@ -148,7 +148,7 @@ From the filesystem's perspective, `/dev/mapper/root` is just another block devi
 ```
 App reads /etc/hostname
     |
-ext4 on /dev/mapper/root -> "I need block 12345"
+erofs on /dev/mapper/root -> "I need block 12345"
     |
 dm-verity -> reads block 12345 from /dev/vda2
           -> reads hash for block 12345 from /dev/vda3
@@ -188,9 +188,9 @@ The initrd's `/init` script does whatever prep is needed (load drivers, decrypt 
 Because they serve completely different purposes.
 
 **The initrd** (`mkosi/initrd/`) is a tiny throwaway environment. It exists only during the first few seconds of boot. Ours contains:
-- `cryptsetup` / `veritysetup` — the tool that sets up dm-verity
-- `kmod` — for loading kernel modules (dm-verity, ext4, virtio drivers)
-- `bash` — to run the init script
+- `cryptsetup` / `veritysetup` — the tools that set up dm-verity and the encrypted scratch disk
+- `e2fsprogs` — `mkfs.ext4` for formatting the ephemeral scratch disk
+- `bash`, `mount`, `util-linux`, `zstd` — to run the init script and assemble the root
 - Our custom `/init` script
 
 That's it. ~50MB compressed. It does its job and is discarded.
@@ -213,7 +213,7 @@ A **Unified Kernel Image** bundles three things into a single `.efi` binary:
 3. The kernel command line (boot parameters)
 
 ```
-UKI (.efi) = kernel + initrd + "roothash=abc123 console=ttyS0 ..."
+UKI (.efi) = kernel + initrd + "roothash=abc123 ..."
 ```
 
 Why bundle them? Two reasons:
@@ -233,7 +233,7 @@ The 3-partition layout of our disk:
 
 ```
 Partition 1 (ESP):         EFI boot files (FAT32)
-Partition 2 (root-data):   The ext4 root filesystem, read-only
+Partition 2 (root-data):   The erofs root filesystem, read-only
 Partition 3 (root-verity): The hash tree for partition 2
 ```
 
@@ -376,6 +376,8 @@ Boot 2:  upper = empty    -> everything from boot 1 is gone
 
 The tradeoff: **nothing persists across reboots**. Logs, config changes, installed packages — all gone. That's by design for a confidential VM where you want a known-good state every boot. If you need persistence, you'd attach a separate data disk that isn't part of the verified root.
 
+The upper layer doesn't have to be RAM, though. `steep run --scratch 20G` attaches a disk that the initrd detects (by its virtio-blk serial number `confai-scratch`), encrypts with a random per-boot key that never leaves RAM, formats as ext4, and uses as the overlay's upper layer instead of tmpfs. Same ephemerality — the key is gone at shutdown, so the data is unrecoverable — but with disk-sized capacity. See [DEPLOYING.md](DEPLOYING.md#storage).
+
 ---
 
 ## 12. What is mkosi?
@@ -384,7 +386,7 @@ mkosi is a tool for building OS images declaratively. Think of it like a Dockerf
 
 Steep uses mkosi twice:
 
-1. **`mkosi/initrd/`** — Builds the minimal cpio initrd (just cryptsetup, kmod, bash, util-linux). Output: `image.cpio.gz`.
+1. **`mkosi/initrd/`** — Builds the minimal cpio initrd (cryptsetup, e2fsprogs, bash, util-linux, zstd). Output: `image.cpio.gz`.
 2. **`mkosi/base/`** — Builds the full Ubuntu disk image with 3 partitions (ESP + root-data + root-verity-hash). Output: `image.raw`, `image.efi` (UKI), `image.roothash`.
 
 Key mkosi directories:
@@ -418,7 +420,7 @@ These terms describe different layers:
 
 **UKI** (`image.efi`) — kernel + initrd + boot parameters bundled into one EFI binary. It's the thing the firmware actually loads.
 
-**IGVM** (`guest.igvm`) — firmware (OVMF) + UKI bundled into a measured package for confidential VMs. The outermost layer.
+**IGVM** (`guest-smp<N>.igvm`) — firmware (OVMF) + UKI bundled into a measured package for confidential VMs, one per vCPU count. The outermost layer.
 
 The nesting:
 
@@ -429,12 +431,12 @@ IGVM contains:
         +-- kernel (vmlinuz)
         +-- initrd (cpio.gz) contains:
         |     +-- /init script
-        |     +-- veritysetup, kernel modules
+        |     +-- veritysetup and userspace tools (no kernel modules — the kernel is module-less)
         +-- cmdline ("roothash=abc123...")
 
 Disk image (.raw) contains:
   +-- Partition 1: ESP (copy of UKI for firmware to find)
-  +-- Partition 2: root filesystem (ext4, the actual OS)
+  +-- Partition 2: root filesystem (erofs, the actual OS)
   +-- Partition 3: verity hash tree
 ```
 
@@ -449,18 +451,19 @@ The IGVM and the disk image are separate files. QEMU loads the IGVM (which boots
       |
 2. IGVM contains OVMF firmware + UKI
       |
-3. Firmware starts, finds UKI on ESP, executes it
+3. Firmware starts and executes the UKI (on SNP it comes measured inside
+   the IGVM itself; on the KVM/emulated dev paths `steep run` hands the
+   UKI directly to QEMU via `-kernel`)
       |
 4. Kernel starts with initrd in RAM
       |
 5. /init runs:
-   a. Load kernel modules (dm-verity, ext4, virtio)
-   b. Parse roothash from kernel cmdline
-   c. Wait for /dev/vda2 to appear
-   d. veritysetup open /dev/vda2 root /dev/vda3 <roothash>
-   e. Mount /dev/mapper/root read-only -> /sysroot-lower
-   f. Mount tmpfs overlay -> /sysroot (writes go to RAM)
-   g. Switch root to /sysroot
+   a. Parse roothash from kernel cmdline (no module loading — everything is compiled in)
+   b. Wait for /dev/vda2 to appear
+   c. veritysetup open /dev/vda2 root /dev/vda3 <roothash>
+   d. Mount /dev/mapper/root read-only -> /sysroot-lower
+   e. Mount tmpfs overlay -> /sysroot (writes go to RAM)
+   f. Switch root to /sysroot
       |
 6. systemd starts from the verified root
       |
@@ -479,7 +482,7 @@ This is what makes the whole system trustworthy for remote attestation:
 cloud-init YAML  (included in image)
        |
        v
-ext4 root filesystem  (contains all OS files + cloud-init config)
+erofs root filesystem  (contains all OS files + cloud-init config)
        |
        v
 dm-verity root hash   (single hash representing entire root filesystem)
@@ -492,3 +495,57 @@ IGVM launch digest    (measurement of firmware + UKI by SNP hardware)
 ```
 
 Change one file in the root -> different roothash -> different UKI -> different IGVM launch digest. A remote verifier checks the launch digest and can trust the entire stack.
+
+---
+
+## 17. How TDX measurement works
+
+Sections 13–16 describe the SNP path, where everything is bundled into an
+IGVM and hashed into a single launch digest. Intel TDX reaches the same
+goal — "a remote verifier knows exactly what booted" — with a different
+mechanism: a set of measurement registers instead of one digest.
+
+- **MRTD** — the build-time measurement of the firmware (TDVF). Computed
+  by simulating the TDX module's `MEM.PAGE.ADD` + `MR.EXTEND` sequence
+  over the firmware binary.
+- **RTMR[0..3]** — four Run-Time Measurement Registers, extended
+  hash-chain-style (like TPM PCRs) as boot proceeds. RTMR[1] covers the
+  UKI's PE image identity; RTMR[2] covers the UKI's internal sections
+  (kernel, cmdline — including the verity roothash — and initrd).
+- **CCEL** — the CC Event Log, which records every RTMR extension so a
+  verifier can replay and audit how each register got its value.
+
+`steep build` precomputes MRTD, RTMR[1], and RTMR[2] offline (via the
+`tdx-measure` crate) and publishes them in `manifest.json` as the `tdx`
+block. RTMR[0] is deliberately **not** pinned: it contains
+host-configuration-dependent ACPI content that varies with memory size
+and vCPU count. What makes that safe is the trusted DSDT (next section).
+See [THREAT_MODEL.md](THREAT_MODEL.md) for the full argument.
+
+---
+
+## 18. The trusted DSDT
+
+ACPI tables describe the machine's hardware to the OS — and one of them,
+the DSDT, contains *executable* bytecode (AML) that the kernel runs. On
+TDX, ACPI tables are supplied by the untrusted host and land in
+unpinned RTMR[0], so a malicious host could feed the guest malicious AML
+("BadAML" attacks).
+
+Steep's defense: ship a known-good DSDT inside the **measured** initrd
+and have the kernel prefer it over whatever the host provides.
+
+1. `mkosi/base/acpi-tables/dsdt.asl` is the audited DSDT source; the
+   build compiles it with `iasl` and prepends it to the initrd as an
+   uncompressed early cpio (the format the kernel's ACPI table-upgrade
+   mechanism expects).
+2. The kernel is built with `CONFIG_ACPI_TABLE_UPGRADE=y`
+   (re-enabled by `kernel/confidential.config` after
+   `hardening.config` turns it off) so at boot it swaps in the DSDT
+   from the initrd — which is measured into RTMR[2] via the UKI.
+3. Result: the executable ACPI content the guest runs is covered by the
+   published measurements even though RTMR[0] is not pinned, and the
+   `tdx` manifest block stays valid for **any** memory/vCPU topology.
+
+You can confirm the override happened inside a guest with
+`dmesg | grep "Table Upgrade: override"`.

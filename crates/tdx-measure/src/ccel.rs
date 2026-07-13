@@ -34,7 +34,9 @@ pub fn parse_ccel(data: &[u8]) -> Result<Vec<CcelEvent>> {
 
     // Validate Spec ID Event header: EventType must be EV_NO_ACTION (3)
     let spec_event_type = u32::from_le_bytes(
-        data[4..8].try_into().context("reading Spec ID Event type")?,
+        data[4..8]
+            .try_into()
+            .context("reading Spec ID Event type")?,
     );
     if spec_event_type != 3 {
         bail!(
@@ -45,9 +47,13 @@ pub fn parse_ccel(data: &[u8]) -> Result<Vec<CcelEvent>> {
 
     // Skip Spec ID Event header
     let event_size = usize::try_from(u32::from_le_bytes(
-        data[28..32].try_into().context("reading Spec ID Event size")?,
-    )).context("Spec ID Event size overflow")?;
-    let offset = 32usize.checked_add(event_size)
+        data[28..32]
+            .try_into()
+            .context("reading Spec ID Event size")?,
+    ))
+    .context("Spec ID Event size overflow")?;
+    let offset = 32usize
+        .checked_add(event_size)
         .context("Spec ID Event size overflow")?;
     if offset > data.len() {
         bail!(
@@ -67,7 +73,9 @@ pub fn parse_ccel(data: &[u8]) -> Result<Vec<CcelEvent>> {
         }
 
         let mr_index = u32::from_le_bytes(
-            data[offset..offset + 4].try_into().context("reading MR index")?,
+            data[offset..offset + 4]
+                .try_into()
+                .context("reading MR index")?,
         );
 
         // UEFI firmware pads unused event log space with 0xFF.
@@ -78,7 +86,9 @@ pub fn parse_ccel(data: &[u8]) -> Result<Vec<CcelEvent>> {
         }
 
         let event_type = u32::from_le_bytes(
-            data[offset + 4..offset + 8].try_into().context("reading event type")?,
+            data[offset + 4..offset + 8]
+                .try_into()
+                .context("reading event type")?,
         );
 
         let mut pos = offset + 8;
@@ -87,7 +97,9 @@ pub fn parse_ccel(data: &[u8]) -> Result<Vec<CcelEvent>> {
         }
 
         let digest_count = u32::from_le_bytes(
-            data[pos..pos + 4].try_into().context("reading digest count")?,
+            data[pos..pos + 4]
+                .try_into()
+                .context("reading digest count")?,
         );
         pos += 4;
 
@@ -107,9 +119,8 @@ pub fn parse_ccel(data: &[u8]) -> Result<Vec<CcelEvent>> {
                 digest_parse_ok = false;
                 break;
             }
-            let algo_id = u16::from_le_bytes(
-                data[pos..pos + 2].try_into().context("reading algo ID")?,
-            );
+            let algo_id =
+                u16::from_le_bytes(data[pos..pos + 2].try_into().context("reading algo ID")?);
             pos += 2;
 
             let digest_size = match algo_id {
@@ -144,8 +155,11 @@ pub fn parse_ccel(data: &[u8]) -> Result<Vec<CcelEvent>> {
             break; // truncated
         }
         let event_data_size = usize::try_from(u32::from_le_bytes(
-            data[pos..pos + 4].try_into().context("reading event data size")?,
-        )).context("event data size overflow")?;
+            data[pos..pos + 4]
+                .try_into()
+                .context("reading event data size")?,
+        ))
+        .context("event data size overflow")?;
         pos += 4;
 
         if pos + event_data_size > data.len() {
@@ -197,12 +211,7 @@ pub fn parse_ccel(data: &[u8]) -> Result<Vec<CcelEvent>> {
 /// Returns [RTMR[0], RTMR[1], RTMR[2], RTMR[3]].
 /// RTMR extend: `RTMR_new = SHA384(RTMR_old || event_digest)`
 pub fn replay_rtmrs(events: &[CcelEvent]) -> [Vec<u8>; 4] {
-    let mut rtmrs: [Vec<u8>; 4] = [
-        vec![0u8; 48],
-        vec![0u8; 48],
-        vec![0u8; 48],
-        vec![0u8; 48],
-    ];
+    let mut rtmrs: [Vec<u8>; 4] = [vec![0u8; 48], vec![0u8; 48], vec![0u8; 48], vec![0u8; 48]];
 
     for event in events {
         let idx = match event.mr_index {
@@ -385,7 +394,7 @@ mod tests {
         // Append start of another event but truncate it
         buf.extend_from_slice(&1u32.to_le_bytes()); // mr_index
         buf.extend_from_slice(&5u32.to_le_bytes()); // event_type
-        // Stop here — missing digest_count
+                                                    // Stop here — missing digest_count
         let result = parse_ccel(&buf);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("truncated"));
@@ -407,14 +416,17 @@ mod tests {
         buf.extend_from_slice(&3u32.to_le_bytes()); // EventType = EV_NO_ACTION
         buf.extend_from_slice(&[0u8; 20]); // remaining header
         buf.extend_from_slice(&0u32.to_le_bytes()); // Spec ID size = 0
-        // Event with unknown algorithm
+                                                    // Event with unknown algorithm
         buf.extend_from_slice(&1u32.to_le_bytes()); // mr_index
         buf.extend_from_slice(&1u32.to_le_bytes()); // event_type
         buf.extend_from_slice(&1u32.to_le_bytes()); // digest count
         buf.extend_from_slice(&0xFFFFu16.to_le_bytes()); // unknown algo
         let result = parse_ccel(&buf);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unknown digest algorithm"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unknown digest algorithm"));
     }
 
     #[test]
@@ -424,7 +436,7 @@ mod tests {
         buf.extend_from_slice(&3u32.to_le_bytes()); // EventType = EV_NO_ACTION
         buf.extend_from_slice(&[0u8; 20]); // remaining header
         buf.extend_from_slice(&0u32.to_le_bytes()); // Spec ID size = 0
-        // Event with SHA-256 only (no SHA-384)
+                                                    // Event with SHA-256 only (no SHA-384)
         buf.extend_from_slice(&1u32.to_le_bytes()); // mr_index
         buf.extend_from_slice(&1u32.to_le_bytes()); // event_type
         buf.extend_from_slice(&1u32.to_le_bytes()); // digest count = 1
@@ -486,9 +498,24 @@ mod tests {
     #[test]
     fn test_replay_rtmrs_multiple_registers() {
         let events = vec![
-            CcelEvent { mr_index: 1, event_type: 1, sha384_digest: vec![0x11; 48], event_data: vec![] },
-            CcelEvent { mr_index: 3, event_type: 1, sha384_digest: vec![0x33; 48], event_data: vec![] },
-            CcelEvent { mr_index: 4, event_type: 1, sha384_digest: vec![0x44; 48], event_data: vec![] },
+            CcelEvent {
+                mr_index: 1,
+                event_type: 1,
+                sha384_digest: vec![0x11; 48],
+                event_data: vec![],
+            },
+            CcelEvent {
+                mr_index: 3,
+                event_type: 1,
+                sha384_digest: vec![0x33; 48],
+                event_data: vec![],
+            },
+            CcelEvent {
+                mr_index: 4,
+                event_type: 1,
+                sha384_digest: vec![0x44; 48],
+                event_data: vec![],
+            },
         ];
         let rtmrs = replay_rtmrs(&events);
         assert_ne!(rtmrs[0], vec![0u8; 48]); // RTMR[0] extended
@@ -559,7 +586,7 @@ mod tests {
         let var_data = b"\x01\x02\x03";
         buf.extend_from_slice(&(name.len() as u64).to_le_bytes()); // name_len
         buf.extend_from_slice(&(var_data.len() as u64).to_le_bytes()); // data_len
-        // Name as UTF-16LE
+                                                                       // Name as UTF-16LE
         for ch in name.encode_utf16() {
             buf.extend_from_slice(&ch.to_le_bytes());
         }
@@ -581,7 +608,10 @@ mod tests {
     #[test]
     fn test_event_type_name_known() {
         assert_eq!(event_type_name(0x00000004), "EV_SEPARATOR");
-        assert_eq!(event_type_name(0x80000003), "EV_EFI_BOOT_SERVICES_APPLICATION");
+        assert_eq!(
+            event_type_name(0x80000003),
+            "EV_EFI_BOOT_SERVICES_APPLICATION"
+        );
         assert_eq!(event_type_name(0x80000006), "EV_EFI_GPT_EVENT");
     }
 
