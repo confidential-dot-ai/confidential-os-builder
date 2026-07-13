@@ -8,6 +8,11 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-07-13
+
+- Add direct-kernel boot mode for running inside Kata Containers (#42)
+- Add workload measurement hook to TDX attestations and verifications (#43)
+
 ## [0.1.0] — 2026-07-13
 
 Initial public release.
@@ -28,5 +33,6 @@ Initial public release.
 - `steep push` / `steep pull` (OCI via oras)
 - CI publishes base image as `ghcr.io/confidential-dot-ai/steep:base`
 
-[Unreleased]: https://github.com/confidential-dot-ai/steep/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/confidential-dot-ai/steep/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/confidential-dot-ai/steep/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/confidential-dot-ai/steep/releases/tag/v0.1.0

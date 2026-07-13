@@ -1,6 +1,6 @@
 [package]
 name = "steep"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "AGPL-3.0"
 description = "Confidential VM image builder for AMD SEV-SNP and Intel TDX"
