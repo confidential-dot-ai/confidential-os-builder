@@ -2,15 +2,11 @@
 
 ## The Problem
 
-Remote attestation requires a verifier to compare a hardware-signed measurement against an **expected value**. If the same inputs produce different measurements on each build, the verifier has nothing stable to compare against.
-
-Before this work, two consecutive `steep build` runs with identical config produced completely different roothashes, UKIs, and IGVM measurements. This made pre-computing expected measurements impossible.
+Remote attestation requires a verifier to compare a hardware-signed measurement against an **expected value**. If the same inputs produce different measurements on each build, the verifier has nothing stable to compare against. We have implemented `steep build` so runs with identical config can produce completely identical roothashes, UKIs, and IGVM measurements.
 
 ## Our Approach
 
-We achieve **bit-identical base images** from mkosi. The base image (Ubuntu + stock packages) produces the same roothash and UKI SHA256 across consecutive builds. This gives us a reproducible foundation.
-
-This follows the same model as Constellation (Edgeless Systems) and is the standard approach in confidential computing deployments.
+We achieve **bit-identical base images** from mkosi. The base image (Ubuntu + stock packages) produces the same roothash and UKI SHA256 across consecutive builds. This gives us a reproducible foundation, and is a common approach  for confidential computing deployments.
 
 ### Trust model
 
@@ -23,13 +19,15 @@ Verifier checks:
 ```
 
 Steep does not yet sign published measurements (cosign/sigstore signing is
-planned — Constellation's model, below); until then step 3 rests entirely on
-the channel the verifier fetched `manifest.json` from, e.g. this repository
-or their own build.
+planned); until then step 3 rests entirely on the channel the verifier fetched
+`manifest.json` from, e.g. this repository or a user's own build.
 
-The base image reproducibility serves as an **audit mechanism** — anyone can rebuild it to verify we aren't shipping a tampered base.
+The base image reproducibility serves as an **audit mechanism** — anyone can
+rebuild it to verify we aren't shipping a tampered base.
 
-## What We Changed (Layer 0)
+## Config for reproducibility
+
+We use several techniques to ensure the results of our builds are reproducible, including `mkosi` configuration, environment variables, and package management configuration.
 
 ### mkosi.conf
 
@@ -79,21 +77,6 @@ Reproducibility cleanup:
 - Delete random seeds, cargo cache
 - Delete SSH host keys (regenerated per-VM on first boot)
 
-## Sources of Non-Determinism We Fixed
-
-| Source | Fix |
-|--------|-----|
-| ext4 Directory Hash Seed (random per mkfs) | `SYSTEMD_REPART_MKFS_OPTIONS_EXT4=-E hash_seed=<fixed>` |
-| Partition UUIDs (random per repart run) | `Seed=<fixed>` in mkosi.conf |
-| Verity salt (random per repart run) | `Seed=<fixed>` — systemd PR #28695 derives salt from seed |
-| File mtimes (wallclock) | `SourceDateEpoch=0` |
-| `/etc/machine-id` (random UUID) | Truncated in finalize |
-| `/var/lib/dbus/machine-id` (random UUID) | Truncated in finalize |
-| SSH host keys (random bytes at package install) | Deleted in finalize; regenerated per-VM on first boot |
-| Log file content (wallclock timestamps) | Deleted in finalize |
-| apt cache (timestamps in binary cache) | Deleted in finalize |
-| `Incremental=true` (stale cache) | Set to `false` |
-
 ## Open Questions
 
 **Will adding packages to the base image break reproducibility?**
@@ -132,11 +115,6 @@ Adding packages to `Packages=` in mkosi.conf should remain reproducible as long 
 - Firmware is closed-source and not reproducible — users must trust the provider
 - Guest OS measurements are the user's responsibility
 
-### Attestable Builds (emerging)
-- Run builds inside a TEE, TEE attests "this artifact was built from this source"
-- Record in transparency log — no reproducibility needed, TEE is the witness
-- Early research (Cambridge 2025, Tinfoil, Garnix)
-
 ## References
 
 - [Reproducible Arch images with mkosi — Jelle van der Waa](https://vdwaa.nl/mkosi-reproducible-arch-images.html)
@@ -153,5 +131,4 @@ Adding packages to `Packages=` in mkosi.conf should remain reproducible as long 
 - [SOURCE_DATE_EPOCH specification](https://reproducible-builds.org/specs/source-date-epoch/)
 - [Flashbots BuilderNet v1.3](https://buildernet.org/blog/2025/04/28/buildernet-v1.3)
 - [Trail of Bits — Notes on AWS Nitro Enclaves](https://blog.trailofbits.com/2024/02/16/a-few-notes-on-aws-nitro-enclaves-images-and-attestation/)
-- [Attestable Builds (Cambridge 2025)](https://arxiv.org/html/2505.02521v1)
 - [Confidential Computing Transparency Framework](https://arxiv.org/html/2409.03720v2)
