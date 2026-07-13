@@ -7,20 +7,6 @@ into a Unified Kernel Image (UKI), wraps it in an IGVM for measured launch on
 SNP hardware, and precomputes the TDX measurement registers for the same
 artifacts (see [Scope](#scope)).
 
-| Document | What it covers |
-|----------|---------------|
-| [Tutorial](docs/TUTORIAL.md) | Guided first session: build, boot, deploy a workload, find the measurements |
-| [Verifying](docs/VERIFYING.md) | How a relying party verifies artifacts, attests running guests, reproduces builds |
-| [Threat model](docs/THREAT_MODEL.md) | What steep images defend against, trust assumptions, explicit non-goals |
-| [Deploying](docs/DEPLOYING.md) | Production host requirements, KubeVirt, scratch disks, operational policy |
-| [Manifest reference](docs/MANIFEST.md) | Every `manifest.json` field and its role in verification |
-| [Versioning](docs/VERSIONING.md) | Version scheme and what invalidates published measurements |
-| [Concepts](docs/CONCEPTS.md) | Ground-up explanations: UEFI, UKI, dm-verity, IGVM, measured boot |
-| [Architecture](docs/ARCHITECTURE.md) | Codebase map and design invariants, for contributors |
-| [Reproducibility](docs/REPRODUCIBILITY.md) | How bit-identical builds are achieved, prior art, open questions |
-| [Kernel configuration](docs/KERNEL_CONFIGURATION.md) | The hardened kernel config: every KSPP recommendation we deviate from, and why |
-| [FAQ](docs/FAQ.md) | Positioning vs. mkosi/Constellation, security model questions, practicalities |
-
 ## Running steep-built VMs
 
 You can use the base images built by `steep` without installing the tool.
@@ -35,6 +21,21 @@ qemu-system-x86_64 \
   -drive file=disk.raw,format=raw,if=virtio \
   -smp 1 -m 4G -nographic
 ```
+
+| Document | What it covers |
+|----------|---------------|
+| [Tutorial](docs/TUTORIAL.md) | Guided first session: build, boot, deploy a workload, find the measurements |
+| [Verifying](docs/VERIFYING.md) | How a relying party verifies artifacts, attests running guests, reproduces builds |
+| [Threat model](docs/THREAT_MODEL.md) | What steep images defend against, trust assumptions, explicit non-goals |
+| [Deploying](docs/DEPLOYING.md) | Production host requirements, KubeVirt, scratch disks, operational policy |
+| [Manifest reference](docs/MANIFEST.md) | Every `manifest.json` field and its role in verification |
+| [Versioning](docs/VERSIONING.md) | Version scheme and what invalidates published measurements |
+| [Concepts](docs/CONCEPTS.md) | Ground-up explanations: UEFI, UKI, dm-verity, IGVM, measured boot |
+| [Architecture](docs/ARCHITECTURE.md) | Codebase map and design invariants, for contributors |
+| [Reproducibility](docs/REPRODUCIBILITY.md) | How bit-identical builds are achieved, prior art, open questions |
+| [Kernel configuration](docs/KERNEL_CONFIGURATION.md) | The hardened kernel config: every KSPP recommendation we deviate from, and why |
+| [FAQ](docs/FAQ.md) | Positioning vs. mkosi/Constellation, security model questions, practicalities |
+
 
 ## Installation
 
