@@ -33,5 +33,7 @@ which cargo-binstall || curl -L --proto '=https' --tlsv1.2 -sSf https://raw.gith
 which cargo-binstall
 which cargo-nextest || cargo binstall --no-confirm cargo-nextest
 which cargo-nextest
+which dist || cargo binstall --no-confirm cargo-dist
+which dist
 
 echo "==> Setup complete."
