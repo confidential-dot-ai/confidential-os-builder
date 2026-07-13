@@ -58,13 +58,6 @@ jobs:
       - name: Setup ORAS
         uses: oras-project/setup-oras@v1
 
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Push to GHCR
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
@@ -79,6 +72,8 @@ jobs:
           # prevent symlink from becoming a second copy of the image
           rm image
 
+          echo ${{ secrets.GITHUB_TOKEN }} | oras login ghcr.io \
+            -u ${{ github.actor }} --password-stdin
           oras push "${IMAGE}:base,base-${SHORT_SHA}" \
             --artifact-type application/vnd.steep.base.v1 \
             ./*
