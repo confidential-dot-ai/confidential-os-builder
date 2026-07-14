@@ -1,20 +1,20 @@
 # Architecture
 
 A map of the codebase for contributors: what lives where, and how a
-`steep build` flows through it. For the *domain* concepts (UKI, dm-verity,
+`confos build` flows through it. For the *domain* concepts (UKI, dm-verity,
 IGVM, measured boot) read [CONCEPTS.md](CONCEPTS.md) first — this document
 assumes them.
 
 ## Bird's eye view
 
-Steep is a Rust CLI that orchestrates external tools (mkosi, QEMU, iasl,
-oras, systemd's ukify/repart machinery via mkosi) plus two in-repo Rust
-crates that do the measurement math. The CLI's job is deterministic
+Confidential OS Builder is a Rust CLI that orchestrates external tools (mkosi,
+QEMU, iasl, oras, systemd's ukify/repart machinery via mkosi) plus two in-repo
+Rust crates that do the measurement math. The CLI's job is deterministic
 assembly; the crates' job is predicting, offline, exactly what the TEE
 hardware will measure at launch.
 
 ```
-bin/steep build
+bin/confos build
    │
    ├─ 1. kernel        src/commands/kernel.rs + src/kernel/*    (cached)
    ├─ 2. initrd + DSDT mkosi/initrd/ + iasl early-cpio prepend
@@ -27,7 +27,7 @@ bin/steep build
 
 ## Repository layout
 
-### `src/` — the steep CLI
+### `src/` — the confos CLI
 
 | Path | Role |
 |---|---|
@@ -64,8 +64,8 @@ requested (unmet dependency), rather than shipping a weaker kernel.
 
 ### `crates/` — measurement engines
 
-Both are usable as standalone CLIs and are steep's only in-repo library
-dependencies. They deliberately have no dependency on steep itself, so
+Both are usable as standalone CLIs and are confos's only in-repo library
+dependencies. They deliberately have no dependency on confos itself, so
 verifiers can `cargo install` just the measurement tool.
 
 - **`igvm-tools`** — builds IGVM files (firmware + UKI + VMSA layout) and
@@ -90,7 +90,7 @@ documented in [REPRODUCIBILITY.md](REPRODUCIBILITY.md).
 
 ### Everything else
 
-- `bin/` — `setup` (host deps), `steep` (cargo-build-and-run wrapper),
+- `bin/` — `setup` (host deps), `confos` (cargo-build-and-run wrapper),
   `test` (cargo-nextest), `lint` (rustfmt + clippy). CI runs both, plus a
   `cargo deny check` gate (licenses/advisories) and a release build that
   `test`/`lint` don't cover locally.
@@ -102,9 +102,9 @@ documented in [REPRODUCIBILITY.md](REPRODUCIBILITY.md).
 - `.github/workflows/` — `test.yml` (bin/test on Linux x86/arm + macOS;
   bin/lint, cargo-deny, and a build job on Linux); `base.yml` (builds the
   base image on every push to `main` and publishes it to GHCR via oras as
-  `ghcr.io/confidential-dot-ai/steep:base`, plus a pinned `base-<short SHA>`
+  `ghcr.io/confidential-dot-ai/confidential-os-builder:base`, plus a pinned `base-<short SHA>`
   tag).
-- `output/OVMF.fd` — the one committed binary: steep's IGVM-aware OVMF built
+- `output/OVMF.fd` — the one committed binary: confos's IGVM-aware OVMF built
   from the [edk2 fork](https://github.com/confidential-dot-ai/edk2). It's
   checked in (despite `output/` being gitignored) so builds work without
   compiling edk2; `crates/igvm-tools/README.md` documents rebuilding it.

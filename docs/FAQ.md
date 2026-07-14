@@ -1,24 +1,25 @@
 # FAQ
 
-### How is steep different from using mkosi directly?
+### How is confos different from using mkosi directly?
 
-mkosi builds general-purpose OS images; steep *uses* mkosi for the rootfs
+mkosi builds general-purpose OS images; confos *uses* mkosi for the rootfs
 and adds the confidential-computing layer on top: a pinned hardened guest
 kernel, dm-verity + UKI assembly wired for measured boot, bit-identical
 reproducibility of the base image, IGVM generation, offline pre-computation
 of SNP launch digests and TDX registers, the trusted-DSDT mitigation, and a
 manifest that ties inputs to expected measurements. If you don't need
-attestation, use mkosi directly — steep's guest-oriented choices (read-only
+attestation, use mkosi directly — confos's guest-oriented choices (read-only
 verity root, ephemeral writes, no console) would just get in your way.
 
-### How does steep compare to Confidential Kubernetes?
+### How does confos compare to Confidential Kubernetes?
 
-[c8s](https://confidential.ai/docs/c8s) is a full
-confidential Kubernetes distribution — nodes, attestation service, cluster
-lifecycle. Steep sits a level below: it builds and measures single VM
+[c8s](https://confidential.ai/docs/c8s) is a full confidential Kubernetes
+distribution — nodes, attestation service, cluster lifecycle.
+Confidential OS Builder sits a level below: it builds and measures single VM
 images and hands you the artifacts plus reference values; what orchestrates
-them (QEMU scripts, libvirt, KubeVirt, your own control plane) is your
-choice. Steep publishes reference measurements, and those can be verified by anyone executing workloads inside Confidential VMs running the Steep images.
+them (QEMU scripts, libvirt, KubeVirt, your own control plane) is your choice.
+It publishes reference measurements, and those can be verified by anyone
+executing workloads inside Confidential VMs running its images.
 
 ### Why QEMU/KVM only for SEV-SNP?
 
@@ -28,12 +29,12 @@ behavior byte-for-byte; a different VMM (cloud-hypervisor, Hyper-V) would
 compute a different digest from the same IGVM. Support for other VMMs is on
 the igvm-tools roadmap.
 
-### Does steep support Intel TDX or only AMD?
+### Does confos support Intel TDX or only AMD?
 
 Both. One build (`--platform both`, the default) emits artifacts and
 reference measurements for either fleet: `snp_variants[]` launch digests for
 SEV-SNP and an `mrtd`/`rtmr1`/`rtmr2` block for TDX. The same `uki.efi` and
-`disk.raw` boot on both; only the firmware differs (steep's IGVM-aware OVMF
+`disk.raw` boot on both; only the firmware differs (confos's IGVM-aware OVMF
 for SNP, a TDVF-capable OVMF for TDX).
 
 ## Security model
@@ -56,14 +57,14 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for the full picture.
 RTMR[0] captures VMM-supplied boot data (TD-HOB, ACPI tables) that varies
 with memory size and vCPU count — pinning it would need a manifest entry per
 topology. The dangerous part of that VMM-supplied data is the DSDT's
-executable AML, and steep neutralizes that specifically: the measured initrd
+executable AML, and confos neutralizes that specifically: the measured initrd
 overrides the VMM's DSDT with a trusted copy. So the manifest pins MRTD +
 RTMR[1] + RTMR[2], which transitively cover everything that executes.
 
-### Why does steep fork edk2?
+### Why does confos fork edk2?
 
 Two reasons, both SNP+IGVM-specific: OVMF needs an `IgvmHobArea` region for
-steep to inject the UKI into the measured launch payload, and it must skip
+confos to inject the UKI into the measured launch payload, and it must skip
 re-validating pages the PSP already validated during IGVM launch (stock
 OVMF fails with page-not-validated errors). TDX uses stock OVMF/TDVF — the
 fork deliberately does not include TDVF, which is why a both-platform build
@@ -74,7 +75,7 @@ uses two firmware binaries.
 The trust chain here is measurement-based, not signature-based: the
 hardware attests a hash of what booted, instead of firmware enforcing
 signatures at each stage. `igvm-tools` has flags for embedding Secure Boot
-certificates and a shim for setups that want both, but steep's standard
+certificates and a shim for setups that want both, but confos's standard
 pipeline relies on the launch measurement plus dm-verity.
 
 ## Practicalities
@@ -84,15 +85,15 @@ pipeline relies on the launch measurement plus dm-verity.
 No. Building and computing measurements are offline operations; any Ubuntu
 machine meeting the README's host requirements works, and CI does it on
 stock GitHub runners. You need TEE hardware only to *run* guests with real
-attestation — `steep run` falls back to plain KVM or emulation elsewhere.
+attestation — `confos run` falls back to plain KVM or emulation elsewhere.
 
 ### Why do two builds of the same config produce identical hashes — and when don't they?
 
-Steep pins its inputs (kernel tarball by SHA, Ubuntu package snapshot,
-toolchain via mkosi) and scrubs nondeterminism (timestamps, ordering), so
-the base image is bit-identical across consecutive builds with the same
-pinned toolchain. Reproducing on a *different* machine additionally
-requires the same steep commit and the `bin/setup`-installed tool versions,
+Confidential OS Builder pins its inputs (kernel tarball by SHA, Ubuntu package
+snapshot, toolchain via mkosi) and scrubs nondeterminism (timestamps,
+ordering), so the base image is bit-identical across consecutive builds with
+the same pinned toolchain. Reproducing on a *different* machine additionally
+requires the same confos commit and the `bin/setup`-installed tool versions,
 and hasn't been validated as broadly; see
 [REPRODUCIBILITY.md](REPRODUCIBILITY.md) for exactly what's still open.
 
@@ -103,7 +104,7 @@ and hasn't been validated as broadly; see
 - Boot-time configuration → `--cloud-init user-data.yaml`.
 - Build-time setup with network → `--script setup.sh`.
 - Kernel options → a fragment file passed with `--kernel-config-fragment`
-  (steep carries no project-specific kernel config; your fragment lives in
+  (confos carries no project-specific kernel config; your fragment lives in
   your repo).
 
 All are measured — each changes the image's digests, which is the point.
@@ -120,10 +121,10 @@ unattested overlay) — that too changes the measurement. Otherwise, for
 production debugging your workload has to bring its own (attested,
 authenticated) channel.
 
-### Can I run containers inside a steep guest?
+### Can I run containers inside a confos guest?
 
 Yes, in principle — it's a normal Linux with systemd — but container
-runtimes need kernel features steep's minimal baseline omits and disk space
+runtimes need kernel features confos's minimal baseline omits and disk space
 beyond the 2G tmpfs overlay. Expect to supply a kernel fragment (netfilter,
 overlayfs-in-userns, cgroup options, …) and a scratch disk. Note that
 anything pulled at runtime is *not* measured; only what is included in the

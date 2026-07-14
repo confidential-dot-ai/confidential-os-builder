@@ -3,9 +3,9 @@ write_files:
   - path: /var/www/html/index.html
     content: |
       <!DOCTYPE html>
-      <html><head><title>steep demo</title></head>
-      <body><h1>steep demo</h1>
-      <p>Served by caddy inside a confidential VM built with steep (cloud-init).</p>
+      <html><head><title>confos demo</title></head>
+      <body><h1>confos demo</h1>
+      <p>Served by caddy inside a confidential VM built with confos (cloud-init).</p>
       </body></html>
   - path: /etc/caddy/Caddyfile
     content: |

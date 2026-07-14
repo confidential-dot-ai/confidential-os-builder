@@ -1,4 +1,4 @@
-# Contributing to steep
+# Contributing to confos
 
 Participation in this project is covered by our
 [Code of Conduct](CODE_OF_CONDUCT.md). A map of the codebase and the design
@@ -7,7 +7,7 @@ invariants to preserve is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Setup
 
 Follow the [Installation](README.md#installation) section: clone, run
-`bin/setup`, and use `bin/steep` to build-and-run the CLI. The build host
+`bin/setup`, and use `bin/confos` to build-and-run the CLI. The build host
 requirements (real Linux, sudo, user namespaces) apply to development too.
 
 ## Before you open a PR

@@ -1,6 +1,6 @@
 # igvm-tools
 
-> Vendored into [steep](https://github.com/confidential-dot-ai/steep) from the
+> Vendored into [confos](https://github.com/confidential-dot-ai/confidential-os-builder) from the
 > original `igvm-tools` repository; developed in-tree since. Apache-2.0.
 
 Build and measure IGVM files for AMD SEV-SNP confidential VMs running on **QEMU+KVM**.
@@ -20,8 +20,8 @@ Other VMMs (cloud-hypervisor, Firecracker, Hyper-V) process IGVM directives diff
 ## Install
 
 ```bash
-git clone https://github.com/confidential-dot-ai/steep.git
-cargo install --path steep/crates/igvm-tools
+git clone https://github.com/confidential-dot-ai/confidential-os-builder.git
+cargo install --path confidential-os-builder/crates/igvm-tools
 ```
 
 ## OVMF firmware
