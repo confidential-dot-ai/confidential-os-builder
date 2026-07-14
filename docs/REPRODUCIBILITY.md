@@ -2,7 +2,7 @@
 
 ## The Problem
 
-Remote attestation requires a verifier to compare a hardware-signed measurement against an **expected value**. If the same inputs produce different measurements on each build, the verifier has nothing stable to compare against. We have implemented `steep build` so runs with identical config can produce completely identical roothashes, UKIs, and IGVM measurements.
+Remote attestation requires a verifier to compare a hardware-signed measurement against an **expected value**. If the same inputs produce different measurements on each build, the verifier has nothing stable to compare against. We have implemented `confos build` so runs with identical config can produce completely identical roothashes, UKIs, and IGVM measurements.
 
 ## Our Approach
 
@@ -18,9 +18,10 @@ Verifier checks:
   4. (Optional) Verifier reproduces base image to confirm our toolchain is honest ✓
 ```
 
-Steep does not yet sign published measurements (cosign/sigstore signing is
-planned); until then step 3 rests entirely on the channel the verifier fetched
-`manifest.json` from, e.g. this repository or a user's own build.
+Confidential OS Builder does not yet sign published measurements
+(cosign/sigstore signing is planned); until then step 3 rests entirely on the
+channel the verifier fetched `manifest.json` from, e.g. this repository or a
+user's own build.
 
 The base image reproducibility serves as an **audit mechanism** — anyone can
 rebuild it to verify we aren't shipping a tampered base.
@@ -62,8 +63,8 @@ that picks up security updates — and changes the roothash.
 mkosi itself is pinned to v26 — `bin/setup` and CI install exactly
 `mkosi.git@v26`, and `mkosi.conf` enforces `MinimumVersion=26` as a
 floor — since mkosi's own behavior is part of the build's determinism.
-The Rust toolchain that builds the `steep` binary is *not* pinned:
-steep's contributions to the measured artifacts (the DSDT early-cpio,
+The Rust toolchain that builds the `confos` binary is *not* pinned:
+confos's contributions to the measured artifacts (the DSDT early-cpio,
 the IGVM file, the precomputed measurements) are deterministic data
 derived from fixed inputs, so the compiler version doesn't affect
 artifact bytes the way a package-set change would.
@@ -85,7 +86,7 @@ Adding packages to `Packages=` in mkosi.conf should remain reproducible as long 
 ## How Others Solve This
 
 ### Constellation (Edgeless Systems)
-- Fully baked immutable image with dm-verity, architecturally closest to steep
+- Fully baked immutable image with dm-verity, architecturally closest to confos
 - Base image built with mkosi, toolchain pinned via Nix
 - Default: users fetch signed measurements from Edgeless's registry (cosign + Rekor transparency log)
 - Paranoid path: reproduce from source via Bazel + Nix
