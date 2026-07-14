@@ -1,10 +1,10 @@
 [package]
-name = "steep"
-version = "0.1.1"
+name = "confos"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Confidential VM image builder for AMD SEV-SNP and Intel TDX"
-repository = "https://github.com/confidential-dot-ai/steep"
+repository = "https://github.com/confidential-dot-ai/confidential-os-builder"
 
 [dependencies]
 which = "7"

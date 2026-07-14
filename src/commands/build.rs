@@ -431,7 +431,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     println!("\n=== Calculating checksums ===");
     // Read the disk checksum from the mkosi output
     let mkosi_checksums = fs_err::read(mkosi_output.join("image.SHA256SUMS"))?;
-    let disk_checksum = String::try_from(mkosi_checksums)?
+    let disk_checksum = String::from_utf8(mkosi_checksums)?
         .split("\n")
         .next()
         .ok_or_else(|| anyhow::anyhow!("bad checksum file"))?

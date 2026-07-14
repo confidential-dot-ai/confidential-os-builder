@@ -1,4 +1,4 @@
-use steep::manifest::{
+use confos::manifest::{
     BuildConfig, BuildManifest, FileEntry, ManifestInputs, ManifestOutputs, Measurement,
     SnpVariant, TdxMeasurement, MANIFEST_VERSION,
 };
@@ -168,7 +168,7 @@ fn sha256_file_hash() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.bin");
     fs_err::write(&path, b"hello world").unwrap();
-    let hash = steep::manifest::sha256_file(&path).unwrap();
+    let hash = confos::manifest::sha256_file(&path).unwrap();
     assert_eq!(
         hash,
         "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -180,8 +180,8 @@ fn read_manifest_from_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("manifest.json");
     let manifest = sample_manifest();
-    steep::manifest::write_manifest(&manifest, &path).unwrap();
-    let loaded = steep::manifest::read_manifest(&path).unwrap();
+    confos::manifest::write_manifest(&manifest, &path).unwrap();
+    let loaded = confos::manifest::read_manifest(&path).unwrap();
     assert_eq!(loaded.snp_variants[0].smp, 4);
     assert_eq!(loaded.build.memory, "2G");
     assert_eq!(loaded.build.format, "raw");
@@ -244,7 +244,7 @@ fn manifest_rejects_unknown_top_level_field() {
 fn manifest_rejects_v2_legacy_fields() {
     // v2 carried `variants` (now renamed `snp_variants`). With
     // deny_unknown_fields a v2 manifest must fail to parse so a v2 file
-    // can't be silently mis-read by a v3 consumer (`steep run` would
+    // can't be silently mis-read by a v3 consumer (`confos run` would
     // then see no SNP variants and refuse to launch on SNP hardware
     // rather than blindly picking up the wrong field).
     let json = r#"{
@@ -294,7 +294,7 @@ fn read_manifest_rejects_older_version() {
         "variants": []
     }"#;
     fs_err::write(&path, json).unwrap();
-    let err = steep::manifest::read_manifest(&path).unwrap_err();
+    let err = confos::manifest::read_manifest(&path).unwrap_err();
     let msg = err.to_string();
     assert!(
         msg.contains("version 2") && msg.contains("v3"),
@@ -304,7 +304,7 @@ fn read_manifest_rejects_older_version() {
 
 #[test]
 fn sha256_file_nonexistent() {
-    let result = steep::manifest::sha256_file(std::path::Path::new("/nonexistent/file.bin"));
+    let result = confos::manifest::sha256_file(std::path::Path::new("/nonexistent/file.bin"));
     assert!(result.is_err());
 }
 
@@ -313,7 +313,7 @@ fn sha256_file_empty_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("empty.bin");
     fs_err::write(&path, b"").unwrap();
-    let hash = steep::manifest::sha256_file(&path).unwrap();
+    let hash = confos::manifest::sha256_file(&path).unwrap();
     assert_eq!(
         hash,
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -325,7 +325,7 @@ fn write_manifest_creates_valid_json() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test_manifest.json");
     let manifest = sample_manifest();
-    steep::manifest::write_manifest(&manifest, &path).unwrap();
+    confos::manifest::write_manifest(&manifest, &path).unwrap();
 
     let content = fs_err::read_to_string(&path).unwrap();
     let value: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -335,7 +335,7 @@ fn write_manifest_creates_valid_json() {
 
 #[test]
 fn read_manifest_nonexistent_file() {
-    let result = steep::manifest::read_manifest(std::path::Path::new("/nonexistent/manifest.json"));
+    let result = confos::manifest::read_manifest(std::path::Path::new("/nonexistent/manifest.json"));
     assert!(result.is_err());
 }
 
@@ -344,7 +344,7 @@ fn read_manifest_invalid_json() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("bad.json");
     fs_err::write(&path, "not json").unwrap();
-    let result = steep::manifest::read_manifest(&path);
+    let result = confos::manifest::read_manifest(&path);
     assert!(result.is_err());
 }
 
@@ -352,15 +352,15 @@ fn read_manifest_invalid_json() {
 fn basename_of_strips_directories() {
     use std::path::Path;
     assert_eq!(
-        steep::manifest::basename_of(Path::new("/abs/path/to/disk.raw")),
+        confos::manifest::basename_of(Path::new("/abs/path/to/disk.raw")),
         "disk.raw"
     );
     assert_eq!(
-        steep::manifest::basename_of(Path::new("relative/dir/OVMF.fd")),
+        confos::manifest::basename_of(Path::new("relative/dir/OVMF.fd")),
         "OVMF.fd"
     );
     assert_eq!(
-        steep::manifest::basename_of(Path::new("uki.efi")),
+        confos::manifest::basename_of(Path::new("uki.efi")),
         "uki.efi"
     );
 }
