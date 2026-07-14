@@ -19,7 +19,7 @@ struct Cli {
 /// how the kernel is loaded and therefore in the RTMR[1]/RTMR[2] event chain.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 enum BootMode {
-    /// steep UKI boot: TDVF -> systemd-boot -> Unified Kernel Image.
+    /// confos UKI boot: TDVF -> systemd-boot -> Unified Kernel Image.
     Uki,
     /// TDVF direct kernel boot (`-kernel`/`-append`), e.g. kata-qemu-tdx.
     /// Not kata-specific — any direct-booted guest under TDVF measures this way.

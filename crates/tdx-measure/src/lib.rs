@@ -36,7 +36,7 @@ pub mod tdvf;
 
 /// A topology-invariant TDX measurement bundle for a UKI boot. Carries
 /// MRTD + RTMR[1] + RTMR[2] — the three registers that are stable across
-/// vCPU and memory configurations under steep's confidential VM model.
+/// vCPU and memory configurations under confos's confidential VM model.
 ///
 /// **RTMR[0] is deliberately absent.** It depends on TD-HOB and
 /// VMM-supplied ACPI tables, both of which vary at runtime. Callers that
