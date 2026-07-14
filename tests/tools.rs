@@ -1,4 +1,4 @@
-use steep::tools;
+use confos::tools;
 
 #[test]
 fn test_require_finds_existing_tool() {

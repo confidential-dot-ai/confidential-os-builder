@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 description = "Build and measure IGVM files for confidential VMs"
 license = "AGPL-3.0"
-repository = "https://github.com/confidential-dot-ai/steep"
+repository = "https://github.com/confidential-dot-ai/confidential-os-builder"
 
 [lib]
 name = "igvm_tools"

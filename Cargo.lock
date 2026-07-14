@@ -244,6 +244,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "confos"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "chrono",
+ "clap",
+ "clap-verbosity-flag",
+ "filetime",
+ "flate2",
+ "fs-err",
+ "hex",
+ "humansize",
+ "igvm-tools",
+ "predicates",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tdx-measure",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+ "which",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -899,34 +927,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "steep"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "chrono",
- "clap",
- "clap-verbosity-flag",
- "filetime",
- "flate2",
- "fs-err",
- "hex",
- "humansize",
- "igvm-tools",
- "predicates",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "tdx-measure",
- "tempfile",
- "thiserror",
- "tracing",
- "tracing-subscriber",
- "which",
-]
 
 [[package]]
 name = "strsim"

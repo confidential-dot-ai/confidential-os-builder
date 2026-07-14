@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use steep::qemu::{QemuArgs, QemuTier};
+use confos::qemu::{QemuArgs, QemuTier};
 
 /// The PVC may carry stale filesystem signatures from a previous boot's
 /// ciphertext that happen to overlap with ext4 magic bytes. cryptsetup detects

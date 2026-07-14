@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Offline TDX measurement computation and attestation verification"
 license = "AGPL-3.0"
-repository = "https://github.com/confidential-dot-ai/steep"
+repository = "https://github.com/confidential-dot-ai/confidential-os-builder"
 
 [lib]
 name = "tdx_measure"
@@ -28,7 +28,7 @@ serde_json = { version = "1", optional = true }
 # include systemd-boot's PE Authenticode hash — TDVF's real boot flow is
 # `TDVF → /EFI/BOOT/BOOTX64.EFI (systemd-boot) → UKI`, so the bootloader
 # binary is measured as a separate EV_EFI_BOOT_SERVICES_APPLICATION event
-# before the UKI. Without parsing the ESP, steep can't see those bytes
+# before the UKI. Without parsing the ESP, confos can't see those bytes
 # and skips them in the chain.
 fatfs = { version = "0.3", default-features = false, features = ["std"] }
 

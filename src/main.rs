@@ -1,9 +1,9 @@
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
-use steep::{commands, BuildArgs, IgvmArgs, KernelArgs, PullArgs, PushArgs, RunArgs};
+use confos::{commands, BuildArgs, IgvmArgs, KernelArgs, PullArgs, PushArgs, RunArgs};
 
 #[derive(Parser)]
-#[command(name = "steep", about = "Confidential VM image builder")]
+#[command(name = "confos", about = "Confidential OS Builder: confidential VM image builder")]
 struct Cli {
     #[command(flatten)]
     verbose: Verbosity,

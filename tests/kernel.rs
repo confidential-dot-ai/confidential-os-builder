@@ -1,4 +1,4 @@
-//! Integration tests for steep kernel + kernel_cache.
+//! Integration tests for confos kernel + kernel_cache.
 //!
 //! These run a real kernel build under systemd-nspawn. Mark with `#[ignore]`
 //! so `cargo test` doesn't trigger a 10+ minute build.
@@ -26,7 +26,7 @@ use assert_cmd::Command;
 use std::path::{Path, PathBuf};
 
 fn binary() -> PathBuf {
-    assert_cmd::cargo::cargo_bin("steep")
+    assert_cmd::cargo::cargo_bin("confos")
 }
 
 /// Tempdir that reclaims root ownership (left by `sudo systemd-nspawn` during
@@ -168,7 +168,7 @@ fn sha256(p: &std::path::Path) -> String {
     hex::encode(h.finalize())
 }
 
-/// Boot a steep VM with --scratch and confirm the root fs reports more than the
+/// Boot a confos VM with --scratch and confirm the root fs reports more than the
 /// 2G tmpfs ceiling. Ignored: builds an image and boots a CVM (slow, build-env).
 #[test]
 #[ignore]
@@ -177,7 +177,7 @@ fn scratch_disk_expands_root_capacity() {
     let dir = std::path::Path::new("output/base");
     assert!(
         dir.join("manifest.json").exists(),
-        "build output/base first (steep build)"
+        "build output/base first (confos build)"
     );
 
     // 8G scratch is well over the 2G tmpfs fallback.
