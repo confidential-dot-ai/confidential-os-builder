@@ -1,17 +1,17 @@
 #!/bin/bash
-# E2E test for the steep build pipeline.
+# E2E test for the confos build pipeline.
 #
 # Tests:
 #   1. Build with boot-time cloud-init (--skip-igvm)
 #   2. Artifact existence and manifest validation
-#   3. Build with IGVM (if STEEP_FIRMWARE + STEEP_IGVM_TOOLS set)
+#   3. Build with IGVM (if CONFOS_FIRMWARE + CONFOS_IGVM_TOOLS set)
 #   4. Boot VM and verify cloud-init applied (if QEMU + firmware available)
 #
 # Usage: sudo ./tests/e2e.sh
 #
 # Env vars:
-#   STEEP_FIRMWARE   - path to OVMF.fd (required for IGVM + boot tests)
-#   STEEP_IGVM_TOOLS - path to igvm-tools binary (required for IGVM test)
+#   CONFOS_FIRMWARE   - path to OVMF.fd (required for IGVM + boot tests)
+#   CONFOS_IGVM_TOOLS - path to igvm-tools binary (required for IGVM test)
 
 set -euo pipefail
 
@@ -31,7 +31,7 @@ YELLOW='\033[0;33m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-MARKER="STEEP_E2E_OK"
+MARKER="CONFOS_E2E_OK"
 HOST_PORT=19522
 GUEST_PORT=18080
 
@@ -51,17 +51,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-BOOT_FW="${STEEP_FIRMWARE:-}"
+BOOT_FW="${CONFOS_FIRMWARE:-}"
 if [ -z "$BOOT_FW" ] && [ -f /usr/share/OVMF/OVMF_CODE_4M.fd ]; then
     BOOT_FW=/usr/share/OVMF/OVMF_CODE_4M.fd
 fi
 
-STEEP="$REPO_DIR/target/debug/steep"
-if [ ! -x "$STEEP" ]; then
-    echo "ERROR: $STEEP not found. Run 'cargo build' first (before sudo)."
+CONFOS="$REPO_DIR/target/debug/confos"
+if [ ! -x "$CONFOS" ]; then
+    echo "ERROR: $CONFOS not found. Run 'cargo build' first (before sudo)."
     exit 1
 fi
-echo -e "${BOLD}Using $STEEP${NC}"
+echo -e "${BOLD}Using $CONFOS${NC}"
 
 # ── Cloud-init test config ────────────────────────────────────────────────────
 CI_FILE=$(mktemp --suffix=.yaml)
@@ -69,7 +69,7 @@ CI_FILE=$(mktemp --suffix=.yaml)
 cat > "$CI_FILE" <<USERDATA
 #cloud-config
 write_files:
-  - path: /etc/steep-e2e-marker
+  - path: /etc/confos-e2e-marker
     permissions: '0644'
     content: |
       ${MARKER}
@@ -78,8 +78,8 @@ runcmd:
   - |
     exec > /dev/hvc0 2>&1
     set -ex
-    echo "=== steep e2e: starting ==="
-    cat /etc/steep-e2e-marker
+    echo "=== confos e2e: starting ==="
+    cat /etc/confos-e2e-marker
     python3 -c "
     from http.server import HTTPServer, BaseHTTPRequestHandler
     class H(BaseHTTPRequestHandler):
@@ -97,7 +97,7 @@ OUT="$REPO_DIR/output/e2e-test"
 rm -rf "$OUT"
 
 echo -e "\n${BOLD}Test 1: Build (boot-time cloud-init, --skip-igvm)${NC}"
-$STEEP build --skip-igvm --cloud-init "$CI_FILE" "$(basename "$OUT")" 2>&1 | tail -20
+$CONFOS build --skip-igvm --cloud-init "$CI_FILE" "$(basename "$OUT")" 2>&1 | tail -20
 
 # ── Test 2: Artifact checks ──────────────────────────────────────────────────
 echo -e "\n${BOLD}Test 2: Artifact checks${NC}"
@@ -137,13 +137,13 @@ echo "$RH" | grep -qE '^[0-9a-f]{64}$' \
 # ── Test 3: Build with IGVM ──────────────────────────────────────────────────
 echo -e "\n${BOLD}Test 3: IGVM build${NC}"
 
-if [ -n "${STEEP_IGVM_TOOLS:-}" ] && [ -n "${STEEP_FIRMWARE:-}" ]; then
-    IGVM_BUILD_ARGS=(--cloud-init "$CI_FILE" --firmware "$STEEP_FIRMWARE")
+if [ -n "${CONFOS_IGVM_TOOLS:-}" ] && [ -n "${CONFOS_FIRMWARE:-}" ]; then
+    IGVM_BUILD_ARGS=(--cloud-init "$CI_FILE" --firmware "$CONFOS_FIRMWARE")
 
     IGVM_OUT="$REPO_DIR/output/e2e-igvm"
     rm -rf "$IGVM_OUT"
 
-    $STEEP build "${IGVM_BUILD_ARGS[@]}" "$(basename "$IGVM_OUT")" 2>&1 | tail -20
+    $CONFOS build "${IGVM_BUILD_ARGS[@]}" "$(basename "$IGVM_OUT")" 2>&1 | tail -20
 
     [ -f "$IGVM_OUT/guest.igvm" ] && pass "IGVM: guest.igvm built" || fail "IGVM: guest.igvm missing"
     [ -f "$IGVM_OUT/manifest.json" ] && pass "IGVM: manifest.json built" || fail "IGVM: manifest.json missing"
@@ -163,7 +163,7 @@ sys.exit(0 if ok else 1)
     IGVM_OUT2="$REPO_DIR/output/e2e-igvm-2"
     rm -rf "$IGVM_OUT2"
 
-    $STEEP build "${IGVM_BUILD_ARGS[@]}" "$(basename "$IGVM_OUT2")" 2>&1 | tail -5
+    $CONFOS build "${IGVM_BUILD_ARGS[@]}" "$(basename "$IGVM_OUT2")" 2>&1 | tail -5
 
     HASH1=$(sha256sum "$IGVM_OUT/guest.igvm" | cut -d' ' -f1)
     HASH2=$(sha256sum "$IGVM_OUT2/guest.igvm" | cut -d' ' -f1)
@@ -173,12 +173,12 @@ sys.exit(0 if ok else 1)
         fail "IGVM: not reproducible (${HASH1:0:16}... vs ${HASH2:0:16}...)"
     fi
 else
-    skip "IGVM: STEEP_IGVM_TOOLS or STEEP_FIRMWARE not set"
+    skip "IGVM: CONFOS_IGVM_TOOLS or CONFOS_FIRMWARE not set"
 fi
 
 # ── Test 4: Boot + cloud-init verification ────────────────────────────────────
-# Uses raw QEMU instead of `steep run` because `steep run` calls exec() and
-# cannot be backgrounded. TODO: add a non-exec launch mode to steep run.
+# Uses raw QEMU instead of `confos run` because `confos run` calls exec() and
+# cannot be backgrounded. TODO: add a non-exec launch mode to confos run.
 echo -e "\n${BOLD}Test 4: Boot VM + verify cloud-init${NC}"
 
 if [ -z "$BOOT_FW" ]; then

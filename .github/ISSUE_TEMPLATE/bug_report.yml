@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in steep misbehaves (build failures, wrong measurements, boot problems)
+description: Something in confos misbehaves (build failures, wrong measurements, boot problems)
 labels: [bug]
 body:
   - type: markdown
@@ -7,7 +7,7 @@ body:
       value: |
         Thanks for the report! **If this could break measurement or attestation
         guarantees, do not file it here** — use
-        [private vulnerability reporting](https://github.com/confidential-dot-ai/steep/security/advisories/new)
+        [private vulnerability reporting](https://github.com/confidential-dot-ai/confidential-os-builder/security/advisories/new)
         instead (see SECURITY.md).
   - type: textarea
     id: what-happened
@@ -15,7 +15,7 @@ body:
       label: What happened
       description: What did you run, what did you expect, what happened instead?
       placeholder: |
-        Ran `steep build myimage --extra ./extra --smp 4` and ...
+        Ran `confos build myimage --extra ./extra --smp 4` and ...
     validations:
       required: true
   - type: textarea
@@ -29,15 +29,15 @@ body:
   - type: input
     id: version
     attributes:
-      label: Steep version / commit
-      description: "`git rev-parse HEAD` in your steep checkout"
+      label: confos version / commit
+      description: "`git rev-parse HEAD` in your confos checkout"
     validations:
       required: true
   - type: textarea
     id: host
     attributes:
       label: Build/run host
-      description: OS and version, mkosi version (`mkosi --version`), QEMU version if a `steep run` issue, and whether the host has SEV-SNP/TDX/KVM available.
+      description: OS and version, mkosi version (`mkosi --version`), QEMU version if a `confos run` issue, and whether the host has SEV-SNP/TDX/KVM available.
       placeholder: |
         Ubuntu 24.04 bare metal, mkosi 26, qemu 10.x, /dev/kvm present, no SNP
     validations:

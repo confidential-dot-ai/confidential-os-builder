@@ -25,8 +25,8 @@ pub fn run(
     let env = [
         ("SOURCE_DATE_EPOCH", "0"),
         ("KBUILD_BUILD_TIMESTAMP", "@0"),
-        ("KBUILD_BUILD_USER", "steep"),
-        ("KBUILD_BUILD_HOST", "steep"),
+        ("KBUILD_BUILD_USER", "confos"),
+        ("KBUILD_BUILD_HOST", "confos"),
         ("KCONFIG_NOTIMESTAMP", "1"),
     ];
 

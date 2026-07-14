@@ -21,14 +21,14 @@ const VERSION_PATH: &str = "kernel/version";
 const TOOLS_TREE_DIR: &str = "mkosi/kernel-builder";
 const TOOLS_TREE_CONF: &str = "mkosi/kernel-builder/mkosi.conf";
 const TOOLS_TREE_IMAGE: &str = "mkosi/kernel-builder/mkosi.output/image";
-const TOOLS_TREE_STAMP: &str = "mkosi/kernel-builder/mkosi.output/.steep-tools-stamp";
+const TOOLS_TREE_STAMP: &str = "mkosi/kernel-builder/mkosi.output/.confos-tools-stamp";
 
 pub fn run(args: &KernelArgs) -> Result<()> {
     let version = KernelVersion::read(Path::new(VERSION_PATH))?;
     tracing::info!(linux_version = %version.linux_version, "building hardened kernel");
 
     // Optional caller-supplied config fragment merged after required +
-    // hardening. No flag = steep's bare required + hardening baseline.
+    // hardening. No flag = confos's bare required + hardening baseline.
     let fragment = args.kernel_config_fragment.as_deref();
     let snapshot = Path::new(SNAPSHOT_PATH);
 
@@ -195,7 +195,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
 /// Compute the fingerprint over all inputs that determine kernel build output.
 ///
 /// `fragment` is the caller-supplied `--kernel-config-fragment` (None when
-/// building steep's bare baseline). `snapshot` is the committed snapshot
+/// building confos's bare baseline). `snapshot` is the committed snapshot
 /// lockfile; hashing it into the fingerprint means a deleted or hand-edited
 /// snapshot invalidates the cache and forces a rebuild that regenerates it.
 pub fn compute_fingerprint(

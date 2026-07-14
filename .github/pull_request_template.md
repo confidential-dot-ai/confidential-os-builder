@@ -12,9 +12,9 @@
 - [ ] CLI flag changes are reflected in the README's matching table
 - [ ] If this changes what a build produces: does it alter measurements of an
       unchanged config? Note it in `CHANGELOG.md` (see
-      [docs/VERSIONING.md](https://github.com/confidential-dot-ai/steep/blob/main/docs/VERSIONING.md))
+      [docs/VERSIONING.md](https://github.com/confidential-dot-ai/confidential-os-builder/blob/main/docs/VERSIONING.md))
 - [ ] If this touches the build pipeline: output stays deterministic
       (no timestamps, randomness, or unstable ordering — see the invariants
-      in [docs/ARCHITECTURE.md](https://github.com/confidential-dot-ai/steep/blob/main/docs/ARCHITECTURE.md))
+      in [docs/ARCHITECTURE.md](https://github.com/confidential-dot-ai/confidential-os-builder/blob/main/docs/ARCHITECTURE.md))
 - [ ] If this changes the kernel config: `kernel/config-x86_64.snapshot`
       diff is committed and reviewed

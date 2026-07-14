@@ -63,7 +63,7 @@ jobs:
             - run: ./bin/test
 
     build:
-        name: Build Steep
+        name: Build Confidential OS Builder
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v6
@@ -71,6 +71,6 @@ jobs:
             - run: cargo build --release
             - uses: actions/upload-artifact@v7
               with:
-                  name: steep
-                  path: target/release/steep
+                  name: confos
+                  path: target/release/confos
                   if-no-files-found: error

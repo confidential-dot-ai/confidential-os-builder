@@ -1,8 +1,8 @@
-# Verifying a Steep Build
+# Verifying a Confidential OS Builder Build
 
 This guide is for the **relying party**: someone who wants to confirm that a
 VM they are talking to (or an image they were handed) is exactly what a
-trusted `steep build` produced. It covers three independent layers of
+trusted `confos build` produced. It covers three independent layers of
 verification, from cheapest to most thorough:
 
 1. [Artifact verification](#1-artifact-verification-offline) — offline hash
@@ -16,11 +16,11 @@ verification, from cheapest to most thorough:
 ## What you need, and what you must already trust
 
 Every check below compares something against `manifest.json`. The manifest is
-**reference data, not proof** — you must obtain it through a channel you
-trust (the publisher's repository, a registry you trust, or your own build).
-If an attacker can substitute the manifest, they can substitute the expected
-values too. Steep does not currently sign published manifests; if you
-republish builds, sign the manifest with your own infrastructure (e.g.
+**reference data, not proof** — you must obtain it through a channel you trust
+(the publisher's repository, a registry you trust, or your own build). If an
+attacker can substitute the manifest, they can substitute the expected values
+too. Confidential OS Builder does not currently sign published manifests; if
+you republish builds, sign the manifest with your own infrastructure (e.g.
 cosign) so downstream verifiers get a stronger anchor.
 
 See [MANIFEST.md](MANIFEST.md) for the full schema. The fields for verification are:
@@ -38,7 +38,7 @@ See [MANIFEST.md](MANIFEST.md) for the full schema. The fields for verification 
 Confirms that files you received match the manifest. No hardware needed.
 
 ```bash
-cd output/myimage   # or wherever `steep pull` placed the artifacts
+cd output/myimage   # or wherever `confos pull` placed the artifacts
 
 # Compare each artifact hash against the manifest
 jq -r '.outputs.uki.sha256 + "  uki.efi",
@@ -60,7 +60,7 @@ tdx-measure measure --firmware OVMF.tdx.fd --uki uki.efi --disk disk.raw
 Both tools live in this repository (`crates/igvm-tools`,
 `crates/tdx-measure`) and can be installed with
 `cargo install --path crates/<name>`, so a verifier needs only the Rust
-toolchain — not a full steep build host.
+toolchain — not a full confos build host.
 
 ## 2. Launch attestation (runtime)
 
@@ -70,9 +70,9 @@ against the manifest and validates the signature chain up to the CPU vendor.
 
 ### AMD SEV-SNP
 
-**Inside the guest**, fetch an attestation report. Steep's kernel builds the
-guest driver in (`CONFIG_SEV_GUEST=y`), so `/dev/sev-guest` is always
-available. Using [`snpguest`](https://github.com/virtee/snpguest):
+**Inside the guest**, fetch an attestation report. Confidential OS Builder's
+kernel builds the guest driver in (`CONFIG_SEV_GUEST=y`), so `/dev/sev-guest`
+is always available. Using [`snpguest`](https://github.com/virtee/snpguest):
 
 The anti-replay property depends on the **verifier** choosing the nonce:
 generate 64 random bytes on the verifier, send them to the guest, and later
@@ -116,9 +116,9 @@ trustworthy guest.
 
 ### Intel TDX
 
-**Inside the guest**, obtain a TD quote. Steep's kernel enables
-`CONFIG_TDX_GUEST_DRIVER`, exposing `/dev/tdx_guest`; on 6.7+ kernels the
-generic `configfs-tsm` report interface also works. Any quote-generation
+**Inside the guest**, obtain a TD quote. Confidential OS Builder's kernel
+enables `CONFIG_TDX_GUEST_DRIVER`, exposing `/dev/tdx_guest`; on 6.7+ kernels
+the generic `configfs-tsm` report interface also works. Any quote-generation
 client works (e.g. Intel's `trustauthority-cli`, `go-tdx-guest`, or a
 `configfs-tsm` reader), as long as it passes a fresh verifier nonce as
 `REPORTDATA`.
@@ -169,17 +169,17 @@ A caveat on scope first. What [REPRODUCIBILITY.md](REPRODUCIBILITY.md)
 establishes today is that the **base image** (same roothash and UKI SHA-256)
 is bit-identical across **consecutive builds with the same pinned
 toolchain**. Reproduction across independent hosts is the goal and requires
-matching the publisher's environment exactly — same steep commit, same
+matching the publisher's environment exactly — same confos commit, same
 `bin/setup`-installed tool versions (mkosi in particular), same Ubuntu
 package snapshot state. It has not been validated as broadly as the
 consecutive-build case, so treat a mismatch as a signal to bisect, not as
 proof of tampering.
 
 ```bash
-git clone https://github.com/confidential-dot-ai/steep.git && cd steep
+git clone https://github.com/confidential-dot-ai/confidential-os-builder.git && cd confidential-os-builder
 git checkout <the commit the publisher built from>
 bin/setup
-bin/steep build
+bin/confos build
 diff <(jq -S 'del(.build.timestamp)' output/base/manifest.json) \
      <(jq -S 'del(.build.timestamp)' /path/to/published/manifest.json)
 ```

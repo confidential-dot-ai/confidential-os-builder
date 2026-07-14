@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report suspected vulnerabilities privately via
-[GitHub private vulnerability reporting](https://github.com/confidential-dot-ai/steep/security/advisories/new).
+[GitHub private vulnerability reporting](https://github.com/confidential-dot-ai/confidential-os-builder/security/advisories/new).
 Do not open public issues for security reports.
 
 We will acknowledge reports within a few business days. Please include enough
@@ -15,5 +15,5 @@ affected build if relevant).
 Anything that breaks the measurement/attestation guarantees is in scope —
 e.g. builds that are not reproducible when they should be, unmeasured content
 reachable in the verity root, IGVM/TDX measurement computation errors, or
-`steep run` weakening the documented guest posture. Host-side tooling bugs
+`confos run` weakening the documented guest posture. Host-side tooling bugs
 without security impact are ordinary issues.

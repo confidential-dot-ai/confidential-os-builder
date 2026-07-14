@@ -24,7 +24,7 @@ pub struct KernelArtifact {
 /// Force=true bypasses the cache (rebuilds from scratch).
 ///
 /// `fragment` is the caller-supplied `--kernel-config-fragment`, threaded
-/// from `steep build`.
+/// from `confos build`.
 pub fn ensure_kernel(
     force: bool,
     fragment: Option<PathBuf>,

@@ -1,4 +1,4 @@
-# attestation-api config baked by steep build --profile attest.
+# attestation-api config baked by confos build --profile attest.
 # Override at runtime by mounting / writing /etc/attestation-api/config.toml.
 # Note: /etc lives on the overlay upper, so runtime overrides do persist
 # (when a datadisk is attached) but don't change the IGVM launch measurement.

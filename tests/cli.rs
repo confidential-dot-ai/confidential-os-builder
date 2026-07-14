@@ -2,7 +2,7 @@ use assert_cmd::Command;
 
 #[test]
 fn test_help_shows_subcommands() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.arg("--help")
         .assert()
         .success()
@@ -12,19 +12,19 @@ fn test_help_shows_subcommands() {
 
 #[test]
 fn test_run_requires_dir() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["run"]).assert().failure();
 }
 
 #[test]
 fn test_run_accepts_dir() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["run", "/tmp/nonexistent"]).assert().failure();
 }
 
 #[test]
 fn test_help_shows_run_subcommand() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.arg("--help")
         .assert()
         .success()
@@ -33,13 +33,13 @@ fn test_help_shows_run_subcommand() {
 
 #[test]
 fn test_cloud_init_requires_dir() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["cloud-init"]).assert().failure();
 }
 
 #[test]
 fn test_build_help() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--help"])
         .assert()
         .success()
@@ -51,7 +51,7 @@ fn test_build_help() {
 fn test_build_skip_igvm_flag() {
     // --skip-igvm survives as a deprecated alias for --platform tdx;
     // verify it still shows up in --help.
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--help"])
         .assert()
         .success()
@@ -63,7 +63,7 @@ fn test_build_skip_igvm_flag() {
 fn test_build_platform_flag_documented() {
     // --platform replaces --skip-igvm; check it documents the three
     // expected values.
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--help"])
         .assert()
         .success()
@@ -80,7 +80,7 @@ fn test_build_rejects_skip_igvm_with_explicit_platform() {
     // impossible. We exercise the --help path indirectly here — the
     // actual rejection happens at run-time in commands::build::run, so
     // assert it via a build invocation that fails fast on mkosi.
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--platform", "snp", "--skip-igvm"])
         .assert()
         .failure();
@@ -88,7 +88,7 @@ fn test_build_rejects_skip_igvm_with_explicit_platform() {
 
 #[test]
 fn test_run_port_forward_flag() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["run", "--help"])
         .assert()
         .success()
@@ -97,7 +97,7 @@ fn test_run_port_forward_flag() {
 
 #[test]
 fn test_run_help_shows_scratch() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["run", "--help"])
         .assert()
         .success()
@@ -108,7 +108,7 @@ fn test_run_help_shows_scratch() {
 
 #[test]
 fn test_push_help() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["push", "--help"])
         .assert()
         .success()
@@ -118,7 +118,7 @@ fn test_push_help() {
 
 #[test]
 fn test_push_requires_dir() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["push"]).assert().failure();
 }
 
@@ -126,7 +126,7 @@ fn test_push_requires_dir() {
 
 #[test]
 fn test_pull_help() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["pull", "--help"])
         .assert()
         .success()
@@ -136,7 +136,7 @@ fn test_pull_help() {
 
 #[test]
 fn test_pull_requires_name() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["pull"]).assert().failure();
 }
 
@@ -144,7 +144,7 @@ fn test_pull_requires_name() {
 
 #[test]
 fn test_igvm_help() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["igvm", "--help"])
         .assert()
         .success()
@@ -154,7 +154,7 @@ fn test_igvm_help() {
 
 #[test]
 fn test_igvm_requires_dir_and_smp() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["igvm"]).assert().failure();
 }
 
@@ -162,7 +162,7 @@ fn test_igvm_requires_dir_and_smp() {
 
 #[test]
 fn test_kernel_help() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["kernel", "--help"])
         .assert()
         .success()
@@ -175,7 +175,7 @@ fn test_kernel_help() {
 
 #[test]
 fn test_build_rejects_invalid_memory() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--memory", "4GB", "--skip-igvm"])
         .assert()
         .failure();
@@ -183,7 +183,7 @@ fn test_build_rejects_invalid_memory() {
 
 #[test]
 fn test_build_name_argument() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--help"])
         .assert()
         .success()
@@ -194,7 +194,7 @@ fn test_build_name_argument() {
 
 #[test]
 fn test_build_extra_flag() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--help"])
         .assert()
         .success()
@@ -204,7 +204,7 @@ fn test_build_extra_flag() {
 
 #[test]
 fn test_build_package_flag() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--help"])
         .assert()
         .success()
@@ -214,7 +214,7 @@ fn test_build_package_flag() {
 
 #[test]
 fn test_build_script_flag() {
-    let mut cmd = Command::cargo_bin("steep").unwrap();
+    let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--help"])
         .assert()
         .success()

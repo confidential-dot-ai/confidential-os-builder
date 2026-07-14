@@ -1,6 +1,6 @@
-# Steep Concepts Guide
+# Confidential OS Builder Concepts Guide
 
-A ground-up explanation of every concept behind steep's image building and measured boot pipeline.
+A ground-up explanation of every concept behind confos's image building and measured boot pipeline.
 
 ---
 
@@ -82,7 +82,7 @@ So most drivers are compiled as **modules** — separate files that can be loade
 
 You load them with `insmod /path/to/module.ko` or `modprobe module-name` (which also handles dependencies). Once loaded, the driver is part of the running kernel — it can register device types, filesystems, crypto algorithms, whatever it provides.
 
-Steep's kernel takes the opposite approach: the build applies `mod2yesconfig`, which converts every `=m` option to `=y` — a **module-less kernel**. dm-verity, dm-bufio, overlayfs, virtio, and erofs are all compiled in, so our initrd carries no `.ko` files at all and the init script never runs `insmod`. Nothing can be loaded into the kernel after boot, which also shrinks the attack surface (see `kernel/hardening.config`: `CONFIG_MODULES` is unset).
+Confidential OS Builder's kernel takes the opposite approach: the build applies `mod2yesconfig`, which converts every `=m` option to `=y` — a **module-less kernel**. dm-verity, dm-bufio, overlayfs, virtio, and erofs are all compiled in, so our initrd carries no `.ko` files at all and the init script never runs `insmod`. Nothing can be loaded into the kernel after boot, which also shrinks the attack surface (see `kernel/hardening.config`: `CONFIG_MODULES` is unset).
 
 ---
 
@@ -183,7 +183,7 @@ The initrd's `/init` script does whatever prep is needed (load drivers, decrypt 
 
 ---
 
-## 8. Why steep builds TWO things — an initrd AND an image
+## 8. Why confos builds TWO things — an initrd AND an image
 
 Because they serve completely different purposes.
 
@@ -262,7 +262,7 @@ Overlayfs merges two directories into one view:
 ```
 /sysroot-lower/     (the dm-verity root, read-only)
     etc/
-        hostname        -> "steep"
+        hostname        -> "confos"
         resolv.conf     -> "nameserver 10.0.2.3"
     usr/
         bin/
@@ -276,7 +276,7 @@ Overlayfs merges two directories into one view:
 
 /sysroot/           (the merged overlay -- this is what the OS actually uses)
     etc/
-        hostname        -> comes from lower (steep)
+        hostname        -> comes from lower (confos)
         resolv.conf     -> comes from lower (nameserver 10.0.2.3)
     usr/
         bin/
@@ -305,7 +305,7 @@ Overlayfs sees this write and puts the file in the **upper layer**:
 
 /sysroot-lower/
     etc/
-        hostname        -> "steep"             <-- untouched
+        hostname        -> "confos"             <-- untouched
         resolv.conf     -> "nameserver 10.0.2.3"  <-- untouched
 ```
 
@@ -332,7 +332,7 @@ Overlayfs **cannot modify the lower layer** (it's read-only). So it:
 
 /sysroot-lower/
     etc/
-        hostname        -> "steep"
+        hostname        -> "confos"
         resolv.conf     -> "nameserver 10.0.2.3"  <-- still the original, untouched
 ```
 
@@ -376,7 +376,7 @@ Boot 2:  upper = empty    -> everything from boot 1 is gone
 
 The tradeoff: **nothing persists across reboots**. Logs, config changes, installed packages — all gone. That's by design for a confidential VM where you want a known-good state every boot. If you need persistence, you'd attach a separate data disk that isn't part of the verified root.
 
-The upper layer doesn't have to be RAM, though. `steep run --scratch 20G` attaches a disk that the initrd detects (by its virtio-blk serial number `confai-scratch`), encrypts with a random per-boot key that never leaves RAM, formats as ext4, and uses as the overlay's upper layer instead of tmpfs. Same ephemerality — the key is gone at shutdown, so the data is unrecoverable — but with disk-sized capacity. See [DEPLOYING.md](DEPLOYING.md#storage).
+The upper layer doesn't have to be RAM, though. `confos run --scratch 20G` attaches a disk that the initrd detects (by its virtio-blk serial number `confai-scratch`), encrypts with a random per-boot key that never leaves RAM, formats as ext4, and uses as the overlay's upper layer instead of tmpfs. Same ephemerality — the key is gone at shutdown, so the data is unrecoverable — but with disk-sized capacity. See [DEPLOYING.md](DEPLOYING.md#storage).
 
 ---
 
@@ -384,7 +384,7 @@ The upper layer doesn't have to be RAM, though. `steep run --scratch 20G` attach
 
 mkosi is a tool for building OS images declaratively. Think of it like a Dockerfile but for bare-metal/VM disk images. You write `mkosi.conf` with a distro, packages, and output format, and it produces a disk image.
 
-Steep uses mkosi twice:
+Confidential OS Builder uses mkosi twice:
 
 1. **`mkosi/initrd/`** — Builds the minimal cpio initrd (cryptsetup, e2fsprogs, bash, util-linux, zstd). Output: `image.cpio.gz`.
 2. **`mkosi/base/`** — Builds the full Ubuntu disk image with 3 partitions (ESP + root-data + root-verity-hash). Output: `image.raw`, `image.efi` (UKI), `image.roothash`.
@@ -444,7 +444,7 @@ The IGVM and the disk image are separate files. QEMU loads the IGVM (which boots
 
 ---
 
-## 15. The full boot sequence in steep
+## 15. The full boot sequence in confos
 
 ```
 1. QEMU loads IGVM
@@ -452,7 +452,7 @@ The IGVM and the disk image are separate files. QEMU loads the IGVM (which boots
 2. IGVM contains OVMF firmware + UKI
       |
 3. Firmware starts and executes the UKI (on SNP it comes measured inside
-   the IGVM itself; on the KVM/emulated dev paths `steep run` hands the
+   the IGVM itself; on the KVM/emulated dev paths `confos run` hands the
    UKI directly to QEMU via `-kernel`)
       |
 4. Kernel starts with initrd in RAM
@@ -515,7 +515,7 @@ mechanism: a set of measurement registers instead of one digest.
 - **CCEL** — the CC Event Log, which records every RTMR extension so a
   verifier can replay and audit how each register got its value.
 
-`steep build` precomputes MRTD, RTMR[1], and RTMR[2] offline (via the
+`confos build` precomputes MRTD, RTMR[1], and RTMR[2] offline (via the
 `tdx-measure` crate) and publishes them in `manifest.json` as the `tdx`
 block. RTMR[0] is deliberately **not** pinned: it contains
 host-configuration-dependent ACPI content that varies with memory size
@@ -532,7 +532,7 @@ TDX, ACPI tables are supplied by the untrusted host and land in
 unpinned RTMR[0], so a malicious host could feed the guest malicious AML
 ("BadAML" attacks).
 
-Steep's defense: ship a known-good DSDT inside the **measured** initrd
+Confidential OS Builder's defense: ship a known-good DSDT inside the **measured** initrd
 and have the kernel prefer it over whatever the host provides.
 
 1. `mkosi/base/acpi-tables/dsdt.asl` is the audited DSDT source; the

@@ -61,8 +61,9 @@ means DMA-capable devices can read/write arbitrary physical memory — the class
 malicious-peripheral / DMA-attack scenario that IOMMU-enforced translation
 prevents.
 
-**Why we deviate.** steep kernels only ever run as VM guests, and steep guests
-are given no emulated Intel vIOMMU — the DMAR driver would be dead code. 
+**Why we deviate.** Confidential OS Builder kernels only ever run as VM guests,
+and confos guests are given no emulated Intel vIOMMU — the DMAR driver would be
+dead code.
 
 ### `CONFIG_HW_RANDOM_TPM=y`
 
@@ -73,8 +74,8 @@ random number generator, if a TPM is present.
 weak or slow entropy at early boot, that can mean predictable random numbers
 (keys, ASLR seeds) until the pool fills.
 
-**Why we deviate.** steep exposes no vTPM to the guest at all (`CONFIG_TCG_TPM`
-is off), so there is no TPM RNG to read.
+**Why we deviate.** Confidential OS Builder exposes no vTPM to the guest at all
+(`CONFIG_TCG_TPM` is off), so there is no TPM RNG to read.
 
 ### sysctl `kernel.yama.ptrace_scope = 3`
 
@@ -88,9 +89,10 @@ hijack its execution. Lower scopes only restrict, not eliminate, this lateral
 movement.
 
 **Why we deviate.** Level 3 would break all debugging and any workload feature
-that legitimately uses ptrace, with no opt-out short of a reboot. steep runs
-arbitrary customer workloads inside the guest and cannot assume none of them
-need ptrace. We compile Yama in (`CONFIG_SECURITY_YAMA=y`, in the LSM stack) so
+that legitimately uses ptrace, with no opt-out short of a reboot.
+Confidential OS Builder runs arbitrary customer workloads inside the guest and
+cannot assume none of them need ptrace. We compile Yama in
+(`CONFIG_SECURITY_YAMA=y`, in the LSM stack) so
 the `kernel.yama.ptrace_scope` sysctl exists, but we ship it at the kernel
 default of 0 (classic ptrace permissions) — workloads that want ancestor-only
 attach can raise it to 1 at runtime. Documented in the header of
@@ -106,7 +108,7 @@ them entirely.
 root-only — a large attack-surface expansion that has featured in many
 privilege-escalation chains.
 
-**Why we deviate.** Container and sandbox tooling in steep workloads depends on
+**Why we deviate.** Container and sandbox tooling in confos workloads depends on
 unprivileged user namespaces; setting 0 breaks them. The surrounding mitigations
 shrink what a namespaced attacker can reach: the syscall surface is already
 heavily cut at compile time (no bpf(2) for unprivileged use —
@@ -126,12 +128,13 @@ Meltdown-class variant appears on "safe" silicon), auto mode leaves the kernel's
 page tables mapped while userspace runs, re-opening kernel-memory-read side
 channels.
 
-**Why we deviate.** steep guests run exclusively on SEV-SNP (AMD Zen 3+) and TDX
-(recent Intel) hosts — parts that were never Meltdown-vulnerable and report
-`RDCL_NO`/equivalent. Forcing PTI there is pure overhead (extra TLB flushes on
-every kernel entry/exit) with no modeled benefit; and on any genuinely
-vulnerable CPU, auto mode still turns PTI on. The mechanism stays compiled in,
-so the decision can still be based on the CPU's reported vulnerability.
+**Why we deviate.** Confidential OS Builder guests run exclusively on SEV-SNP
+(AMD Zen 3+) and TDX (recent Intel) hosts — parts that were never
+Meltdown-vulnerable and report `RDCL_NO`/equivalent. Forcing PTI there is pure
+overhead (extra TLB flushes on every kernel entry/exit) with no modeled benefit;
+and on any genuinely vulnerable CPU, auto mode still turns PTI on. The mechanism
+stays compiled in, so the decision can still be based on the CPU's reported
+vulnerability.
 
 ### cmdline `nosmt` / `mitigations=auto,nosmt`
 
@@ -275,11 +278,11 @@ type-checking every indirect call to kill forward-edge ROP/JOP, in enforcing
 **Risk of not applying.** Without software CFI, an attacker with a memory
 corruption primitive can more easily pivot indirect calls to arbitrary gadgets.
 
-**Why not applicable.** All of these are Clang-only; steep builds with GCC 15
+**Why not applicable.** All of these are Clang-only; confos builds with GCC 15
 (required for the GCC hardening plugins we do use: stackleak, latent-entropy,
 randstruct-full). Forward-edge protection comes instead from
 `CONFIG_X86_KERNEL_IBT=y` (CET Indirect Branch Tracking, enforced in hardware on
-the CPUs steep targets) plus `CONFIG_MITIGATION_SLS=y`, ROP surface reduction
+the CPUs confos targets) plus `CONFIG_MITIGATION_SLS=y`, ROP surface reduction
 via `CONFIG_ZERO_CALL_USED_REGS=y`, and KASLR
 (`RANDOMIZE_BASE`/`RANDOMIZE_MEMORY`).
 

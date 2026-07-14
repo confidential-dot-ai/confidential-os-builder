@@ -66,7 +66,7 @@ echo "initrd: verified root mounted (read-only)"
 # guest gate on the cluster operator's intent without requiring any pre-format
 # step on the PVC. KubeVirt plumbs Disk.serial in the VM spec through to
 # QEMU's virtio device attribute, so the cluster declares intent in YAML and
-# the guest sees it pre-boot. See src/qemu.rs for the matching steep-run path.
+# the guest sees it pre-boot. See src/qemu.rs for the matching confos-run path.
 SCRATCH_DEV=""
 for dev in /dev/vdb /dev/vdc /dev/vdd; do
     [ -e "$dev" ] || continue

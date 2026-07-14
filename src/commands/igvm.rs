@@ -20,18 +20,18 @@ pub fn run(args: &IgvmArgs) -> anyhow::Result<()> {
     let uki_path = args.dir.join("uki.efi");
     if !uki_path.exists() {
         anyhow::bail!(
-            "uki.efi not found in {}. Run `steep build` first.",
+            "uki.efi not found in {}. Run `confos build` first.",
             args.dir.display()
         );
     }
 
-    // The manifest must already exist — `steep igvm` mutates an existing build,
+    // The manifest must already exist — `confos igvm` mutates an existing build,
     // it doesn't create one from scratch. (Without a manifest we'd have nowhere
     // to record measurements.)
     let manifest_path = args.dir.join("manifest.json");
     if !manifest_path.exists() {
         anyhow::bail!(
-            "manifest.json not found in {}. Run `steep build` first.",
+            "manifest.json not found in {}. Run `confos build` first.",
             args.dir.display()
         );
     }
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn upsert_replaces_matching_smp() {
-        // Idempotency: calling `steep igvm --smp 2` twice must not produce two
+        // Idempotency: calling `confos igvm --smp 2` twice must not produce two
         // entries with smp=2 in the manifest.
         let mut m = empty_manifest();
         upsert_variant(&mut m, variant(2, "d2-old"));
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn upsert_keeps_distinct_smp_variants() {
-        // `steep igvm --smp 2 4` must produce two distinct variants. They keep
+        // `confos igvm --smp 2 4` must produce two distinct variants. They keep
         // their distinct launch digests after a no-op replacement.
         let mut m = empty_manifest();
         upsert_variant(&mut m, variant(2, "d2"));

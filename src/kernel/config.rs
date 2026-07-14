@@ -3,7 +3,7 @@
 //! The "configure phase" runs `make x86_64_defconfig`, applies fragments,
 //! then `mod2yesconfig`, then `olddefconfig`. The resolved `.config` is
 //! then written back to the committed snapshot via [`update_snapshot`],
-//! which steep tracks in git like a lockfile.
+//! which confos tracks in git like a lockfile.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -14,7 +14,7 @@ use crate::tools;
 
 /// Overwrite `snapshot` with the freshly-resolved `.config`, returning
 /// whether the content changed (`true` if the snapshot was absent or
-/// differed). steep calls this on every kernel build, so the snapshot
+/// differed). confos calls this on every kernel build, so the snapshot
 /// tracks the resolved config like a lockfile; `git diff` on the snapshot
 /// is what surfaces unexpected drift — the build itself never fails on it.
 pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
@@ -51,7 +51,7 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 /// follow hardening.
 ///
 /// `extra_fragment` is the optional caller-supplied `--kernel-config-fragment`.
-/// When `Some`, it's merged after the steep-controlled fragments so
+/// When `Some`, it's merged after the confos-controlled fragments so
 /// `mod2yesconfig` still flattens any tristate symbols it introduces.
 pub fn run_configure_phase(
     tools_tree: &Path,

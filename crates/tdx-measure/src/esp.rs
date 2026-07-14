@@ -8,11 +8,11 @@
 //! `EV_EFI_BOOT_SERVICES_APPLICATION` event extended into RTMR[1]. The
 //! UKI's Authenticode hash is easy to compute (we have the .efi as
 //! `output/<name>/uki.efi`), but systemd-boot's bytes live inside the
-//! disk's ESP — there's no separate "bootloader" file step in the steep
+//! disk's ESP — there's no separate "bootloader" file step in the confos
 //! pipeline. This module pulls the bootloader bytes out of the disk
 //! image at measurement time.
 //!
-//! On steep-built disks the first partition is the ESP, formatted FAT32,
+//! On confos-built disks the first partition is the ESP, formatted FAT32,
 //! and the fallback bootloader is at `/EFI/BOOT/BOOTX64.EFI` per the UEFI
 //! removable-media boot policy (which is what TDVF chases since the
 //! variable store is fresh and no Boot#### entry points elsewhere).

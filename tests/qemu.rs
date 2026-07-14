@@ -1,5 +1,5 @@
+use confos::qemu::{select_tier, QemuArgs, QemuTier};
 use std::path::PathBuf;
-use steep::qemu::{select_tier, QemuArgs, QemuTier};
 
 #[test]
 fn test_qemu_args_basic() {
@@ -221,7 +221,7 @@ fn test_select_tier_snp_objects_no_kvm() {
 
 // --- validate_memory tests ---
 
-use steep::qemu::validate_memory;
+use confos::qemu::validate_memory;
 
 #[test]
 fn test_validate_memory_valid_formats() {
@@ -501,7 +501,7 @@ fn test_qemu_args_kvm_uses_virtio_console() {
 
 // --- parse_size_to_bytes tests ---
 
-use steep::qemu::parse_size_to_bytes;
+use confos::qemu::parse_size_to_bytes;
 
 #[test]
 fn test_parse_size_suffixes() {

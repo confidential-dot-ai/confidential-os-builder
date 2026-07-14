@@ -61,7 +61,7 @@ mod tests {
     #[test]
     fn default_output_dir_uses_the_image_tag() {
         assert_eq!(
-            default_output_dir("ghcr.io/confidential-dot-ai/steep:base"),
+            default_output_dir("ghcr.io/confidential-dot-ai/confidential-os-builder:base"),
             Some(PathBuf::from("output/base"))
         );
     }
@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn default_output_dir_ignores_a_registry_port() {
         assert_eq!(
-            default_output_dir("localhost:5000/steep:v1"),
+            default_output_dir("localhost:5000/confos:v1"),
             Some(PathBuf::from("output/v1"))
         );
     }
@@ -77,16 +77,16 @@ mod tests {
     #[test]
     fn default_output_dir_is_none_without_a_tag() {
         assert_eq!(
-            default_output_dir("ghcr.io/confidential-dot-ai/steep"),
+            default_output_dir("ghcr.io/confidential-dot-ai/confidential-os-builder"),
             None
         );
-        assert_eq!(default_output_dir("localhost:5000/steep"), None);
+        assert_eq!(default_output_dir("localhost:5000/confos"), None);
     }
 
     #[test]
     fn default_output_dir_is_none_for_digest_refs() {
         assert_eq!(
-            default_output_dir("ghcr.io/confidential-dot-ai/steep@sha256:abc123"),
+            default_output_dir("ghcr.io/confidential-dot-ai/confidential-os-builder@sha256:abc123"),
             None
         );
     }

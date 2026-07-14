@@ -1,8 +1,8 @@
-# Deploying Steep Images
+# Deploying Confidential OS Builder Images
 
-`steep run` is a development harness. This guide covers what changes when
+`confos run` is a development harness. This guide covers what changes when
 you take the artifacts to production hardware: host requirements, moving
-images around, attaching disks without `steep run`, and operational policy
+images around, attaching disks without `confos run`, and operational policy
 around measurements.
 
 ## Host requirements
@@ -20,7 +20,7 @@ can run mkosi builds images; only the *deployment* host needs TEE hardware.
   `/sys/module/kvm_amd/parameters/sev_snp`). `/dev/sev` must exist.
 - **QEMU**: a build with SNP *and* IGVM support — the `sev-snp-guest`
   object and the `igvm-cfg` object type (requires QEMU built against
-  `libigvm`). `steep run` selects the SNP tier when a single
+  `libigvm`). `confos run` selects the SNP tier when a single
   `qemu-system-x86_64 -object help` lists both `sev-snp-guest` and
   `igvm-cfg` and `/dev/kvm` exists; you can run the same probe yourself:
   `qemu-system-x86_64 -object help | grep -E 'sev-snp-guest|igvm-cfg'`
@@ -28,7 +28,7 @@ can run mkosi builds images; only the *deployment* host needs TEE hardware.
 - **Guest artifacts**: the `guest-smp<N>.igvm` matching your vCPU count.
   The firmware is inside the IGVM — do not pass `-bios`/`-drive if=pflash`.
 
-The essential QEMU shape (these are the arguments `steep run` generates,
+The essential QEMU shape (these are the arguments `confos run` generates,
 minus its console plumbing; add your own networking, console, and
 management options). The IGVM is supplied as a dedicated `igvm-cfg` object
 referenced from the `-machine` line — it is *not* a property of the
@@ -51,14 +51,14 @@ qemu-system-x86_64 \
 Keep `-m` and the `memory-backend-memfd` size identical, and attach disks
 as explicit `-device virtio-blk-pci` entries (not `-drive if=virtio`) so
 PCI slot order — and therefore guest device naming — stays deterministic.
-`cbitpos=51` is correct for the Milan/Genoa parts steep targets.
+`cbitpos=51` is correct for the Milan/Genoa parts confos targets.
 
 **vCPU count must match an IGVM variant** — SMP is part of the launch
 measurement. Memory size is not; size it freely. If you need a vCPU count
 the build didn't emit, generate it without rebuilding:
 
 ```bash
-steep igvm output/myimage --smp 12 --firmware output/OVMF.fd
+confos igvm output/myimage --smp 12 --firmware output/OVMF.fd
 ```
 
 ### Intel TDX
@@ -79,14 +79,14 @@ steep igvm output/myimage --smp 12 --firmware output/OVMF.fd
 
 ## Moving artifacts
 
-`steep push` / `steep pull` transfer the whole output directory (manifest
+`confos push` / `confos pull` transfer the whole output directory (manifest
 included) through any OCI registry via `oras`:
 
 ```bash
-steep push output/web                             # pushes ghcr.io/confidential-dot-ai/steep:web
-steep push output/web --registry ghcr.io/you/imgs --tag v1
-steep pull ghcr.io/you/imgs:v1                    # lands in output/v1
-steep pull ghcr.io/you/imgs:v1 output/web         # or an explicit directory
+confos push output/web                             # pushes ghcr.io/confidential-dot-ai/confidential-os-builder:web
+confos push output/web --registry ghcr.io/you/imgs --tag v1
+confos pull ghcr.io/you/imgs:v1                    # lands in output/v1
+confos pull ghcr.io/you/imgs:v1 output/web         # or an explicit directory
 ```
 
 Verify what you pulled before booting it — hashes in the manifest, then the
@@ -94,7 +94,7 @@ manifest against your trusted copy ([VERIFYING.md](VERIFYING.md) §1).
 
 ### KubeVirt
 
-`steep push --cdi` packs the artifacts into the single `tar+gzip` layer
+`confos push --cdi` packs the artifacts into the single `tar+gzip` layer
 layout (with `disk.raw` under `disk/`) that KubeVirt CDI's registry importer
 expects, so a `DataVolume` can import the disk straight from the registry:
 
@@ -104,17 +104,17 @@ source:
     url: "docker://ghcr.io/you/imgs/web:v1"
 ```
 
-Steep's guest kernel is built for KubeVirt SNP quirks (KubeVirt forces
-`iommu_platform=true` on virtio devices; the required kernel config handles
-this). You still need a KubeVirt version and node stack with SEV-SNP + IGVM
-support to get measured launches; without it the image boots as a plain VM
-with no attestation.
+Confidential OS Builder's guest kernel is built for KubeVirt SNP quirks
+(KubeVirt forces `iommu_platform=true` on virtio devices; the required kernel
+config handles this). You still need a KubeVirt version and node stack with
+SEV-SNP + IGVM support to get measured launches; without it the image boots as
+a plain VM with no attestation.
 
 ## Storage
 
 ### Ephemeral scratch (expanded writable space)
 
-Outside `steep run --scratch`, attach any block device as a virtio disk
+Outside `confos run --scratch`, attach any block device as a virtio disk
 whose **virtio-block serial is `confai-scratch`** — the initrd matches on
 the serial, not a filesystem label, so the device needs no formatting or
 partitioning at all:
@@ -133,14 +133,14 @@ tmpfs.
 
 ### Persistent data
 
-Steep currently has **no persistent-disk convention**: everything under `/`
-is either measured-and-read-only (the verity root) or ephemeral (the
-overlay). If your workload needs durable state, attach an additional disk
-and manage it from the workload itself — and remember the host reads and
-tampers with attached storage freely, so the workload must bring its own
-encryption *and* integrity protection (e.g. dm-crypt + dm-integrity keyed
-from a secret released only after attestation). Treat host-visible
-plaintext storage as published.
+Confidential OS Builder currently has **no persistent-disk convention**:
+everything under `/` is either measured-and-read-only (the verity root) or
+ephemeral (the overlay). If your workload needs durable state, attach an
+additional disk and manage it from the workload itself — and remember the host
+reads and tampers with attached storage freely, so the workload must bring its
+own encryption *and* integrity protection (e.g. dm-crypt + dm-integrity keyed
+from a secret released only after attestation). Treat host-visible plaintext
+storage as published.
 
 ## Operational policy
 
@@ -158,7 +158,7 @@ plaintext storage as published.
   workload update), remove the old build's digests from your verifier's
   allowlist — an attacker can keep launching the old, correctly-measured
   image forever.
-- **Keep the manifest with the fleet config.** `steep run` reads `memory`
+- **Keep the manifest with the fleet config.** `confos run` reads `memory`
   from it (and boots the first `snp_variants[]` entry — there is no variant
   selector yet); your orchestration should similarly treat the manifest as
   the source of truth for how the image expects to be launched, matching

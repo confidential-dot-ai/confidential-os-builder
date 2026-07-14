@@ -7,7 +7,7 @@ pub mod tools;
 
 use std::path::PathBuf;
 
-/// Which confidential-VM platform(s) `steep build` should emit
+/// Which confidential-VM platform(s) `confos build` should emit
 /// measurements for. The artifact set (disk + UKI + IGVM) is the same
 /// across platforms; this just toggles which measurement passes run
 /// and which manifest fields get populated.
@@ -41,8 +41,8 @@ pub struct KernelArgs {
     pub output: PathBuf,
 
     /// Optional kernel config fragment, merged after required + hardening.
-    /// Omitted: steep builds only its hardened required + hardening baseline.
-    /// Lets a project enable extra kernel symbols without modifying steep.
+    /// Omitted: confos builds only its hardened required + hardening baseline.
+    /// Lets a project enable extra kernel symbols without modifying confos.
     #[arg(long, value_name = "PATH")]
     pub kernel_config_fragment: Option<PathBuf>,
 
@@ -59,7 +59,7 @@ pub struct KernelArgs {
 
 #[derive(clap::Args)]
 pub struct RunArgs {
-    /// Output directory from steep build
+    /// Output directory from confos build
     #[arg(default_value = "output/base")]
     pub dir: PathBuf,
 
@@ -68,11 +68,11 @@ pub struct RunArgs {
     pub port_forward: Vec<String>,
 
     /// Path to QEMU binary
-    #[arg(long, default_value = "qemu-system-x86_64", env = "STEEP_QEMU_BIN")]
+    #[arg(long, default_value = "qemu-system-x86_64", env = "CONFOS_QEMU_BIN")]
     pub qemu_bin: String,
 
     /// Path to OVMF firmware (overrides manifest; needed for --skip-igvm images on KVM)
-    #[arg(long, env = "STEEP_FIRMWARE")]
+    #[arg(long, env = "CONFOS_FIRMWARE")]
     pub firmware: Option<PathBuf>,
 
     /// Attach an ephemeral encrypted scratch disk of this size (e.g. "20G") as
@@ -121,7 +121,7 @@ pub struct BuildArgs {
     pub kernel_builder_package: Vec<String>,
 
     /// Optional kernel config fragment, merged after required + hardening
-    /// when building the custom kernel. Omitted: steep's hardened baseline.
+    /// when building the custom kernel. Omitted: confos's hardened baseline.
     #[arg(long, value_name = "PATH")]
     pub kernel_config_fragment: Option<PathBuf>,
 
@@ -143,18 +143,18 @@ pub struct BuildArgs {
     #[arg(long)]
     pub skip_igvm: bool,
 
-    /// Path to OVMF firmware binary used for SNP launch. Must be steep's
+    /// Path to OVMF firmware binary used for SNP launch. Must be confos's
     /// edk2 build that includes the IgvmHobArea region (region type 0x200),
     /// because IGVM construction injects the UKI/shim into that area. The
     /// upstream Ubuntu OVMF does NOT have this region and will fail
     /// IGVM build.
-    #[arg(long, env = "STEEP_FIRMWARE", default_value = "output/OVMF.fd")]
+    #[arg(long, env = "CONFOS_FIRMWARE", default_value = "output/OVMF.fd")]
     pub firmware: PathBuf,
 
     /// Path to OVMF firmware binary used for TDX measurement. Must be a
     /// build with TDVF code paths compiled in (TD HOB processing, TDCALL
     /// plumbing). Ubuntu's `ovmf` package binary at
-    /// `/usr/share/ovmf/OVMF.fd` works. Steep's IGVM-aware firmware does
+    /// `/usr/share/ovmf/OVMF.fd` works. confos's IGVM-aware firmware does
     /// NOT include TDVF and will hang silently when booted as a TDX guest.
     ///
     /// If --platform is `snp`, this firmware is ignored. If --platform is
@@ -162,7 +162,7 @@ pub struct BuildArgs {
     /// THIS firmware (not --firmware).
     #[arg(
         long = "tdx-firmware",
-        env = "STEEP_TDX_FIRMWARE",
+        env = "CONFOS_TDX_FIRMWARE",
         default_value = "/usr/share/ovmf/OVMF.fd"
     )]
     pub tdx_firmware: PathBuf,
@@ -174,8 +174,8 @@ pub struct BuildArgs {
     /// SMP counts to generate IGVM variants for. Each value produces one
     /// `guest-smp{N}.igvm` file alongside a manifest entry under
     /// `variants[]`. Defaults to the standard powers-of-two set so a
-    /// single `steep build` is enough to serve any common vCPU topology;
-    /// `steep igvm` is then only needed for unusual SMP values or repair.
+    /// single `confos build` is enough to serve any common vCPU topology;
+    /// `confos igvm` is then only needed for unusual SMP values or repair.
     #[arg(long, num_args = 1.., default_values_t = [2u32, 4, 8, 16])]
     pub smp: Vec<u32>,
 
@@ -193,7 +193,7 @@ pub struct BuildArgs {
 
 #[derive(clap::Args)]
 pub struct IgvmArgs {
-    /// Build output directory (from steep build)
+    /// Build output directory (from confos build)
     pub dir: PathBuf,
 
     /// SMP counts to generate IGVM files for (e.g. --smp 1 2 4 8)
@@ -201,20 +201,20 @@ pub struct IgvmArgs {
     pub smp: Vec<u32>,
 
     /// Path to OVMF firmware binary
-    #[arg(long, env = "STEEP_FIRMWARE")]
+    #[arg(long, env = "CONFOS_FIRMWARE")]
     pub firmware: PathBuf,
 }
 
 #[derive(clap::Args)]
 pub struct PushArgs {
-    /// Directory to push (output from `steep build`)
+    /// Directory to push (output from `confos build`)
     pub dir: PathBuf,
 
-    /// OCI registry (e.g. ghcr.io/confidential-dot-ai/steep)
+    /// OCI registry (e.g. ghcr.io/confidential-dot-ai/confidential-os-builder)
     #[arg(
         long,
-        env = "STEEP_OCI_REGISTRY",
-        default_value = "ghcr.io/confidential-dot-ai/steep"
+        env = "CONFOS_OCI_REGISTRY",
+        default_value = "ghcr.io/confidential-dot-ai/confidential-os-builder"
     )]
     pub registry: String,
 
@@ -232,7 +232,7 @@ pub struct PushArgs {
 
 #[derive(clap::Args)]
 pub struct PullArgs {
-    /// Image reference to pull (e.g. "ghcr.io/confidential-dot-ai/steep:base")
+    /// Image reference to pull (e.g. "ghcr.io/confidential-dot-ai/confidential-os-builder:base")
     pub image: String,
 
     /// Directory to pull into [default: output/<tag from IMAGE>]

@@ -1,6 +1,6 @@
 # Tutorial: Zero to Attested Image
 
-A guided first session with steep: build an image, boot it, put a real
+A guided first session with confos: build an image, boot it, put a real
 workload in it, and find the measurements a verifier would check. The
 [README](../README.md) is the reference for every flag; this is the
 narrative version.
@@ -11,31 +11,31 @@ A real Ubuntu Linux host (bare metal, a VM with nested virt, or a cloud
 instance) with `sudo`. Rootless dev containers won't work — mkosi's sandbox
 needs user-namespace capabilities they can't provide. You do **not** need
 SEV-SNP or TDX hardware for anything in this tutorial; building and
-measuring are entirely offline computations, and `steep run` falls back to
+measuring are entirely offline computations, and `confos run` falls back to
 plain KVM or emulation for booting.
 
 ```bash
-git clone https://github.com/confidential-dot-ai/steep.git
-cd steep
+git clone https://github.com/confidential-dot-ai/confidential-os-builder.git
+cd confidential-os-builder
 bin/setup        # installs mkosi v26, qemu-utils, swtpm, iasl, ovmf, rust, cargo-nextest
 sudo apt install qemu-system-x86   # the emulator itself — bin/setup does NOT install it
 ```
 
-`bin/setup` installs everything `steep build` needs. The extra
-`qemu-system-x86` package provides `qemu-system-x86_64`, which `steep run`
+`bin/setup` installs everything `confos build` needs. The extra
+`qemu-system-x86` package provides `qemu-system-x86_64`, which `confos run`
 uses to boot images from step 2 onward.
 
 ## 1. Build the base image
 
 ```bash
-bin/steep build
+bin/confos build
 ```
 
-`bin/steep` compiles steep itself with cargo, then runs it. The first build
+`bin/confos` compiles confos itself with cargo, then runs it. The first build
 does a lot of one-time work — budget 20–40 minutes:
 
 1. **Kernel** — downloads the pinned Linux source (`kernel/version`),
-   resolves steep's hardened config, and compiles it (~10 min, cached
+   resolves confos's hardened config, and compiles it (~10 min, cached
    afterwards in `output/kernel/`).
 2. **Base image** — mkosi assembles a minimal Ubuntu root filesystem.
 3. **Verity + UKI** — the rootfs becomes an erofs partition with a dm-verity
@@ -64,17 +64,17 @@ field and [VERIFYING.md](VERIFYING.md) for the comparison procedure.
 
 ## 2. Boot it — with a shell, for now
 
-A production steep image is deliberately inhospitable: no console login, no
+A production confos image is deliberately inhospitable: no console login, no
 SSH, nothing but what you baked in. For poking around, build a **dev**
 variant, which adds passwordless root autologin on the serial console and
 `console=ttyS0` boot output:
 
 ```bash
-bin/steep build devbox --profile dev --kernel-config-fragment kernel/dev.config
-bin/steep run output/devbox
+bin/confos build devbox --profile dev --kernel-config-fragment kernel/dev.config
+bin/confos run output/devbox
 ```
 
-`steep run` picks the best available backend automatically — SEV-SNP if the
+`confos run` picks the best available backend automatically — SEV-SNP if the
 host supports it, plain KVM if not, software emulation as a last resort —
 and drops you on the VM's serial console at a root prompt. Poke around:
 
@@ -97,8 +97,8 @@ server and serves a page. Cloud-init user-data gets baked into the measured
 rootfs — it is part of the image, not runtime configuration:
 
 ```bash
-bin/steep build web --cloud-init examples/caddy.yaml
-bin/steep run output/web --port-forward 8080:80
+bin/confos build web --cloud-init examples/caddy.yaml
+bin/confos run output/web --port-forward 8080:80
 ```
 
 From another terminal:
@@ -129,7 +129,7 @@ The writable layer is a 2G RAM tmpfs by default. For workloads that need
 room, attach an ephemeral encrypted scratch disk:
 
 ```bash
-bin/steep run output/web --scratch 20G
+bin/confos run output/web --scratch 20G
 ```
 
 The initrd encrypts it with a random key generated in-guest (held only in
@@ -140,8 +140,8 @@ ciphertext to the host and unrecoverable after shutdown.
 ## 5. Ship it
 
 ```bash
-bin/steep push output/web                              # pushes ghcr.io/confidential-dot-ai/steep:web via oras
-bin/steep pull ghcr.io/confidential-dot-ai/steep:web   # on another machine, pulls it into output/web
+bin/confos push output/web                              # pushes ghcr.io/confidential-dot-ai/confidential-os-builder:web via oras
+bin/confos pull ghcr.io/confidential-dot-ai/confidential-os-builder:web   # on another machine, pulls it into output/web
 ```
 
 Publish `manifest.json` through a channel your verifiers trust — it carries
@@ -151,7 +151,7 @@ the expected measurements they'll check attestation reports against.
 
 - [VERIFYING.md](VERIFYING.md) — attest a guest on real SNP/TDX hardware
 - [DEPLOYING.md](DEPLOYING.md) — production hosts, KubeVirt, scratch disks
-  outside `steep run`
+  outside `confos run`
 - [THREAT_MODEL.md](THREAT_MODEL.md) — what all this does and doesn't protect
 - [CONCEPTS.md](CONCEPTS.md) — ground-up explanations of UKI, dm-verity,
   IGVM, and the rest of the vocabulary

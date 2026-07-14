@@ -3,7 +3,7 @@ use crate::qemu::{self, QemuArgs, QemuTier};
 use crate::RunArgs;
 
 const ALLOWED_DISK_FORMATS: &[&str] = &["raw", "qcow2"];
-// `build.platform` values that `steep run` knows how to launch. Keep in
+// `build.platform` values that `confos run` knows how to launch. Keep in
 // sync with commands::build::run() — adding a new BuildPlatform variant
 // there without teaching the runner about its hardware tier produces a
 // misleading "unsupported" error.
@@ -20,7 +20,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     let manifest_path = args.dir.join("manifest.json");
     if !manifest_path.exists() {
         anyhow::bail!(
-            "manifest.json not found in {}. Run `steep build` first.",
+            "manifest.json not found in {}. Run `confos build` first.",
             args.dir.display()
         );
     }
@@ -51,8 +51,8 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     let firmware_path;
 
     // Default to the first variant (smallest SMP after sort, or the build-time
-    // default if `steep igvm` was never run). A future change can add a `--smp`
-    // selector to `steep run`; for now this matches v1 behaviour of "one IGVM
+    // default if `confos igvm` was never run). A future change can add a `--smp`
+    // selector to `confos run`; for now this matches v1 behaviour of "one IGVM
     // per output dir."
     let variant = manifest.snp_variants.first();
 

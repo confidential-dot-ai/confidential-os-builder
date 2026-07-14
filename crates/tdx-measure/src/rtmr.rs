@@ -78,10 +78,13 @@ pub fn compute_rtmr2_direct_kernel(cmdline: &str) -> Vec<u8> {
 /// fails closed on an unpinned image. The guest-side hook applies the same rule.
 pub fn canonical_image_digest(reference: &str) -> Result<String> {
     // The content id is the part after '@'; a tag-only ref has no '@'.
-    let digest = reference.split_once('@').map(|(_, d)| d).unwrap_or(reference);
-    let hex = digest.strip_prefix("sha256:").context(
-        "image must be pinned by digest (…@sha256:<hex>); a tag is not content-bound",
-    )?;
+    let digest = reference
+        .split_once('@')
+        .map(|(_, d)| d)
+        .unwrap_or(reference);
+    let hex = digest
+        .strip_prefix("sha256:")
+        .context("image must be pinned by digest (…@sha256:<hex>); a tag is not content-bound")?;
     if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         anyhow::bail!("sha256 image digest must be 64 hex chars, got {hex:?}");
     }
@@ -109,7 +112,7 @@ pub fn compute_rtmr3_workloads(canonical_digests: &[String]) -> Vec<u8> {
 ///
 /// **The real boot chain is `TDVF → systemd-boot → UKI`.** TDVF loads
 /// `\EFI\BOOT\BOOTX64.EFI` (the removable-media fallback path) as the
-/// first PE, which is systemd-boot on steep-built disks. systemd-boot
+/// first PE, which is systemd-boot on confos-built disks. systemd-boot
 /// then loads the UKI from `\EFI\Linux\<entry>.efi`. **Each PE LoadImage
 /// generates its own `EV_EFI_BOOT_SERVICES_APPLICATION` event extended
 /// into RTMR[1].** A prior version of this function modelled only the
@@ -152,7 +155,7 @@ pub fn compute_rtmr1_uki(
     // Steps 3-5 only fire when there's a disk image; without one, TDVF
     // wouldn't be loading anything off a disk in the first place and
     // the boot path would look totally different. The function's two
-    // call sites in the steep pipeline always pass `Some`.
+    // call sites in the confos pipeline always pass `Some`.
     if let Some(disk) = disk_image {
         // EV_EFI_GPT_EVENT
         rtmr1_log.push(compute_gpt_event_hash(disk)?);
@@ -514,8 +517,10 @@ mod tests {
 
     #[test]
     fn test_rtmr3_two_containers() {
-        let a = "sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028".to_string();
-        let b = "sha256:1e9991826cc99d614bf697d71a59d80ed5eb2969babba07d9707e6a0296026b4".to_string();
+        let a =
+            "sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028".to_string();
+        let b =
+            "sha256:1e9991826cc99d614bf697d71a59d80ed5eb2969babba07d9707e6a0296026b4".to_string();
         assert_eq!(
             hex::encode(compute_rtmr3_workloads(&[a, b])),
             "16c3b1c47922b6e03c25ceac00216c40962ffc4da71d170e5ea1b76acaff10b1d3dceeaf3e449be1b01d302caee046c1"

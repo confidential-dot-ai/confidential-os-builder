@@ -17,7 +17,7 @@ pub fn run(args: &PushArgs) -> anyhow::Result<()> {
     let disk_path = dir.join("disk.raw");
     if !disk_path.exists() {
         anyhow::bail!(
-            "disk.raw not found in {}. Run `steep build` first.",
+            "disk.raw not found in {}. Run `confos build` first.",
             dir.display()
         );
     }
@@ -71,7 +71,7 @@ fn push_default(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Resu
         "push".into(),
         image_ref.into(),
         "--artifact-type".into(),
-        "application/vnd.steep.image.v1".into(),
+        "application/vnd.confos.image.v1".into(),
     ];
     oras_args.extend(files.iter().cloned());
 
@@ -95,7 +95,7 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
     let tmp_root = std::env::temp_dir();
     fs_err::create_dir_all(&tmp_root)?;
     let tarball = tempfile::Builder::new()
-        .prefix("steep-cdi-")
+        .prefix("confos-cdi-")
         .suffix(".tar.gz")
         .tempfile_in(&tmp_root)?;
     let tarball_path: PathBuf = tarball.path().to_path_buf();
@@ -120,7 +120,7 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
     // is set (it only accepts standard OCI image manifests), so we push
     // a real image config blob and skip `--artifact-type`. Body matches
     // what containerd would produce for an empty rootfs.
-    let config_path = cwd.join("steep-cdi-config.json");
+    let config_path = cwd.join("confos-cdi-config.json");
     fs_err::write(
         &config_path,
         br#"{"architecture":"amd64","os":"linux","config":{},"rootfs":{"type":"layers","diff_ids":[]}}"#,
@@ -201,40 +201,50 @@ mod tests {
     #[test]
     fn image_ref_defaults_tag_to_directory_basename() {
         let r = image_ref(
-            "ghcr.io/confidential-dot-ai/steep",
+            "ghcr.io/confidential-dot-ai/confidential-os-builder",
             None,
             Path::new("output/base"),
         )
         .unwrap();
-        assert_eq!(r, "ghcr.io/confidential-dot-ai/steep:base");
+        assert_eq!(
+            r,
+            "ghcr.io/confidential-dot-ai/confidential-os-builder:base"
+        );
     }
 
     #[test]
     fn image_ref_uses_explicit_tag_over_directory_basename() {
         let r = image_ref(
-            "ghcr.io/confidential-dot-ai/steep",
+            "ghcr.io/confidential-dot-ai/confidential-os-builder",
             Some("v1"),
             Path::new("output/web"),
         )
         .unwrap();
-        assert_eq!(r, "ghcr.io/confidential-dot-ai/steep:v1");
+        assert_eq!(r, "ghcr.io/confidential-dot-ai/confidential-os-builder:v1");
     }
 
     #[test]
     fn image_ref_ignores_trailing_slash_on_directory() {
         let r = image_ref(
-            "ghcr.io/confidential-dot-ai/steep",
+            "ghcr.io/confidential-dot-ai/confidential-os-builder",
             None,
             Path::new("output/base/"),
         )
         .unwrap();
-        assert_eq!(r, "ghcr.io/confidential-dot-ai/steep:base");
+        assert_eq!(
+            r,
+            "ghcr.io/confidential-dot-ai/confidential-os-builder:base"
+        );
     }
 
     #[test]
     fn image_ref_errors_when_tag_underivable() {
-        let err =
-            image_ref("ghcr.io/confidential-dot-ai/steep", None, Path::new("..")).unwrap_err();
+        let err = image_ref(
+            "ghcr.io/confidential-dot-ai/confidential-os-builder",
+            None,
+            Path::new(".."),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("--tag"), "got: {err}");
     }
 

@@ -1,5 +1,5 @@
 /*
- * Trusted DSDT for steep confidential VMs.
+ * Trusted DSDT for confos confidential VMs.
  *
  * Shipped in the initrd at /kernel/firmware/acpi/dsdt.aml. The Linux
  * CONFIG_ACPI_TABLE_UPGRADE feature scans the initrd for that path early

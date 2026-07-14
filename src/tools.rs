@@ -114,7 +114,7 @@ pub fn sudo_mv(src: &Path, dst: &Path) -> Result<(), ToolError> {
     // machine where that username doesn't exist. Prefer SUDO_USER (when
     // the caller invoked us through sudo) so we hand ownership back to the
     // original user rather than root; fall back to USER for the common
-    // case where the user runs steep directly and steep sudo's internally;
+    // case where the user runs confos directly and confos sudo's internally;
     // and fall back to "root" if neither is set (file stays root-owned —
     // the operator can chown it after, no failure).
     let user = std::env::var("SUDO_USER")

@@ -1,6 +1,6 @@
 # tdx-measure
 
-> Part of [steep](https://github.com/confidential-dot-ai/steep). AGPL-3.0.
+> Part of [confos](https://github.com/confidential-dot-ai/confidential-os-builder). AGPL-3.0.
 
 Offline TDX measurement computation and attestation verification.
 
@@ -28,7 +28,7 @@ The library exposes five modules:
 
 The crate root exposes `measure_uki_topology_invariant()`, the
 high-level entry point that returns a `UkiMeasurement`
-(MRTD + RTMR[1] + RTMR[2]) — this is what `steep build` calls.
+(MRTD + RTMR[1] + RTMR[2]) — this is what `confos build` calls.
 
 The included `tdx-measure` CLI exposes `measure`, `verify`, `inspect`,
 and `extract-platform` subcommands. The CLI is gated behind the `cli`

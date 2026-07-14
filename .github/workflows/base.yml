@@ -26,7 +26,7 @@ jobs:
         uses: systemd/mkosi@v26
 
       - name: Install build deps (nspawn, TDVF firmware, iasl, cpio)
-        # Host deps for `steep build` — keep in lockstep with bin/setup.
+        # Host deps for `confos build` — keep in lockstep with bin/setup.
         run: |
           sudo apt-get update -y
           sudo apt-get install -y systemd-container ovmf cpio acpica-tools
@@ -44,7 +44,7 @@ jobs:
           key: ${{ runner.os }}-kernel-${{ hashFiles('mkosi/kernel-builder/{mkosi.conf,mkosi.tools.manifest}','kernel/*') }}
 
       - name: Build kernel
-        run: bin/steep kernel
+        run: bin/confos kernel
 
       - name: Cache base image tools
         uses: actions/cache@v5
@@ -53,7 +53,7 @@ jobs:
           key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf') }}
 
       - name: Build base image
-        run: bin/steep build
+        run: bin/confos build
 
       - name: Setup ORAS
         uses: oras-project/setup-oras@v1
@@ -75,5 +75,5 @@ jobs:
           echo ${{ secrets.GITHUB_TOKEN }} | oras login ghcr.io \
             -u ${{ github.actor }} --password-stdin
           oras push "${IMAGE}:base,base-${SHORT_SHA}" \
-            --artifact-type application/vnd.steep.base.v1 \
+            --artifact-type application/vnd.confos.image.v1 \
             ./*
