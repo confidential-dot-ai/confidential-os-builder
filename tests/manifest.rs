@@ -335,7 +335,8 @@ fn write_manifest_creates_valid_json() {
 
 #[test]
 fn read_manifest_nonexistent_file() {
-    let result = confos::manifest::read_manifest(std::path::Path::new("/nonexistent/manifest.json"));
+    let result =
+        confos::manifest::read_manifest(std::path::Path::new("/nonexistent/manifest.json"));
     assert!(result.is_err());
 }
 

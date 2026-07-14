@@ -201,7 +201,10 @@ fn cmd_rtmr3(digests: &[String], json: bool) -> Result<()> {
 
     if json {
         let mut result = serde_json::Map::new();
-        result.insert("rtmr3".into(), serde_json::Value::String(hex::encode(&rtmr3)));
+        result.insert(
+            "rtmr3".into(),
+            serde_json::Value::String(hex::encode(&rtmr3)),
+        );
         result.insert(
             "images".into(),
             serde_json::Value::Array(
@@ -235,8 +238,7 @@ fn cmd_measure_direct_kernel(
     firmware_path: Option<&Path>,
     json: bool,
 ) -> Result<()> {
-    let kernel_path =
-        kernel_path.context("--kernel is required for --boot-mode direct-kernel")?;
+    let kernel_path = kernel_path.context("--kernel is required for --boot-mode direct-kernel")?;
     let cmdline_path =
         cmdline_file.context("--cmdline-file is required for --boot-mode direct-kernel")?;
 
@@ -270,8 +272,14 @@ fn cmd_measure_direct_kernel(
         if let Some(ref m) = mrtd {
             result.insert("mrtd".into(), serde_json::Value::String(hex::encode(m)));
         }
-        result.insert("rtmr1".into(), serde_json::Value::String(hex::encode(&rtmr1)));
-        result.insert("rtmr2".into(), serde_json::Value::String(hex::encode(&rtmr2)));
+        result.insert(
+            "rtmr1".into(),
+            serde_json::Value::String(hex::encode(&rtmr1)),
+        );
+        result.insert(
+            "rtmr2".into(),
+            serde_json::Value::String(hex::encode(&rtmr2)),
+        );
         result.insert(
             "rtmr3".into(),
             serde_json::Value::String(hex::encode([0u8; 48])),
@@ -288,7 +296,11 @@ fn cmd_measure_direct_kernel(
         );
     } else {
         eprintln!("Boot model: direct-kernel (TDVF -kernel/-append)");
-        eprintln!("Kernel:  {} ({} bytes)", kernel_path.display(), kernel.len());
+        eprintln!(
+            "Kernel:  {} ({} bytes)",
+            kernel_path.display(),
+            kernel.len()
+        );
         eprintln!("Cmdline: {} chars\n", cmdline.len());
 
         println!("=== TDX Measurements (direct-kernel) ===\n");

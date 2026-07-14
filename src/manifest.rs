@@ -19,7 +19,7 @@ pub struct BuildManifest {
     pub inputs: ManifestInputs,
     pub outputs: ManifestOutputs,
     /// Per-SMP SNP IGVM variants. One entry per vCPU count built; populated
-    /// by `steep build` and extended/replaced in place by `steep igvm`.
+    /// by `confos build` and extended/replaced in place by `confos igvm`.
     /// Omitted from JSON when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub snp_variants: Vec<SnpVariant>,
@@ -74,7 +74,7 @@ pub struct TdxMeasurement {
     /// File entry for the TDX firmware binary the TDX measurements were
     /// computed against. Different from `inputs.firmware` (which records
     /// the SNP-side IGVM-aware firmware): TDX needs TDVF support that
-    /// steep's edk2 fork does not include, so a both-platform build
+    /// confos's edk2 fork does not include, so a both-platform build
     /// uses two distinct OVMF binaries. `Option` because older
     /// manifests written before the dual-firmware split land here as None.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -167,7 +167,7 @@ pub fn read_manifest(path: &Path) -> anyhow::Result<BuildManifest> {
     if let Some(v) = probe.get("version").and_then(|v| v.as_u64()) {
         if v != u64::from(MANIFEST_VERSION) {
             anyhow::bail!(
-                "manifest at {} is version {} (this build of steep speaks v{}). Rebuild with the current steep.",
+                "manifest at {} is version {} (this build of confos speaks v{}). Rebuild with the current confos.",
                 path.display(),
                 v,
                 MANIFEST_VERSION

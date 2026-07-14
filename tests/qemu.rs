@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use confos::qemu::{select_tier, QemuArgs, QemuTier};
+use std::path::PathBuf;
 
 #[test]
 fn test_qemu_args_basic() {

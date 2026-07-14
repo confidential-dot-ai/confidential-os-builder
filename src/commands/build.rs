@@ -34,7 +34,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     };
 
     // SNP firmware: required only when building SNP variants. Must be
-    // steep's edk2 build with IgvmHobArea — Ubuntu's stock OVMF does not
+    // confos's edk2 build with IgvmHobArea — Ubuntu's stock OVMF does not
     // have that region and IGVM construction fails on it.
     let snp_firmware = if platform.needs_snp() {
         let fw = args.firmware.clone();
@@ -51,14 +51,14 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // TDX firmware: required only when computing TDX measurements. Must
     // be an OVMF build with TDVF code paths (Ubuntu's `ovmf` package
-    // works). Steep's IGVM-aware firmware does NOT include TDVF — a TDX
+    // works). confos's IGVM-aware firmware does NOT include TDVF — a TDX
     // guest booted on it hangs silently in firmware. So we keep two
     // firmware binaries side by side, one per platform.
     let tdx_firmware = if platform.needs_tdx() {
         let fw = args.tdx_firmware.clone();
         if !fw.exists() {
             anyhow::bail!(
-                "TDX firmware not found: {} (--tdx-firmware). Install ubuntu's `ovmf` package (`apt install ovmf`) or pass --tdx-firmware/-Eenv STEEP_TDX_FIRMWARE.",
+                "TDX firmware not found: {} (--tdx-firmware). Install ubuntu's `ovmf` package (`apt install ovmf`) or pass --tdx-firmware/-Eenv CONFOS_TDX_FIRMWARE.",
                 fw.display()
             );
         }
@@ -144,7 +144,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // through below. Static profile content (mkosi.conf + mkosi.extra/) lives
     // in `mkosi/base/mkosi.profiles/<NAME>/`. Any host-side prep a profile
     // needs (e.g. pulling a binary from a registry into mkosi.local/) is the
-    // operator's responsibility — see `bin/steep-fetch-<NAME>` helpers and
+    // operator's responsibility — see `bin/confos-fetch-<NAME>` helpers and
     // `make build-<NAME>` targets that chain prep + build.
     for profile in &args.profiles {
         tracing::debug!("profile enabled: {profile}");
@@ -215,10 +215,10 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // mkosi v27 picks its OutputDirectory by checking for `mkosi.output/`
     // under the config dir: present → write artifacts there; absent → drop
-    // them next to `mkosi.conf`. Steep's downstream code (and the `image.efi`
+    // them next to `mkosi.conf`. confos's downstream code (and the `image.efi`
     // lookup below) assumes the `mkosi.output/` layout, so create it before
     // mkosi is invoked. Otherwise the build succeeds but the UKI / disk /
-    // roothash artifacts land at the wrong path and steep errors out with
+    // roothash artifacts land at the wrong path and confos errors out with
     // "UKI .efi not found in mkosi output."
     fs_err::create_dir_all(mkosi_dir.join("mkosi.output"))?;
 
@@ -288,7 +288,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Read firmware + UKI bytes once per platform; the file reads aren't
     // free on large OVMF builds. SNP and TDX use DIFFERENT firmware
-    // binaries (steep-edk2 with IgvmHobArea for SNP, Ubuntu/TDVF-capable
+    // binaries (confos-edk2 with IgvmHobArea for SNP, Ubuntu/TDVF-capable
     // for TDX) so we read each independently.
     let snp_fw_bytes_opt = match snp_firmware.as_ref() {
         Some(fw) => Some(fs_err::read(fw)?),
@@ -458,7 +458,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // build encodes as `tdx`; SNP-only stays `snp`. This lets a verifier
     // reading just `build.platform` know which entries to expect in
     // `snp_variants[]` / `tdx`. The historical `generic` value remains
-    // accepted by `steep run` for back-compat with non-confidential
+    // accepted by `confos run` for back-compat with non-confidential
     // KVM-only builds.
     let platform_tag = match platform {
         BuildPlatform::Snp => "snp".to_string(),
@@ -569,7 +569,7 @@ fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
     // Create minimal meta-data
     fs_err::write(
         seed_dir.join("meta-data"),
-        "instance-id: steep-sealed\nlocal-hostname: steep\n",
+        "instance-id: confos-sealed\nlocal-hostname: confos\n",
     )?;
 
     println!("Cloud-init: config measured in image, will run at boot");
@@ -629,9 +629,9 @@ fn human_size(path: &Path) -> anyhow::Result<String> {
     Ok(humansize::format_size(bytes, humansize::BINARY))
 }
 
-// Per-profile fetchers live in bin/steep-fetch-<NAME> shell scripts; the
+// Per-profile fetchers live in bin/confos-fetch-<NAME> shell scripts; the
 // `make build-<NAME>` Makefile targets chain fetch + build. Keeping this Rust
-// code unaware of registries and pinned digests means the steep CLI stays
+// code unaware of registries and pinned digests means the confos CLI stays
 // focused on the image-build pipeline.
 
 fn chrono_now() -> String {
@@ -872,7 +872,10 @@ fn zero_mtimes(root: &Path) -> anyhow::Result<()> {
 /// the kernel's initramfs unpacker never reads it.
 fn zero_gzip_mtime(path: &Path, offset: u64) -> anyhow::Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
-    let mut file = fs_err::OpenOptions::new().read(true).write(true).open(path)?;
+    let mut file = fs_err::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
     file.seek(SeekFrom::Start(offset))?;
     let mut header = [0u8; 4];
     file.read_exact(&mut header)?;
@@ -937,11 +940,8 @@ mod tests {
         assert_eq!(patched, expected);
         // the member must still decompress to the same payload
         let mut out = Vec::new();
-        std::io::Read::read_to_end(
-            &mut flate2::read::GzDecoder::new(&patched[off..]),
-            &mut out,
-        )
-        .unwrap();
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&patched[off..]), &mut out)
+            .unwrap();
         assert_eq!(out, b"initrd payload");
     }
 
@@ -1097,7 +1097,7 @@ mod tests {
     }
 
     // Shells out to GNU cpio/sort flags that BSD userland (macOS) rejects.
-    // steep build runs on Linux only (mkosi is Linux-only).
+    // confos build runs on Linux only (mkosi is Linux-only).
     #[cfg(target_os = "linux")]
     #[test]
     fn build_early_cpio_is_reproducible_across_mtime_and_enumeration_order() {
