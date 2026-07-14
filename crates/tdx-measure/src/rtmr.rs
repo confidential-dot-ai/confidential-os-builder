@@ -112,7 +112,7 @@ pub fn compute_rtmr3_workloads(canonical_digests: &[String]) -> Vec<u8> {
 ///
 /// **The real boot chain is `TDVF → systemd-boot → UKI`.** TDVF loads
 /// `\EFI\BOOT\BOOTX64.EFI` (the removable-media fallback path) as the
-/// first PE, which is systemd-boot on steep-built disks. systemd-boot
+/// first PE, which is systemd-boot on confos-built disks. systemd-boot
 /// then loads the UKI from `\EFI\Linux\<entry>.efi`. **Each PE LoadImage
 /// generates its own `EV_EFI_BOOT_SERVICES_APPLICATION` event extended
 /// into RTMR[1].** A prior version of this function modelled only the
@@ -155,7 +155,7 @@ pub fn compute_rtmr1_uki(
     // Steps 3-5 only fire when there's a disk image; without one, TDVF
     // wouldn't be loading anything off a disk in the first place and
     // the boot path would look totally different. The function's two
-    // call sites in the steep pipeline always pass `Some`.
+    // call sites in the confos pipeline always pass `Some`.
     if let Some(disk) = disk_image {
         // EV_EFI_GPT_EVENT
         rtmr1_log.push(compute_gpt_event_hash(disk)?);
