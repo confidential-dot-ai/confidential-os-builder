@@ -10,7 +10,7 @@
 #
 # Stages the binary into mkosi.local/mkosi.extra/usr/local/bin/ so mkosi
 # picks it up automatically when copying extra trees into the image.
-# mkosi.local is gitignored and is wiped between builds by the steep Rust
+# mkosi.local is gitignored and is wiped between builds by the confos Rust
 # driver (see MkosiLocalCleanup in src/commands/build.rs).
 #
 # Bumping the pinned IMAGE digest below changes the launch measurement of
