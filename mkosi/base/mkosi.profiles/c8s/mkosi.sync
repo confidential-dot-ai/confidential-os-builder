@@ -81,16 +81,17 @@ stage() {
 # --- 1. RKE2 release tarball --------------------------------------------
 
 VERSION_URL_SAFE="${RKE2_VERSION//+/%2B}"   # '+' must be %2B in release URLs
+CACHE_VER="${RKE2_VERSION//+/-}"            # '+' unsafe in cache filenames
 BASE_URL="https://github.com/rancher/rke2/releases/download/${VERSION_URL_SAFE}"
 
 fetch "${BASE_URL}/rke2.linux-amd64.tar.gz" \
-      "$CACHE_DIR/rke2-${RKE2_VERSION//+/-}.tar.gz" \
+      "$CACHE_DIR/rke2-${CACHE_VER}.tar.gz" \
       "$RKE2_TARBALL_SHA256"
 # Default install prefix. systemd's unit search path includes
 # /usr/local/lib/systemd/system, so the bundled rke2-server/agent units
 # need no relocation; the profile's 50-rke2.preset enables/disables them.
 mkdir -p "$STAGE_DIR/usr/local"
-tar -xzf "$CACHE_DIR/rke2-${RKE2_VERSION//+/-}.tar.gz" -C "$STAGE_DIR/usr/local"
+tar -xzf "$CACHE_DIR/rke2-${CACHE_VER}.tar.gz" -C "$STAGE_DIR/usr/local"
 chmod 0755 "$STAGE_DIR/usr/local/bin/rke2" \
            "$STAGE_DIR/usr/local/bin/rke2-killall.sh" \
            "$STAGE_DIR/usr/local/bin/rke2-uninstall.sh"
@@ -101,19 +102,29 @@ echo "$RKE2_VERSION" > "$STAGE_DIR/usr/local/share/rke2/.confos-baked-version"
 
 AIRGAP_DIR="$STAGE_DIR/var/lib/rancher/rke2/agent/images"
 fetch "${BASE_URL}/rke2-images-core.linux-amd64.tar.zst" \
-      "$CACHE_DIR/rke2-images-core-${RKE2_VERSION//+/-}.tar.zst" \
+      "$CACHE_DIR/rke2-images-core-${CACHE_VER}.tar.zst" \
       "$RKE2_IMAGES_CORE_SHA256"
 fetch "${BASE_URL}/rke2-images-cilium.linux-amd64.tar.zst" \
-      "$CACHE_DIR/rke2-images-cilium-${RKE2_VERSION//+/-}.tar.zst" \
+      "$CACHE_DIR/rke2-images-cilium-${CACHE_VER}.tar.zst" \
       "$RKE2_IMAGES_CILIUM_SHA256"
-stage "$CACHE_DIR/rke2-images-core-${RKE2_VERSION//+/-}.tar.zst" \
+stage "$CACHE_DIR/rke2-images-core-${CACHE_VER}.tar.zst" \
       "$AIRGAP_DIR/rke2-images-core.linux-amd64.tar.zst"
-stage "$CACHE_DIR/rke2-images-cilium-${RKE2_VERSION//+/-}.tar.zst" \
+stage "$CACHE_DIR/rke2-images-cilium-${CACHE_VER}.tar.zst" \
       "$AIRGAP_DIR/rke2-images-cilium.linux-amd64.tar.zst"
 
 # --- 3. nri-image-policy plugin binary ------------------------------------
 
 PLUGIN_TARGET="$STAGE_DIR/opt/nri/plugins/10-nri-image-policy"
+# Content-addressed by the image digest: a cached copy skips the GHCR pull
+# entirely (oras digest-verifies the blobs on the pull that populates it).
+PLUGIN_CACHE="$CACHE_DIR/nri-image-policy-${NRI_IMAGE##*@sha256:}"
+if [ -f "$PLUGIN_CACHE" ]; then
+    echo "c8s sync: cached nri-image-policy (${NRI_IMAGE##*@})"
+    install -D -m 0755 "$PLUGIN_CACHE" "$PLUGIN_TARGET"
+    echo "c8s sync: staged rke2 ${RKE2_VERSION} + airgap bundles + nri-image-policy"
+    exit 0
+fi
+
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 EXTRACT="$TMP/rootfs"
@@ -125,23 +136,32 @@ MANIFEST=$(oras manifest fetch "$NRI_IMAGE")
 # The pinned digest is an OCI image index (amd64 image + provenance
 # manifest); descend to the amd64 child. Plain single-arch manifests pass
 # through unchanged so the pin can point at either form.
-if [ "$(echo "$MANIFEST" | jq -r '.mediaType')" = "application/vnd.oci.image.index.v1+json" ]; then
+case "$(echo "$MANIFEST" | jq -r '.mediaType')" in
+*.index.v1+json | *.manifest.list.v2+json)
     CHILD=$(echo "$MANIFEST" | jq -r '[.manifests[] | select(.platform.architecture == "amd64")][0].digest')
     if [ -z "$CHILD" ] || [ "$CHILD" = "null" ]; then
         echo "c8s sync: no amd64 manifest in index $NRI_IMAGE" >&2
         exit 1
     fi
     MANIFEST=$(oras manifest fetch "${REPO}@${CHILD}")
-fi
+    ;;
+esac
 
 # Fetch every gzipped tar layer in manifest order and extract into a single
 # staging dir; later layers shadow earlier ones (same flattening containerd
-# performs). See attest/mkosi.sync for the full rationale.
-echo "$MANIFEST" | jq -r '.layers[] | select(.mediaType | test("tar.?gzip$")) | .digest' | \
-while read -r layer; do
+# performs). See attest/mkosi.sync for the full rationale. tar failures stay
+# loud but non-fatal (layers legitimately carry entries we can't recreate,
+# e.g. device nodes); the binary-presence check below is the gate.
+LAYERS=$(echo "$MANIFEST" | jq -r '.layers[] | select(.mediaType | test("tar.?gzip$")) | .digest')
+if [ -z "$LAYERS" ]; then
+    echo "c8s sync: no tar+gzip layers in $NRI_IMAGE (zstd or unexpected media types?)" >&2
+    echo "$MANIFEST" | jq -r '.layers[].mediaType' >&2
+    exit 1
+fi
+echo "$LAYERS" | while read -r layer; do
     echo "c8s sync: fetching layer $layer" >&2
     oras blob fetch --output "$TMP/layer.tar.gz" "${REPO}@${layer}"
-    tar -xzf "$TMP/layer.tar.gz" -C "$EXTRACT" 2>/dev/null || true
+    tar -xzf "$TMP/layer.tar.gz" -C "$EXTRACT" || true
     rm -f "$TMP/layer.tar.gz"
 done
 
@@ -151,6 +171,7 @@ if [ ! -f "$BIN" ]; then
     find "$EXTRACT" -name 'nri-image-policy*' -print >&2
     exit 1
 fi
+install -D -m 0644 "$BIN" "$PLUGIN_CACHE"
 install -D -m 0755 "$BIN" "$PLUGIN_TARGET"
 
 echo "c8s sync: staged rke2 ${RKE2_VERSION} + airgap bundles + nri-image-policy"

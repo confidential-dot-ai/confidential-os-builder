@@ -52,6 +52,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set image ref
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY@L}" >> "$GITHUB_ENV"
+
       - name: Free up disk space
         # kernel compile + NVIDIA userspace + rke2 airgap bundles + a ~6G
         # disk.raw are tight on the 14G hosted runner.
@@ -92,7 +95,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: output/kernel
-          key: ${{ runner.os }}-kernel-c8s-${{ hashFiles('mkosi/kernel-builder/mkosi.conf','kernel/c8s.config','kernel/required.config','kernel/hardening.config','kernel/confidential.config','kernel/config-x86_64.snapshot','kernel/version') }}
+          key: ${{ runner.os }}-kernel-c8s-${{ hashFiles('mkosi/kernel-builder/mkosi.conf','kernel/c8s.config','kernel/required.config','kernel/hardening.config','kernel/confidential.config','kernel/config-x86_64.snapshot','kernel/version','bin/build-c8s') }}
 
       # Distinct key prefix from base.yml: the c8s build's profiles add
       # ToolsTreePackages (oras, jq, curl), so the tree differs from the
@@ -118,6 +121,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-c8s-artifacts-
 
+      # bin/steep-fetch-gpu pulls ~500MB of NVIDIA artifacts into
+      # output/gpu/cache and sha-verifies on reuse — keyed on the script,
+      # which carries the version + sha pins.
+      - name: Cache NVIDIA driver downloads
+        uses: actions/cache@v5
+        with:
+          path: output/gpu/cache
+          key: ${{ runner.os }}-gpu-artifacts-${{ hashFiles('bin/steep-fetch-gpu') }}
+
       - name: Build c8s image
         env:
           C8S_STOCK_ATTEST: "1"   # see TODO(attest-gpu) in the header
@@ -140,14 +152,13 @@ jobs:
         id: changed
         run: |
           set -uo pipefail
-          REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
           new=$(cat output/c8s/roothash 2>/dev/null || echo new)
-          digest=$(oras manifest fetch "ghcr.io/${REPO}:c8s" 2>/dev/null \
+          digest=$(oras manifest fetch "${IMAGE}:c8s" 2>/dev/null \
                      | jq -r '.layers[] | select(.annotations["org.opencontainers.image.title"] == "roothash") | .digest' \
                      || true)
           pub=none
           if [ -n "$digest" ]; then
-            pub=$(oras blob fetch --output - "ghcr.io/${REPO}@${digest}" 2>/dev/null || echo none)
+            pub=$(oras blob fetch --output - "${IMAGE}@${digest}" 2>/dev/null || echo none)
           fi
           echo "new=$new published=$pub"
           if [ "$new" = "$pub" ]; then
@@ -162,8 +173,6 @@ jobs:
         run: |
           set -eux
           SHORT_SHA="${GITHUB_SHA::7}"
-          REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
-          IMAGE="ghcr.io/${REPO}"
 
           # confos push passes the tag list into the oras ref verbatim, so
           # one invocation covers both tags (one CDI tarball build, one
@@ -183,11 +192,10 @@ jobs:
 
       - name: Summary
         run: |
-          REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
           {
             echo "### c8s confidential node image"
-            echo "- artifact: \`ghcr.io/${REPO}:c8s\`"
-            echo "- CDI image: \`ghcr.io/${REPO}:c8s-cdi\`"
+            echo "- artifact: \`${IMAGE}:c8s\`"
+            echo "- CDI image: \`${IMAGE}:c8s-cdi\`"
             echo ""
             echo "Launch as a TDX CVM with a serial=confai-scratch disk (>=64G),"
             echo "expose 6443, then \`c8s install --distro rke2\`. See docs/C8S-IMAGE.md."

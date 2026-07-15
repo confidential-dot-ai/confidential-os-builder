@@ -58,8 +58,9 @@ policy:
   exempt_namespaces:
     # Cluster bootstrap must not be blocked: cilium, coredns, metrics.
     - kube-system
-    # Baked local-path-provisioner + its busybox helper pods (tag-pinned,
-    # not digest-pinned) run pre-CDS.
+    # Baked local-path-provisioner + its busybox helper pods (digest-pinned
+    # in the manifest, but pulled from Docker Hub — not in the airgap
+    # bundles) run pre-CDS.
     - local-path-storage
   label_rules: []
 

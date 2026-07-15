@@ -48,7 +48,11 @@ CI's mode until the attestation-rs `-gpu` image digest is pinned),
 
 Airgap bundles are baked deliberately: the measurement covers the exact
 bytes of every control-plane image (kube-* static pods, Cilium, CoreDNS)
-and first boot needs no registry egress. Cost: ~1.6G of disk.raw
+and first boot needs no registry egress for them. Exception: the baked
+local-path-storage manifest's images (local-path-provisioner + busybox
+helpers, digest-pinned) are not in the bundles and pull from Docker Hub —
+storage provisioning, not node readiness, is what needs that egress.
+Cost: ~1.6G of disk.raw
 (mkosi.repart's root ceiling was raised to 16G for this; `Minimize=best`
 keeps other images small).
 

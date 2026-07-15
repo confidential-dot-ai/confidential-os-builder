@@ -58,7 +58,7 @@ fi
 # the (possibly stale) udev cache.
 DEV=""
 for _ in $(seq 1 20); do
-    for d in /dev/sda /dev/sdb /dev/vdb /dev/vdc /dev/vdd /dev/vde; do
+    for d in /dev/sd? /dev/vd?; do
         [ -b "$d" ] || continue
         if [ "$(blkid -p -s LABEL -o value "$d" 2>/dev/null || true)" = "containerd" ]; then
             DEV="$d"; break

@@ -32,11 +32,11 @@ policy="$c8s_profile/mkosi.extra/etc/nri/conf.d/image-policy.yaml"
     echo "bin/lint: NRI_IMAGE pin or baked image-policy.yaml not found" >&2
     exit 1
 }
-if ! grep -qF "$nri_digest" "$policy"; then
-    echo "bin/lint: $policy does not self-allow the NRI_IMAGE digest $nri_digest pinned in mkosi.sync" >&2
-    exit 1
-fi
-if grep -F 'nri-image-policy@sha256:' "$policy" | grep -vqF "$nri_digest"; then
-    echo "bin/lint: $policy references an nri-image-policy digest other than the mkosi.sync pin $nri_digest" >&2
+# Compare the full digest set (always_allow map keys AND reference values)
+# against the pin, so a half-bumped entry can't hide behind the other half.
+policy_digests=$(grep -F 'nri-image-policy' "$policy" | grep -oE 'sha256:[a-f0-9]{64}' | sort -u)
+if [ "$policy_digests" != "$nri_digest" ]; then
+    echo "bin/lint: $policy must reference exactly the NRI_IMAGE digest pinned in mkosi.sync ($nri_digest); found:" >&2
+    echo "${policy_digests:-  <none>}" >&2
     exit 1
 fi
