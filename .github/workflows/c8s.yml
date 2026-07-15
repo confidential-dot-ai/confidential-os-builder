@@ -29,6 +29,8 @@ on:
       - "mkosi/base/mkosi.profiles/c8s/**"
       - "bin/build-c8s"
       - "bin/steep-fetch-gpu"
+      - "src/**"
+      - "Cargo.*"
       - ".github/workflows/c8s.yml"
 
 # Iterating pushes supersede each other; don't run two ~60-min builds.

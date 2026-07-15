@@ -30,12 +30,20 @@ pub fn run(
         ("KCONFIG_NOTIMESTAMP", "1"),
     ];
 
+    // The tools tree's glibc (2.42+, GCC 15) declares the C string functions
+    // const-correct, which the in-tree libbpf — built by resolve_btfids when
+    // DEBUG_INFO_BTF=y — still assigns to non-const pointers; its -Werror
+    // turns that into a build failure. HOSTCFLAGS reaches resolve_btfids'
+    // EXTRA_CFLAGS (per-warning -Wno-error beats the blanket -Werror);
+    // -g -O2 restores the defaults that setting EXTRA_CFLAGS replaces.
+    let hostcflags = "-g -O2 -Wno-error=discarded-qualifiers";
     let script = format!(
         "set -eux\n\
          cd /build\n\
-         make -j{parallelism} bzImage 2>&1 | tee -a /build.log\n\
+         make -j{parallelism} HOSTCFLAGS='{hostcflags}' bzImage 2>&1 | tee -a /build.log\n\
          test -f arch/x86/boot/bzImage\n",
         parallelism = parallelism,
+        hostcflags = hostcflags,
     );
 
     let nspawn_bin = crate::tools::require("systemd-nspawn")
