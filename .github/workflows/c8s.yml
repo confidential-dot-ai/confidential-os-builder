@@ -1,0 +1,173 @@
+# Build + publish the c8s confidential node image (TDX-measured, RKE2 +
+# nri-image-policy + NVIDIA GPU stack baked into the verity rootfs).
+# Output on GHCR: an oras artifact (disk.raw + uki.efi + manifest.json +
+# roothash + OVMF) and a CDI-compatible single-layer image for the KubeVirt
+# CDI importer.
+#
+# Manual / branch-scoped: the build is long (kernel compile + NVIDIA module
+# build + ~3.5G of pinned artifacts) and privileged (mkosi sandbox needs
+# sudo + userns) — not a per-push job.
+#
+# TODO(attest-gpu): C8S_STOCK_ATTEST=1 below composes the stock `attest`
+# profile (attestation-api on :8400, TDX+SNP quotes) instead of
+# `attest-gpu` (adds per-GPU SPDM evidence) because attest-gpu's
+# mkosi.sync digest is still the Stage-4 sentinel and the pre-stage path
+# (bin/steep-fetch-attest-gpu) needs a local attestation-rs build CI
+# doesn't have. Once the attestation-rs `-gpu` image is published and
+# pinned, drop the env var so the published image collects GPU evidence.
+name: Build c8s Node Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/publish-c8s-image
+    paths:
+      - "kernel/c8s.config"
+      - "kernel/gpu.config"
+      - "kernel/version"
+      - "mkosi/base/mkosi.profiles/c8s/**"
+      - "bin/build-c8s"
+      - "bin/steep-fetch-gpu"
+      - ".github/workflows/c8s.yml"
+
+# Iterating pushes supersede each other; don't run two ~60-min builds.
+concurrency:
+  group: c8s-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        # kernel compile + NVIDIA userspace + rke2 airgap bundles + a ~6G
+        # disk.raw are tight on the 14G hosted runner.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Setup mkosi
+        uses: systemd/mkosi@v26
+
+      - name: Install build deps (nspawn, TDVF firmware, iasl, cpio)
+        # Host deps for `confos build` — keep in lockstep with bin/setup.
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y systemd-container ovmf cpio acpica-tools
+
+      - name: Cache kernel tools
+        uses: actions/cache@v5
+        with:
+          path: mkosi/kernel-builder/mkosi.tools
+          key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/kernel-builder/mkosi.conf') }}
+
+      # Keyed on the c8s fragment (not kernel/* like base.yml) so the c8s
+      # kernel lineage doesn't thrash the base lineage's cache and vice
+      # versa. confos's own fingerprint still forces a recompile if anything
+      # stale slips through.
+      - name: Cache kernel
+        uses: actions/cache@v5
+        with:
+          path: output/kernel
+          key: ${{ runner.os }}-kernel-c8s-${{ hashFiles('mkosi/kernel-builder/{mkosi.conf,mkosi.tools.manifest}','kernel/c8s.config','kernel/config-x86_64.snapshot','kernel/version') }}
+
+      - name: Cache base image tools
+        uses: actions/cache@v5
+        with:
+          path: mkosi/base/mkosi.tools
+          key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf') }}
+
+      # The c8s profile's mkosi.sync downloads ~3.5G of pinned artifacts
+      # (rke2 tarball + airgap bundles) into mkosi.pkgcache/c8s and verifies
+      # by sha256 on reuse — cache it keyed on the pins.
+      - name: Cache c8s artifact downloads
+        uses: actions/cache@v5
+        with:
+          path: mkosi/base/mkosi.pkgcache/c8s
+          key: ${{ runner.os }}-c8s-artifacts-${{ hashFiles('mkosi/base/mkosi.profiles/c8s/mkosi.sync') }}
+
+      - name: Build c8s image
+        env:
+          C8S_STOCK_ATTEST: "1"   # see TODO(attest-gpu) in the header
+        run: bin/build-c8s
+
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Log in to GHCR
+        run: |
+          echo ${{ secrets.GITHUB_TOKEN }} | oras login ghcr.io \
+            -u ${{ github.actor }} --password-stdin
+
+      # Skip the multi-GB push when the rootfs is byte-identical to what's
+      # already published: the verity roothash is a content hash of the
+      # entire rootfs. Best-effort — any miss falls through to publishing.
+      - name: Setup crane
+        uses: imjasonh/setup-crane@v0.4
+      - name: Check whether the rootfs changed
+        id: changed
+        run: |
+          set -uo pipefail
+          REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          new=$(cat output/c8s/roothash 2>/dev/null || echo new)
+          pub=$(crane export "ghcr.io/${REPO}:c8s-cdi" - 2>/dev/null \
+                  | tar -xO roothash 2>/dev/null || echo none)
+          echo "new=$new published=$pub"
+          if [ "$new" = "$pub" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "rootfs roothash unchanged ($new) — skipping publish."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push to GHCR
+        if: steps.changed.outputs.skip != 'true'
+        run: |
+          set -eux
+          SHORT_SHA="${GITHUB_SHA::7}"
+          REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${REPO}"
+
+          # Artifact push (per-file layers): manifest.json + roothash +
+          # uki.efi + disk.raw + OVMF.tdx.fd (all already in output/c8s/),
+          # for verifiers and `confos pull`.
+          (cd output/c8s && oras push "${IMAGE}:c8s,c8s-${SHORT_SHA}" \
+            --artifact-type application/vnd.confos.image.v1 \
+            ./*)
+
+          # CDI-compatible single-layer image for the KubeVirt CDI registry
+          # importer (disk.raw under disk/). Tagged :c8s-cdi so the
+          # roothash change-check above has a stable reference.
+          for tag in c8s-cdi c8s-cdi-${SHORT_SHA}; do
+            bin/confos push output/c8s --cdi \
+              --registry "$IMAGE" \
+              --tag "$tag"
+          done
+
+      - name: Summary
+        run: |
+          REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "### c8s confidential node image"
+            echo "- artifact: \`ghcr.io/${REPO}:c8s\`"
+            echo "- CDI image: \`ghcr.io/${REPO}:c8s-cdi\`"
+            echo ""
+            echo "Launch as a TDX CVM with a serial=confai-scratch disk (>=64G),"
+            echo "expose 6443, then \`c8s install --distro rke2\`. See docs/C8S-IMAGE.md."
+          } >> "$GITHUB_STEP_SUMMARY"

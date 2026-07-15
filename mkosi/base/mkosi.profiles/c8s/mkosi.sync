@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# mkosi sync hook for the c8s profile.
+#
+# Same mechanism as the attest profile's sync (see its header for the oras +
+# layer-extract approach and the mkosi.local staging convention). Stages
+# three pinned artifact sets into mkosi.local/mkosi.extra/:
+#
+#   1. RKE2 release tarball      -> usr/local/  (rke2 binary, systemd units
+#      under usr/local/lib/systemd/system/ — on systemd's unit search path)
+#   2. RKE2 airgap image bundles -> var/lib/rancher/rke2/agent/images/
+#      Baked deliberately: the measurement then covers the exact bytes of
+#      every control-plane image (kube-* static pods, Cilium, CoreDNS) and
+#      the node boots with zero registry dependency. Costs ~1.6G of disk.raw.
+#   3. nri-image-policy plugin   -> opt/nri/plugins/10-nri-image-policy
+#
+# Bumping any pin below changes the launch measurement of any
+# `--profile c8s` build — intended behaviour.
+#
+# RKE2 pins: bump RKE2_VERSION and the three sha256s together, from
+# sha256sum-amd64.txt at
+#   https://github.com/rancher/rke2/releases/tag/<RKE2_VERSION>
+# After a bump, re-verify on first boot that the rendered containerd
+# config.toml has exactly ONE `imports` line — see the baked
+# config-v3.toml.tmpl in this profile's mkosi.extra for why.
+#
+# NRI_IMAGE pin: must equal the digest the c8s chart deploys
+# (values.yaml nriImagePolicy.image.digest / the crane-resolved digest of
+# the release tag), so the chart installer's `cmp` of the baked binary
+# no-ops instead of rewriting it and restarting rke2-server.
+#
+# Downloads are cached under mkosi.pkgcache/c8s/ — that dir survives across
+# builds; mkosi.local does NOT (the confos Rust driver wipes it on build
+# exit, see MkosiLocalCleanup in src/commands/build.rs).
+
+set -euo pipefail
+
+STAGE_DIR="$SRCDIR/mkosi.local/mkosi.extra"
+CACHE_DIR="$SRCDIR/mkosi.pkgcache/c8s"
+mkdir -p "$STAGE_DIR" "$CACHE_DIR" "${TMPDIR:=/tmp}"
+
+RKE2_VERSION="v1.34.5+rke2r1"
+RKE2_TARBALL_SHA256="c156a562573c1e3a5c57e816caac5237c451473b0417f903491dc0d810fbae00"
+RKE2_IMAGES_CORE_SHA256="0916003d2cb70501fffd58f278a8b24a1f2c991a9b5d9013b4ba7e8aef92e577"
+RKE2_IMAGES_CILIUM_SHA256="1ab41422cc16f5d030b8f62889133dff5d9dce985fbf13360c16049340ede6c1"
+
+NRI_IMAGE="ghcr.io/confidential-dot-ai/nri-image-policy@sha256:56a831e76448a25e61842d71f72e27e1b29af71ee1f5c113db2cb396c552f181"
+
+# Download <url> to <dest>, verifying its sha256. Skip if dest exists and
+# already matches (this is what makes the pkgcache a cache).
+fetch() {
+    local url="$1" dest="$2" expected="$3" actual
+    if [ -f "$dest" ]; then
+        actual="$(sha256sum "$dest" | awk '{print $1}')"
+        if [ "$actual" = "$expected" ]; then
+            echo "c8s sync: cached ${dest##*/}"
+            return
+        fi
+        echo "c8s sync: stale (sha mismatch), re-downloading ${dest##*/}"
+        rm -f "$dest"
+    fi
+    echo "c8s sync: downloading $url"
+    curl -fL --retry 3 --retry-delay 5 --output "$dest" "$url"
+    actual="$(sha256sum "$dest" | awk '{print $1}')"
+    if [ "$actual" != "$expected" ]; then
+        echo "c8s sync: FATAL sha256 mismatch for ${dest##*/}" >&2
+        echo "  expected: $expected" >&2
+        echo "  actual:   $actual" >&2
+        exit 1
+    fi
+}
+
+# Place a cached artifact into the stage tree. Hardlink when possible (same
+# filesystem — mkosi only reads extra trees), copy otherwise.
+stage() {
+    local src="$1" dest="$2"
+    mkdir -p "$(dirname "$dest")"
+    rm -f "$dest"
+    ln "$src" "$dest" 2>/dev/null || cp "$src" "$dest"
+}
+
+# --- 1. RKE2 release tarball --------------------------------------------
+
+VERSION_URL_SAFE="${RKE2_VERSION//+/%2B}"   # '+' must be %2B in release URLs
+BASE_URL="https://github.com/rancher/rke2/releases/download/${VERSION_URL_SAFE}"
+
+if [ -x "$STAGE_DIR/usr/local/bin/rke2" ]; then
+    echo "c8s sync: rke2 already staged — skipping extract"
+else
+    fetch "${BASE_URL}/rke2.linux-amd64.tar.gz" \
+          "$CACHE_DIR/rke2-${RKE2_VERSION//+/-}.tar.gz" \
+          "$RKE2_TARBALL_SHA256"
+    # Default install prefix. systemd's unit search path includes
+    # /usr/local/lib/systemd/system, so the bundled rke2-server/agent units
+    # need no relocation; the profile's 50-rke2.preset enables/disables them.
+    mkdir -p "$STAGE_DIR/usr/local"
+    tar -xzf "$CACHE_DIR/rke2-${RKE2_VERSION//+/-}.tar.gz" -C "$STAGE_DIR/usr/local"
+    chmod 0755 "$STAGE_DIR/usr/local/bin/rke2" \
+               "$STAGE_DIR/usr/local/bin/rke2-killall.sh" \
+               "$STAGE_DIR/usr/local/bin/rke2-uninstall.sh"
+    # Marker for inspecting a built image.
+    echo "$RKE2_VERSION" > "$STAGE_DIR/usr/local/share/rke2/.confos-baked-version"
+fi
+
+# --- 2. Airgap image bundles (core + cilium) -----------------------------
+
+AIRGAP_DIR="$STAGE_DIR/var/lib/rancher/rke2/agent/images"
+fetch "${BASE_URL}/rke2-images-core.linux-amd64.tar.zst" \
+      "$CACHE_DIR/rke2-images-core-${RKE2_VERSION//+/-}.tar.zst" \
+      "$RKE2_IMAGES_CORE_SHA256"
+fetch "${BASE_URL}/rke2-images-cilium.linux-amd64.tar.zst" \
+      "$CACHE_DIR/rke2-images-cilium-${RKE2_VERSION//+/-}.tar.zst" \
+      "$RKE2_IMAGES_CILIUM_SHA256"
+stage "$CACHE_DIR/rke2-images-core-${RKE2_VERSION//+/-}.tar.zst" \
+      "$AIRGAP_DIR/rke2-images-core.linux-amd64.tar.zst"
+stage "$CACHE_DIR/rke2-images-cilium-${RKE2_VERSION//+/-}.tar.zst" \
+      "$AIRGAP_DIR/rke2-images-cilium.linux-amd64.tar.zst"
+
+# --- 3. nri-image-policy plugin binary ------------------------------------
+
+PLUGIN_TARGET="$STAGE_DIR/opt/nri/plugins/10-nri-image-policy"
+if [ -x "$PLUGIN_TARGET" ]; then
+    echo "c8s sync: nri-image-policy already staged — skipping pull"
+    exit 0
+fi
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+EXTRACT="$TMP/rootfs"
+mkdir -p "$EXTRACT"
+
+REPO="${NRI_IMAGE%@*}"
+MANIFEST=$(oras manifest fetch "$NRI_IMAGE")
+
+# The pinned digest is an OCI image index (amd64 image + provenance
+# manifest); descend to the amd64 child. Plain single-arch manifests pass
+# through unchanged so the pin can point at either form.
+if [ "$(echo "$MANIFEST" | jq -r '.mediaType')" = "application/vnd.oci.image.index.v1+json" ]; then
+    CHILD=$(echo "$MANIFEST" | jq -r '[.manifests[] | select(.platform.architecture == "amd64")][0].digest')
+    if [ -z "$CHILD" ] || [ "$CHILD" = "null" ]; then
+        echo "c8s sync: no amd64 manifest in index $NRI_IMAGE" >&2
+        exit 1
+    fi
+    MANIFEST=$(oras manifest fetch "${REPO}@${CHILD}")
+fi
+
+# Fetch every gzipped tar layer in manifest order and extract into a single
+# staging dir; later layers shadow earlier ones (same flattening containerd
+# performs). See attest/mkosi.sync for the full rationale.
+echo "$MANIFEST" | jq -r '.layers[] | select(.mediaType | test("tar.?gzip$")) | .digest' | \
+while read -r layer; do
+    echo "c8s sync: fetching layer $layer" >&2
+    oras blob fetch --output "$TMP/layer.tar.gz" "${REPO}@${layer}"
+    tar -xzf "$TMP/layer.tar.gz" -C "$EXTRACT" 2>/dev/null || true
+    rm -f "$TMP/layer.tar.gz"
+done
+
+BIN="$EXTRACT/usr/local/bin/nri-image-policy"
+if [ ! -f "$BIN" ]; then
+    echo "c8s sync: nri-image-policy binary not found in image" >&2
+    find "$EXTRACT" -name 'nri-image-policy*' -print >&2
+    exit 1
+fi
+install -D -m 0755 "$BIN" "$PLUGIN_TARGET"
+
+echo "c8s sync: staged rke2 ${RKE2_VERSION} + airgap bundles + nri-image-policy"

@@ -1,0 +1,31 @@
+# RKE2 server config — single-node cluster, Cilium CNI.
+#
+# Baked into the verity root so it's in place before rke2-server.service
+# starts at boot. Per-host overrides (cluster join token, alternate
+# encryption key, registries auth) belong in /etc/rancher/rke2/config.yaml.d/
+# at runtime — rke2 merges drop-ins from that dir on top of this file.
+
+# CNI: Cilium. RKE2 deploys it via its bundled helm chart; values overrides
+# live at var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml
+# (HelmChartConfig CRD that the rke2 supervisor reads on startup).
+#
+# `disable-kube-proxy: true` removes the in-tree kube-proxy DaemonSet so
+# Cilium can handle service-IP routing in eBPF (kubeProxyReplacement).
+# Two benefits over keeping kube-proxy:
+#   1. Less reliance on the nftables NAT symbol set (kernel/c8s.config has
+#      it, but the eBPF path doesn't depend on it).
+#   2. One CNI does all the work — no kube-proxy ↔ Cilium ordering races,
+#      no double-NAT, no nftables-vs-iptables backend mismatch.
+cni: cilium
+disable-kube-proxy: true
+
+profile: cis
+pod-security-admission-config-file: /etc/rancher/rke2/psa-config.yaml
+kubelet-arg:
+  - max-pods=200
+kube-apiserver-arg:
+  - audit-log-path=/var/log/kube-audit/audit.log
+  - audit-log-maxage=30
+  - audit-log-maxbackup=10
+  - audit-log-maxsize=100
+  - audit-policy-file=/etc/rancher/rke2/audit-policy.yaml

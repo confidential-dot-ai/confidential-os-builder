@@ -4,3 +4,19 @@ set -x
 
 cargo fmt --all
 cargo clippy --all-targets "$@" -- -D warnings
+set +x
+
+# kernel/c8s.config must be a superset of kernel/gpu.config: only one
+# --kernel-config-fragment is accepted per build, so the c8s fragment
+# duplicates the gpu lines verbatim. Catch drift when gpu.config changes.
+missing=0
+while IFS= read -r line; do
+    if ! grep -qFx "$line" kernel/c8s.config; then
+        echo "bin/lint: kernel/c8s.config is missing gpu.config line: $line" >&2
+        missing=1
+    fi
+done < <(grep -E '^CONFIG_|^# CONFIG_.* is not set$' kernel/gpu.config)
+if [ "$missing" != 0 ]; then
+    echo "bin/lint: kernel/c8s.config must contain every effective line of kernel/gpu.config" >&2
+    exit 1
+fi
