@@ -40,9 +40,10 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 ///   make mod2yesconfig
 ///   make olddefconfig
 ///
-/// then verifies every `CONFIG_X=y` requested by the merged fragments is
-/// present in the resolved `.config`, failing the build if `olddefconfig`
-/// silently dropped any (unmet Kconfig dependency or removed symbol).
+/// then verifies every `CONFIG_X=y` requested by the merged fragments (after
+/// last-fragment-wins overrides) is present in the resolved `.config`,
+/// failing the build if `olddefconfig` silently dropped any (unmet Kconfig
+/// dependency or removed symbol).
 ///
 /// Merge order is important: `confidential.config` deliberately re-enables
 /// options the `hardening.config` fragment turned off (e.g.
@@ -116,7 +117,7 @@ pub fn run_configure_phase(
     verify_fragment_options(&fragments, &kernel_dir_abs.join(".config"))
 }
 
-/// Fail if any `CONFIG_X=y` requested by a fragment is absent from the
+/// Fail if any `CONFIG_X=y` requested by the fragments is absent from the
 /// resolved `.config`. `olddefconfig` drops an option whose Kconfig
 /// dependency is unmet (or whose symbol no longer exists) without any error
 /// — the miss otherwise surfaces only as runtime misbehavior, long after the
@@ -124,18 +125,43 @@ pub fn run_configure_phase(
 /// NETFILTER_ADVANCED was unset). (`=m` collapses to `=y` via mod2yesconfig
 /// before olddefconfig, so checking `=y` is sufficient for this module-less
 /// build.)
+///
+/// Fragments merge with last-wins semantics (see [`run_configure_phase`]),
+/// so only each symbol's final requested state is checked: a later fragment
+/// that sets `# CONFIG_X is not set` retracts an earlier `CONFIG_X=y`
+/// request (e.g. c8s.config disables hardening.config's RANDSTRUCT_FULL,
+/// which DEBUG_INFO_BTF is incompatible with).
 fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     let config = fs_err::read_to_string(resolved)?;
     let enabled: std::collections::HashSet<&str> = config.lines().collect();
-    let mut missing = Vec::new();
+    // symbol -> Some((requesting fragment, `CONFIG_X=y` line)) for a live
+    // `=y` request, None once a later fragment sets any other value.
+    let mut requested: std::collections::BTreeMap<String, Option<(String, String)>> =
+        Default::default();
     for frag in fragments {
         let name = frag.file_name().unwrap_or_default().to_string_lossy();
         for line in fs_err::read_to_string(frag)?.lines() {
-            if line.starts_with("CONFIG_") && line.ends_with("=y") && !enabled.contains(line) {
-                missing.push(format!("  - {}: {}", name, line.trim_end_matches("=y")));
+            if let Some((symbol, _)) = line.split_once('=').filter(|_| line.starts_with("CONFIG_"))
+            {
+                let request = line
+                    .ends_with("=y")
+                    .then(|| (name.to_string(), line.to_string()));
+                requested.insert(symbol.to_string(), request);
+            } else if let Some(symbol) = line
+                .strip_prefix("# ")
+                .and_then(|r| r.strip_suffix(" is not set"))
+                .filter(|s| s.starts_with("CONFIG_"))
+            {
+                requested.insert(symbol.to_string(), None);
             }
         }
     }
+    let missing: Vec<String> = requested
+        .into_values()
+        .flatten()
+        .filter(|(_, line)| !enabled.contains(line.as_str()))
+        .map(|(name, line)| format!("  - {}: {}", name, line.trim_end_matches("=y")))
+        .collect();
     if missing.is_empty() {
         Ok(())
     } else {
@@ -242,6 +268,27 @@ mod tests {
         let frag = write(&d, "frag.config", "# CONFIG_A is not set\n# CONFIG_B=y\n");
         let resolved = write(&d, "resolved", "CONFIG_C=y\n");
         verify_fragment_options(&[frag.as_path()], &resolved).unwrap();
+    }
+
+    #[test]
+    fn verify_fragment_options_honors_later_fragment_disabling_earlier_request() {
+        let d = TempDir::new().unwrap();
+        let hardening = write(&d, "hardening.config", "CONFIG_A=y\nCONFIG_B=y\n");
+        let extra = write(&d, "extra.config", "# CONFIG_A is not set\n");
+        let resolved = write(&d, "resolved", "CONFIG_B=y\n");
+        verify_fragment_options(&[hardening.as_path(), extra.as_path()], &resolved).unwrap();
+    }
+
+    #[test]
+    fn verify_fragment_options_attributes_reenabled_symbol_to_last_fragment() {
+        let d = TempDir::new().unwrap();
+        let hardening = write(&d, "hardening.config", "# CONFIG_A is not set\n");
+        let extra = write(&d, "extra.config", "CONFIG_A=y\n");
+        let resolved = write(&d, "resolved", "CONFIG_B=y\n");
+        let err = verify_fragment_options(&[hardening.as_path(), extra.as_path()], &resolved)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("extra.config: CONFIG_A"));
     }
 
     #[test]

@@ -65,7 +65,12 @@ modprobe at runtime because `nvidia-modules-latch.service` sets
 `no-modprobe.conf` drop-in silences rke2's modprobe attempts).
 
 `CONFIG_DEBUG_INFO_BTF` requires pahole in the kernel-builder tools tree —
-hence `--kernel-builder-package dwarves,python3,pkg-config,zlib1g-dev`.
+hence `--kernel-builder-package dwarves,python3,pkg-config,zlib1g-dev` —
+and is Kconfig-incompatible with struct-layout randomization
+(`depends on !GCC_PLUGIN_RANDSTRUCT`), so the fragment overrides
+`hardening.config`'s `RANDSTRUCT_FULL` to `RANDSTRUCT_NONE`. The c8s kernel
+trades struct-layout randomization for BTF, the same trade every
+BTF-shipping distro kernel makes; the base/gpu images keep RANDSTRUCT.
 
 ## Launch requirements (hard, unlike the gpu image)
 
