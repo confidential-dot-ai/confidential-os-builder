@@ -2,7 +2,7 @@
 name = "confos"
 version = "0.2.0"
 edition = "2021"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 description = "Confidential VM image builder for AMD SEV-SNP and Intel TDX"
 repository = "https://github.com/confidential-dot-ai/confidential-os-builder"
 

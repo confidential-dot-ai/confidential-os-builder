@@ -3,7 +3,7 @@ name = "tdx-measure"
 version = "0.1.0"
 edition = "2021"
 description = "Offline TDX measurement computation and attestation verification"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 repository = "https://github.com/confidential-dot-ai/confidential-os-builder"
 
 [lib]
