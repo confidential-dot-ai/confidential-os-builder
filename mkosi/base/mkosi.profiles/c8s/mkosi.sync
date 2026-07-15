@@ -165,10 +165,22 @@ echo "$LAYERS" | while read -r layer; do
     rm -f "$TMP/layer.tar.gz"
 done
 
+# In the image /usr/local/bin/nri-image-policy is a symlink to the
+# multi-command c8s binary (argv[0] dispatch handles the 10- prefix, and
+# the chart installs the same content — byte-identity holds). Resolve the
+# link inside the extracted tree; absolute targets must not escape to the
+# sandbox rootfs.
 BIN="$EXTRACT/usr/local/bin/nri-image-policy"
+if [ -L "$BIN" ]; then
+    TARGET=$(readlink "$BIN")
+    case "$TARGET" in
+        /*) BIN="$EXTRACT$TARGET" ;;
+        *)  BIN="$(dirname "$BIN")/$TARGET" ;;
+    esac
+fi
 if [ ! -f "$BIN" ]; then
     echo "c8s sync: nri-image-policy binary not found in image" >&2
-    find "$EXTRACT" -name 'nri-image-policy*' -print >&2
+    find "$EXTRACT" -name 'nri-image-policy*' -o -name 'c8s' >&2
     exit 1
 fi
 install -D -m 0644 "$BIN" "$PLUGIN_CACHE"
