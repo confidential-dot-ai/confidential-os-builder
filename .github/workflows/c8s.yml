@@ -23,10 +23,12 @@ on:
     branches:
       - ci/publish-c8s-image
     paths:
-      - "kernel/c8s.config"
-      - "kernel/gpu.config"
+      - "kernel/*.config"
+      - "kernel/config-x86_64.snapshot"
       - "kernel/version"
-      - "mkosi/base/mkosi.profiles/c8s/**"
+      - "mkosi/base/**"
+      - "mkosi/initrd/**"
+      - "mkosi/kernel-builder/**"
       - "bin/build-c8s"
       - "bin/steep-fetch-gpu"
       - "src/**"

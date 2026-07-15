@@ -141,11 +141,16 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     for frag in fragments {
         let name = frag.file_name().unwrap_or_default().to_string_lossy();
         for line in fs_err::read_to_string(frag)?.lines() {
-            if let Some((symbol, _)) = line.split_once('=').filter(|_| line.starts_with("CONFIG_"))
+            // Match on the first whitespace-delimited token so a trailing
+            // comment can't smuggle a request past verification.
+            let token = line.split_whitespace().next().unwrap_or("");
+            if let Some((symbol, _)) = token
+                .split_once('=')
+                .filter(|_| token.starts_with("CONFIG_"))
             {
-                let request = line
+                let request = token
                     .ends_with("=y")
-                    .then(|| (name.to_string(), line.to_string()));
+                    .then(|| (name.to_string(), token.to_string()));
                 requested.insert(symbol.to_string(), request);
             } else if let Some(symbol) = line
                 .strip_prefix("# ")
