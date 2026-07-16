@@ -43,7 +43,25 @@ RKE2_TARBALL_SHA256="c156a562573c1e3a5c57e816caac5237c451473b0417f903491dc0d810f
 RKE2_IMAGES_CORE_SHA256="0916003d2cb70501fffd58f278a8b24a1f2c991a9b5d9013b4ba7e8aef92e577"
 RKE2_IMAGES_CILIUM_SHA256="1ab41422cc16f5d030b8f62889133dff5d9dce985fbf13360c16049340ede6c1"
 
-NRI_IMAGE="ghcr.io/confidential-dot-ai/nri-image-policy@sha256:56a831e76448a25e61842d71f72e27e1b29af71ee1f5c113db2cb396c552f181"
+# The c8s binary is pulled from the nri-image-policy image (same multi-command
+# binary). Default is the digest the c8s chart deploys (keep in lockstep with
+# values.yaml nriImagePolicy.image.digest — see the NRI_IMAGE note above and
+# bin/lint's check). To bake a specific c8s COMMIT instead — e.g. to test an
+# unmerged cred-release build end-to-end — set C8S_REF to its short SHA; the
+# per-commit `:<short-sha>` tag c8s's docker.yml publishes is resolved to a
+# digest here (mirrors kata-guest-base/scripts/fetch.sh). The tag must exist:
+# it's published on pushes to main, or on demand via c8s docker.yml
+# workflow_dispatch for a feature branch.
+NRI_REPO="ghcr.io/confidential-dot-ai/nri-image-policy"
+NRI_IMAGE="${NRI_REPO}@sha256:56a831e76448a25e61842d71f72e27e1b29af71ee1f5c113db2cb396c552f181"
+if [ -n "${C8S_REF:-}" ]; then
+    echo "c8s sync: resolving nri-image-policy at c8s ref ${C8S_REF}"
+    NRI_DIGEST=$(oras manifest fetch --descriptor "${NRI_REPO}:${C8S_REF}" 2>/dev/null | jq -r '.digest')
+    case "$NRI_DIGEST" in
+        sha256:*) NRI_IMAGE="${NRI_REPO}@${NRI_DIGEST}"; echo "c8s sync: C8S_REF ${C8S_REF} -> ${NRI_DIGEST}" ;;
+        *) echo "c8s sync: FATAL cannot resolve ${NRI_REPO}:${C8S_REF} (is the per-commit image published? run c8s docker.yml workflow_dispatch for the branch)" >&2; exit 1 ;;
+    esac
+fi
 
 # Download <url> to <dest>, verifying its sha256. Skip if dest exists and
 # already matches (this is what makes the pkgcache a cache).
