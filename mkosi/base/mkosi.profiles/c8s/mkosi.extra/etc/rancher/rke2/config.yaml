@@ -19,6 +19,15 @@
 cni: cilium
 disable-kube-proxy: true
 
+# Add a stable hostname SAN to the apiserver serving cert. The operator
+# reaches the guest at a per-launch KubeVirt-assigned IP that RKE2 can't know
+# to include as a SAN, so the released kubeconfig can't verify against the IP.
+# Instead the kubeconfig dials the IP but sets tls-server-name=c8s-cvm (this
+# SAN), so verification passes without --insecure-skip-tls-verify. See
+# `c8s get-kubeconfig` (it defaults tls-server-name to this).
+tls-san:
+  - c8s-cvm
+
 profile: cis
 pod-security-admission-config-file: /etc/rancher/rke2/psa-config.yaml
 kubelet-arg:
