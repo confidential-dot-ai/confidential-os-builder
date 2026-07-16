@@ -115,13 +115,19 @@ stage "$CACHE_DIR/rke2-images-cilium-${CACHE_VER}.tar.zst" \
 # --- 3. nri-image-policy plugin binary ------------------------------------
 
 PLUGIN_TARGET="$STAGE_DIR/opt/nri/plugins/10-nri-image-policy"
+# The same multi-command binary, also staged under its own name so the
+# cred-release systemd unit can invoke `c8s cred-release` (argv[0]="c8s"
+# falls through to normal cobra dispatch — only get-cert/nri-image-policy/
+# ratls-mesh are argv-aliased).
+C8S_TARGET="$STAGE_DIR/usr/local/bin/c8s"
 # Content-addressed by the image digest: a cached copy skips the GHCR pull
 # entirely (oras digest-verifies the blobs on the pull that populates it).
 PLUGIN_CACHE="$CACHE_DIR/nri-image-policy-${NRI_IMAGE##*@sha256:}"
 if [ -f "$PLUGIN_CACHE" ]; then
     echo "c8s sync: cached nri-image-policy (${NRI_IMAGE##*@})"
     install -D -m 0755 "$PLUGIN_CACHE" "$PLUGIN_TARGET"
-    echo "c8s sync: staged rke2 ${RKE2_VERSION} + airgap bundles + nri-image-policy"
+    install -D -m 0755 "$PLUGIN_CACHE" "$C8S_TARGET"
+    echo "c8s sync: staged rke2 ${RKE2_VERSION} + airgap bundles + nri-image-policy + c8s"
     exit 0
 fi
 
@@ -185,5 +191,6 @@ if [ ! -f "$BIN" ]; then
 fi
 install -D -m 0644 "$BIN" "$PLUGIN_CACHE"
 install -D -m 0755 "$BIN" "$PLUGIN_TARGET"
+install -D -m 0755 "$BIN" "$C8S_TARGET"
 
-echo "c8s sync: staged rke2 ${RKE2_VERSION} + airgap bundles + nri-image-policy"
+echo "c8s sync: staged rke2 ${RKE2_VERSION} + airgap bundles + nri-image-policy + c8s"
