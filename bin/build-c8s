@@ -32,6 +32,12 @@
 #   C8S_NAME=...       output name (default c8s → output/c8s/)
 #   C8S_MEMORY=...     default-memory recorded in the manifest / used by
 #                      `confos run` (default 16G — etcd OOMs at the 4G default)
+#   C8S_REF=...        bake the c8s binary from a specific c8s COMMIT (short
+#                      SHA) instead of the hardcoded NRI_IMAGE digest. The c8s
+#                      profile's mkosi.sync resolves nri-image-policy:<ref> to a
+#                      digest. The per-commit image must be published first
+#                      (c8s docker.yml on main, or workflow_dispatch for a
+#                      branch). Use to test an unmerged c8s build end-to-end.
 #
 # Extra args are passed through to `confos build`, e.g.:
 #   bin/build-c8s --profile ssh          # + SSH for bring-up debugging
@@ -39,6 +45,9 @@
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Export so the c8s profile's mkosi.sync (run by `confos build`) sees it.
+export C8S_REF="${C8S_REF:-}"
 
 FRAGMENT=kernel/c8s.config
 KB_PKGS=dwarves,python3,pkg-config,zlib1g-dev

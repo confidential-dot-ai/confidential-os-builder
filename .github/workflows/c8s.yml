@@ -19,6 +19,11 @@ name: Build c8s Node Image
 
 on:
   workflow_dispatch:
+    inputs:
+      c8s_ref:
+        description: "c8s commit short-SHA to bake the c8s binary from (resolves nri-image-policy:<ref>). Empty = the hardcoded NRI_IMAGE digest. The per-commit image must be published (c8s docker.yml)."
+        required: false
+        default: ""
   push:
     branches:
       - ci/publish-c8s-image
@@ -133,6 +138,9 @@ jobs:
       - name: Build c8s image
         env:
           C8S_STOCK_ATTEST: "1"   # see TODO(attest-gpu) in the header
+          # Bake the c8s binary from a specific commit when dispatched with a
+          # c8s_ref input; empty on push builds (uses the hardcoded digest).
+          C8S_REF: ${{ github.event.inputs.c8s_ref }}
         run: bin/build-c8s
 
       - name: Setup ORAS
