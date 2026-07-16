@@ -24,3 +24,7 @@
 enable containerd-data-disk.service
 enable rke2-server.service
 disable rke2-agent.service
+# Attested operator credential release. Enabled always, but its
+# ConditionPathExists on the opkeydata disk means it only starts on operator
+# boots — a no-op on nodes launched without --operator-key.
+enable cred-release.service
