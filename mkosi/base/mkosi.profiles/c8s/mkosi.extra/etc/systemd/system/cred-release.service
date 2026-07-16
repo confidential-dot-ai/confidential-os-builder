@@ -38,9 +38,10 @@ Restart=on-failure
 RestartSec=10
 # TDX runtime measurement (RTMR[3]) is read via the tdx_guest misc device.
 DeviceAllow=/dev/tdx_guest rwm
-# Reads the RKE2 client-CA key; keep the rest of the FS read-only.
+# Reads two files: the initrd-staged operator pubkey (/etc/confai) and the
+# RKE2 client-CA key. No mount needed. Keep the rest of the FS read-only.
 ProtectSystem=strict
-ReadOnlyPaths=/var/lib/rancher/rke2/server/tls
+ReadOnlyPaths=/etc/confai /var/lib/rancher/rke2/server/tls
 ReadWritePaths=/run
 ProtectHome=yes
 NoNewPrivileges=yes

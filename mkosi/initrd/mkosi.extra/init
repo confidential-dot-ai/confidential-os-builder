@@ -172,6 +172,14 @@ if [ -n "$OPKEY_DEV" ]; then
     # SHA-384 of the exact pubkey bytes -> 96 hex chars (sha384sum prints
     # "<hex>  -"). This is the sole place the key is hashed.
     DIGEST_HEX=$(sha384sum < /opkey/pubkey | cut -d' ' -f1)
+    # Stage the pubkey into the (post-switch_root) rootfs so the cred-release
+    # service reads a plain file — it can't mount the ISO itself under systemd
+    # hardening. The initrd is the single reader of the disk; what it stages is
+    # exactly the bytes it hashed into RTMR[3], and the service re-checks
+    # SHA-384(file) against RTMR[3] before trusting it.
+    mkdir -p /sysroot/etc/confai
+    cp /opkey/pubkey /sysroot/etc/confai/operator-pubkey || { umount /opkey 2>/dev/null; fail_opkey "stage pubkey failed"; }
+    chmod 0644 /sysroot/etc/confai/operator-pubkey
     umount /opkey 2>/dev/null || true
     case "$DIGEST_HEX" in
         *[!0-9a-f]* | "") fail_opkey "sha384sum produced non-hex" ;;
