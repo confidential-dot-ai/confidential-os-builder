@@ -197,7 +197,7 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
              .config (olddefconfig drops =y requests with unmet dependencies and \
              force-enables `is not set` requests for selected/promptless symbols):\n{}\n\
              Fix the fragment (add the missing dependency, or unset the selecting \
-             symbol / document the force-enable) and rebuild.",
+             symbol / pin the forced value so verify keeps tracking it) and rebuild.",
             mismatches.join("\n")
         ))
     }
