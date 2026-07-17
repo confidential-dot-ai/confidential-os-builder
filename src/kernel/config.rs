@@ -190,7 +190,11 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     let mut mismatches = Vec::new();
     for (symbol, request) in &requested {
         match (request, resolved_values.get(symbol.as_str())) {
-            (Request::Skip, _) | (Request::On(_), Some(&"y")) | (Request::Off(_), None) => {}
+            (Request::Skip, _) | (Request::On(_), Some(&"y")) => {}
+            // Absent also covers a typo'd or removed symbol, which passes
+            // silently; dependency-hidden symbols are absent too, so
+            // treating absence as an error would false-positive.
+            (Request::Off(_), None) => {}
             (Request::On(name), Some(v)) => {
                 mismatches.push(format!("  - {name}: {symbol} requested on, got {symbol}={v}"));
             }
