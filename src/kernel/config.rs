@@ -138,9 +138,9 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     /// carry the requesting fragment's name for the error message.
     enum Request {
         /// `=y` (or `=m`: mod2yesconfig collapses it in this module-less
-        /// build) — must resolve `=y`.
+        /// build); must resolve `=y`.
         On(String),
-        /// `# is not set` — must resolve off (not-set comment or absent).
+        /// `# is not set`; must resolve off (not-set comment or absent).
         Off(String),
         /// Non-boolean value; not verified.
         Skip,
