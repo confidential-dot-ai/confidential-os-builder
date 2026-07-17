@@ -134,6 +134,12 @@ pub fn run_configure_phase(
 /// that sets `# CONFIG_X is not set` retracts an earlier `CONFIG_X=y`
 /// request (e.g. c8s.config disables hardening.config's RANDSTRUCT_FULL,
 /// which DEBUG_INFO_BTF is incompatible with) — and vice versa.
+///
+/// A fragment may also assert `# CONFIG_X is forced on` for a symbol it
+/// wants off but that the enabled stack select's anyway: the symbol must
+/// resolve `=y` without the fragment requesting it, so the assertion fails
+/// loudly when the forcing goes away (an actual `=y` pin would keep the
+/// symbol on silently).
 fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     /// Final request for a symbol after last-fragment-wins merging; On/Off
     /// carry the requesting fragment's name for the error message.
@@ -143,6 +149,11 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
         /// `# is not set` or `=n`; must resolve off (not-set comment or
         /// absent).
         Off(String),
+        /// `# CONFIG_X is forced on`: a symbol wanted off that the enabled
+        /// stack select's anyway. Must resolve `=y` WITHOUT the fragment
+        /// requesting it, so the build fails if the forcing goes away
+        /// instead of the fragment silently keeping the symbol on.
+        Forced(String),
         /// Non-boolean value; not verified.
         Skip,
     }
@@ -177,12 +188,20 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
                 .filter(|s| s.starts_with("CONFIG_"))
             {
                 requested.insert(symbol.to_string(), Request::Off(name.to_string()));
-            } else if line.starts_with("# CONFIG_") && line.contains(" is not set") {
+            } else if let Some(symbol) = line
+                .strip_prefix("# ")
+                .and_then(|r| r.strip_suffix(" is forced on"))
+                .filter(|s| s.starts_with("CONFIG_"))
+            {
+                requested.insert(symbol.to_string(), Request::Forced(name.to_string()));
+            } else if line.starts_with("# CONFIG_")
+                && (line.contains(" is not set") || line.contains(" is forced on"))
+            {
                 // kconfig only honors the exact line; with trailing text the
                 // request silently no-ops in merge AND escapes verification.
                 return Err(anyhow!(
-                    "{name}: ineffective off-request {line:?} (trailing text after \
-                     \"is not set\"); kconfig ignores the whole line"
+                    "{name}: ineffective request {line:?} (trailing text); \
+                     kconfig ignores the whole line"
                 ));
             }
         }
@@ -204,6 +223,18 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
             (Request::Off(name), Some(v)) => {
                 mismatches.push(format!("  - {name}: {symbol} requested off, got {symbol}={v}"));
             }
+            (Request::Forced(_), Some(&"y")) => {}
+            (Request::Forced(name), Some(v)) => {
+                mismatches.push(format!(
+                    "  - {name}: {symbol} asserted forced on, got {symbol}={v}"
+                ));
+            }
+            (Request::Forced(name), None) => {
+                mismatches.push(format!(
+                    "  - {name}: {symbol} asserted forced on, resolved off (forcing gone; \
+                     turn the assertion into `# {symbol} is not set` or drop it)"
+                ));
+            }
         }
     }
     if mismatches.is_empty() {
@@ -214,7 +245,7 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
              .config (olddefconfig drops =y requests with unmet dependencies and \
              force-enables `is not set` requests for selected/promptless symbols):\n{}\n\
              Fix the fragment (add the missing dependency, or unset the selecting \
-             symbol / pin the forced value so verify keeps tracking it) and rebuild.",
+             symbol / assert it with `# CONFIG_X is forced on`) and rebuild.",
             mismatches.join("\n")
         ))
     }
@@ -345,7 +376,7 @@ mod tests {
         let err = verify_fragment_options(&[frag.as_path()], &resolved)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("ineffective off-request"));
+        assert!(err.contains("ineffective request"));
     }
 
     #[test]
@@ -380,6 +411,24 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("frag.config: CONFIG_A requested on, got CONFIG_A=m"));
+    }
+
+    #[test]
+    fn verify_fragment_options_checks_forced_assertions() {
+        let d = TempDir::new().unwrap();
+        let frag = write(&d, "frag.config", "# CONFIG_A is forced on\n");
+        let held = write(&d, "resolved", "CONFIG_A=y\n");
+        verify_fragment_options(&[frag.as_path()], &held).unwrap();
+        let gone = write(&d, "resolved2", "CONFIG_B=y\n");
+        let err = verify_fragment_options(&[frag.as_path()], &gone)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("frag.config: CONFIG_A asserted forced on, resolved off"));
+        let clamped = write(&d, "resolved3", "CONFIG_A=m\n");
+        let err = verify_fragment_options(&[frag.as_path()], &clamped)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("frag.config: CONFIG_A asserted forced on, got CONFIG_A=m"));
     }
 
     #[test]
