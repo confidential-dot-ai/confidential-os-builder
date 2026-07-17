@@ -8,9 +8,9 @@
 #
 #   1. confos kernel          — build/cache the kernel with kernel/c8s.config
 #   2. bin/steep-fetch-gpu    — build+sign NVIDIA modules, stage userspace
-#   3. bin/steep-fetch-attest-gpu — pre-stage the GPU attestation-api
-#      (required until the attestation-rs `-gpu` image is published and its
-#      digest pinned in attest-gpu/mkosi.sync — the Stage-4 sentinel)
+#   3. bin/steep-fetch-attest-gpu — pre-stage the GPU attestation-api binary
+#      + libnvat into mkosi.local (set ATTEST_GPU_BIN + LIBNVAT; CI builds the
+#      binary with --features nvidia-gpu-attest against a vendored libnvat)
 #   4. confos build           — the c8s profile's own mkosi.sync fetches
 #      rke2 + airgap bundles + nri-image-policy during this step
 #
@@ -23,12 +23,11 @@
 #                      manually via extra args)
 #   C8S_STOCK_ATTEST=1 compose the stock `attest` profile instead of
 #                      `attest-gpu`: same attestation-api service on :8400,
-#                      TDX+SNP quotes, but no GPU evidence collection. For
-#                      CI, where the local attestation-rs `-gpu` build that
-#                      steep-fetch-attest-gpu needs doesn't exist. Remove
-#                      once the attestation-rs `-gpu` image is published and
-#                      its digest pinned in attest-gpu/mkosi.sync (the
-#                      Stage-4 sentinel).
+#                      TDX+SNP quotes, but no GPU (SPDM) evidence collection.
+#                      Use when a build environment lacks libnvat / can't build
+#                      the nvidia-gpu-attest binary. The default (this var
+#                      unset) composes attest-gpu, which CI now supports via a
+#                      vendored libnvat + steep-fetch-attest-gpu pre-stage.
 #   C8S_DEV=1          demo/debug build: kernel/c8s-dev.config fragment
 #                      (8250 serial re-enabled) + the dev profile
 #                      (console=ttyS0, passwordless serial autologin).

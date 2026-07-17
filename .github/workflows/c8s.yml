@@ -8,13 +8,12 @@
 # build + ~3.5G of pinned artifacts) and privileged (mkosi sandbox needs
 # sudo + userns) — not a per-push job.
 #
-# TODO(attest-gpu): C8S_STOCK_ATTEST=1 below composes the stock `attest`
-# profile (attestation-api on :8400, TDX+SNP quotes) instead of
-# `attest-gpu` (adds per-GPU SPDM evidence) because attest-gpu's
-# mkosi.sync digest is still the Stage-4 sentinel and the pre-stage path
-# (bin/steep-fetch-attest-gpu) needs a local attestation-rs build CI
-# doesn't have. Once the attestation-rs `-gpu` image is published and
-# pinned, drop the env var so the published image collects GPU evidence.
+# attest-gpu: the build bakes an attestation-api built with
+# `--features nvidia-gpu-attest` (per-GPU SPDM evidence), which links NVIDIA's
+# Apache-2.0 libnvat.so. CI fetches a vendored libnvat (digest-pinned OCI
+# artifact) + builds the binary with NVAT_USE_SYSTEM_LIB=1, then
+# bin/steep-fetch-attest-gpu stages both into mkosi.local for the attest-gpu
+# profile's pre-stage escape hatch. No separate attestation-api-gpu image.
 name: Build c8s Node Image
 
 on:
@@ -153,23 +152,82 @@ jobs:
           path: output/gpu/cache
           key: ${{ runner.os }}-gpu-artifacts-${{ hashFiles('bin/steep-fetch-gpu') }}
 
+      # --- attest-gpu inputs -------------------------------------------------
+      # The attest-gpu profile bakes an attestation-api built with
+      # `--features nvidia-gpu-attest`, which links NVIDIA's libnvat.so (the
+      # per-GPU SPDM evidence collector). libnvat is Apache-2.0 and links only
+      # standard system libs (no NVML/CUDA), so we vendor a prebuilt
+      # libnvat.so + nvat.h as an OCI artifact and build the binary here with
+      # NVAT_USE_SYSTEM_LIB=1 (skips libnvat's own CMake/NVML from-source
+      # build). steep-fetch-attest-gpu then stages the binary + libnvat into
+      # mkosi.local, and mkosi.sync's pre-stage escape hatch trusts it — no
+      # separate attestation-api-gpu image, no GHCR round-trip.
+      # setup-oras + GHCR login moved here (before the build) because the build
+      # now pulls the vendored libnvat artifact; the post-build push reuses them.
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+      - name: Log in to GHCR
+        run: |
+          echo ${{ secrets.GITHUB_TOKEN }} | oras login ghcr.io \
+            -u ${{ github.actor }} --password-stdin
+
+      - name: Fetch vendored libnvat (Apache-2.0)
+        env:
+          # Pinned by digest so CI verifies the exact vendored blobs; oras
+          # validates each layer's sha256 on pull. The tag (1.2.0) is retained
+          # in the reference for readability but the digest is authoritative.
+          LIBNVAT_REF: ghcr.io/confidential-dot-ai/libnvat@sha256:4b3c396dbe906b2f60042558ed0f2dc4791a96f840ba0970a6d358027c572819
+          # Independent content checksums (defense-in-depth over oras's own
+          # layer verification): the exact files we pushed from the source host.
+          LIBNVAT_SO_SHA256: 1dd6c5429632c8c9ae59aa687cf96593f01c5597afe342f72ec3d8d5ddb0bbae
+          NVAT_H_SHA256: c6c9f32538611c5dfca2a103bfba5a258156a5e7b035ef9f0b7e21f20151314b
+        run: |
+          set -euo pipefail
+          mkdir -p vendor/libnvat
+          oras pull "$LIBNVAT_REF" -o vendor/libnvat
+          echo "$LIBNVAT_SO_SHA256  vendor/libnvat/libnvat.so.1.2.0" | sha256sum -c -
+          echo "$NVAT_H_SHA256  vendor/libnvat/nvat.h" | sha256sum -c -
+          sudo install -m0755 vendor/libnvat/libnvat.so.1.2.0 \
+            /usr/lib/x86_64-linux-gnu/libnvat.so.1.2.0
+          sudo ln -sf libnvat.so.1.2.0 /usr/lib/x86_64-linux-gnu/libnvat.so.1
+          sudo ln -sf libnvat.so.1     /usr/lib/x86_64-linux-gnu/libnvat.so
+          sudo install -m0644 vendor/libnvat/nvat.h /usr/include/nvat.h
+          sudo ldconfig
+
+      - name: Checkout attestation-rs (for the gpu-attest binary)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: confidential-dot-ai/attestation-rs
+          ref: main
+          path: attestation-rs
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build attestation-api (nvidia-gpu-attest)
+        env:
+          NVAT_USE_SYSTEM_LIB: "1"
+        working-directory: attestation-rs
+        run: |
+          # nv-attestation-sdk-sys generates bindings from nvat.h via bindgen,
+          # which needs libclang.
+          sudo apt-get install -y libclang-dev clang
+          cargo build -p attestation-api --release \
+            --features nvidia-gpu-attest --bin attestation-api
+          # Sanity: the binary must actually link libnvat (i.e. it is the
+          # GPU-collector build, not a silent fallback).
+          ldd target/release/attestation-api | grep -q libnvat
+
       - name: Build c8s image
         env:
-          C8S_STOCK_ATTEST: "1"   # see TODO(attest-gpu) in the header
+          # attest-gpu: steep-fetch-attest-gpu stages this binary + libnvat.
+          ATTEST_GPU_BIN: ${{ github.workspace }}/attestation-rs/target/release/attestation-api
+          LIBNVAT: /usr/lib/x86_64-linux-gnu/libnvat.so.1.2.0
           # Bake the c8s binary from a specific commit when dispatched with a
           # c8s_ref input; empty on push builds (uses the hardcoded digest).
           C8S_REF: ${{ github.event.inputs.c8s_ref }}
         # C8S_DEV comes from the variant step; pin C8S_NAME to the variant so
         # the output dir and the push/roothash paths below stay aligned.
         run: C8S_NAME="$VARIANT" bin/build-c8s
-
-      - name: Setup ORAS
-        uses: oras-project/setup-oras@v1
-
-      - name: Log in to GHCR
-        run: |
-          echo ${{ secrets.GITHUB_TOKEN }} | oras login ghcr.io \
-            -u ${{ github.actor }} --password-stdin
 
       # Skip the multi-GB push when the rootfs is byte-identical to what's
       # already published: the verity roothash is a content hash of the
