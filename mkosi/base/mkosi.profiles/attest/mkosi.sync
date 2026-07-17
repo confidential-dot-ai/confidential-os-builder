@@ -39,7 +39,7 @@ mkdir -p "${TMPDIR:=/tmp}"
 # a binary that supports both SEV-SNP (`/dev/sev-guest`) and Intel TDX
 # (`/dev/tdx_guest`); see attestation-api/src/config.rs's
 # SUPPORTED_ATTESTATION_PLATFORMS for the full list.
-IMAGE="ghcr.io/confidential-dot-ai/attestation-api@sha256:724019b3b4787141da6f8c96b74fa3f39f48f54c10a813df4790778b0d4d0e81"
+IMAGE="ghcr.io/confidential-dot-ai/attestation-api@sha256:8dfb4db34d966374c3dbd81548c532a2015123d41f3aab553cea1cb7a327c8e9"
 
 mkdir -p "$STAGE_DIR"
 
