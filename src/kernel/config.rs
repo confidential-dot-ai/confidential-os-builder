@@ -125,8 +125,9 @@ pub fn run_configure_phase(
 /// symbol is promptless or select'ed by an enabled one (e.g. MOUSE_PS2
 /// selects SERIO_I8042) — both otherwise surface only as runtime
 /// misbehavior or a quietly weaker kernel, long after the expensive build.
-/// (`=m` counts as an on-request: mod2yesconfig collapses it to `=y` in
-/// this module-less build. Non-boolean values are not verified.)
+/// (`=m` counts as an on-request: mod2yesconfig runs after all fragments
+/// merge and collapses it to `=y`, even when a profile fragment enables
+/// CONFIG_MODULES. Non-boolean values are not verified.)
 ///
 /// Fragments merge with last-wins semantics (see [`run_configure_phase`]),
 /// so only each symbol's final requested state is checked: a later fragment
@@ -137,8 +138,7 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     /// Final request for a symbol after last-fragment-wins merging; On/Off
     /// carry the requesting fragment's name for the error message.
     enum Request {
-        /// `=y` (or `=m`: mod2yesconfig collapses it in this module-less
-        /// build); must resolve `=y`.
+        /// `=y` (or `=m`: mod2yesconfig collapses it); must resolve `=y`.
         On(String),
         /// `# is not set` or `=n`; must resolve off (not-set comment or
         /// absent).
@@ -191,7 +191,10 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     for (symbol, request) in &requested {
         match (request, resolved_values.get(symbol.as_str())) {
             (Request::Skip, _) | (Request::On(_), Some(&"y")) | (Request::Off(_), None) => {}
-            (Request::On(name), _) => {
+            (Request::On(name), Some(v)) => {
+                mismatches.push(format!("  - {name}: {symbol} requested on, got {symbol}={v}"));
+            }
+            (Request::On(name), None) => {
                 mismatches.push(format!("  - {name}: {symbol} requested on, dropped"));
             }
             (Request::Off(name), Some(v)) => {
@@ -362,6 +365,17 @@ mod tests {
         verify_fragment_options(&[frag.as_path()], &resolved).unwrap();
         let dropped = write(&d, "resolved2", "CONFIG_B=y\n");
         assert!(verify_fragment_options(&[frag.as_path()], &dropped).is_err());
+    }
+
+    #[test]
+    fn verify_fragment_options_reports_resolved_value_on_clamped_on_request() {
+        let d = TempDir::new().unwrap();
+        let frag = write(&d, "frag.config", "CONFIG_A=y\n");
+        let resolved = write(&d, "resolved", "CONFIG_A=m\n");
+        let err = verify_fragment_options(&[frag.as_path()], &resolved)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("frag.config: CONFIG_A requested on, got CONFIG_A=m"));
     }
 
     #[test]
