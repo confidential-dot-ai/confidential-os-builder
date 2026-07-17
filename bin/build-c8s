@@ -37,11 +37,11 @@
 #   C8S_NAME=...       output name (default c8s → output/c8s/)
 #   C8S_MEMORY=...     default-memory recorded in the manifest / used by
 #                      `confos run` (default 16G — etcd OOMs at the 4G default)
-#   C8S_REF=...        bake the c8s binary from a specific c8s COMMIT (short
-#                      SHA) instead of the hardcoded NRI_IMAGE digest. The c8s
-#                      profile's mkosi.sync resolves nri-image-policy:<ref> to a
-#                      digest. The per-commit image must be published first
-#                      (c8s docker.yml on main, or workflow_dispatch for a
+#   C8S_REF=...        bake the c8s components (nri plugin + the CDS digest in
+#                      the NRI floor) from a specific c8s COMMIT (short SHA)
+#                      instead of main. mkosi.sync resolves nri-image-policy:<ref>
+#                      and cds:<ref> to digests. The images must be published
+#                      first (c8s docker.yml on main, or workflow_dispatch for a
 #                      branch). Use to test an unmerged c8s build end-to-end.
 #
 # Extra args are passed through to `confos build`, e.g.:
@@ -54,7 +54,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # Hand C8S_REF to the c8s profile's mkosi.sync via a file: an exported var
 # never reaches the sync (`confos build` runs mkosi under sudo, which strips
 # the env, and mkosi's script sandbox drops host vars). The sync reads
-# $SRCDIR/mkosi.local/c8s-ref; absent or empty = the hardcoded digest.
+# $SRCDIR/mkosi.local/c8s-ref; absent or empty defaults to main.
 mkdir -p mkosi/base/mkosi.local
 printf '%s\n' "${C8S_REF:-}" > mkosi/base/mkosi.local/c8s-ref
 
