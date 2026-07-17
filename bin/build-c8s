@@ -46,8 +46,12 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# Export so the c8s profile's mkosi.sync (run by `confos build`) sees it.
-export C8S_REF="${C8S_REF:-}"
+# Hand C8S_REF to the c8s profile's mkosi.sync via a file: an exported var
+# never reaches the sync (`confos build` runs mkosi under sudo, which strips
+# the env, and mkosi's script sandbox drops host vars). The sync reads
+# $SRCDIR/mkosi.local/c8s-ref; absent or empty = the hardcoded digest.
+mkdir -p mkosi/base/mkosi.local
+printf '%s\n' "${C8S_REF:-}" > mkosi/base/mkosi.local/c8s-ref
 
 FRAGMENT=kernel/c8s.config
 KB_PKGS=dwarves,python3,pkg-config,zlib1g-dev

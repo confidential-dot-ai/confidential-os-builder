@@ -52,8 +52,13 @@ RKE2_IMAGES_CILIUM_SHA256="1ab41422cc16f5d030b8f62889133dff5d9dce985fbf13360c160
 # digest here (mirrors kata-guest-base/scripts/fetch.sh). The tag must exist:
 # it's published on pushes to main, or on demand via c8s docker.yml
 # workflow_dispatch for a feature branch.
+#
+# The ref arrives via $SRCDIR/mkosi.local/c8s-ref (written by bin/build-c8s),
+# not the environment: mkosi runs under sudo (env stripped) and its script
+# sandbox drops host vars, so an exported C8S_REF never reaches this script.
 NRI_REPO="ghcr.io/confidential-dot-ai/nri-image-policy"
 NRI_IMAGE="${NRI_REPO}@sha256:56a831e76448a25e61842d71f72e27e1b29af71ee1f5c113db2cb396c552f181"
+C8S_REF=$(cat "$SRCDIR/mkosi.local/c8s-ref" 2>/dev/null || true)
 if [ -n "${C8S_REF:-}" ]; then
     echo "c8s sync: resolving nri-image-policy at c8s ref ${C8S_REF}"
     NRI_DIGEST=$(oras manifest fetch --descriptor "${NRI_REPO}:${C8S_REF}" 2>/dev/null | jq -r '.digest')
