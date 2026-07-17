@@ -208,9 +208,13 @@ jobs:
           NVAT_USE_SYSTEM_LIB: "1"
         working-directory: attestation-rs
         run: |
-          # nv-attestation-sdk-sys generates bindings from nvat.h via bindgen,
-          # which needs libclang.
-          sudo apt-get install -y libclang-dev clang
+          # Build deps for --features nvidia-gpu-attest:
+          #   - libclang-dev/clang: nv-attestation-sdk-sys generates bindings
+          #     from nvat.h via bindgen.
+          #   - libtss2-dev: the tss-esapi-sys (-sys, pkg-config) crate in the
+          #     attest chain needs tss2-*.pc (matches attestation-rs's own CI).
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang libtss2-dev
           cargo build -p attestation-api --release \
             --features nvidia-gpu-attest --bin attestation-api
           # Sanity: the binary must actually link libnvat (i.e. it is the
