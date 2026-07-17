@@ -185,15 +185,22 @@ if [ -n "$OPKEY_DEV" ]; then
         *[!0-9a-f]* | "") fail_opkey "sha384sum produced non-hex" ;;
     esac
     [ "${#DIGEST_HEX}" = "96" ] || fail_opkey "digest is ${#DIGEST_HEX} hex chars, want 96"
-    # Convert 96 hex chars -> 48 raw bytes, then write to the extend node. sed
-    # turns "ab" into "\xab"; the outer printf interprets the escapes. Both
-    # printf and sed are coreutils, present in the initrd.
+    # Convert 96 hex chars -> 48 raw bytes in a tmpfs file, then write to the
+    # extend node with dd in ONE 48-byte write(2): the node rejects any other
+    # size, and bash printf splits its output at 0x0a bytes (~17% of digests),
+    # so redirecting printf at the node fails for those keys. sed turns "ab"
+    # into "\xab"; printf interprets the escapes.
     esc=$(printf '%s' "$DIGEST_HEX" | sed 's/../\\x&/g')
     # Intentional: $esc IS the format string — that's what interprets the \x
     # escapes into raw bytes. DIGEST_HEX is validated [0-9a-f]{96} above, so
     # $esc contains only \xNN sequences, no user-controlled format directives.
     # shellcheck disable=SC2059
-    printf "$esc" > "$RTMR3" || fail_opkey "write to $RTMR3 rejected"
+    printf "$esc" > /opkey-digest.bin
+    n=$(wc -c < /opkey-digest.bin)
+    [ "$n" = "48" ] || fail_opkey "digest converted to $n bytes, want 48"
+    dd if=/opkey-digest.bin of="$RTMR3" bs=48 count=1 2>/dev/null \
+        || fail_opkey "write to $RTMR3 rejected"
+    rm -f /opkey-digest.bin
     echo "initrd: RTMR[3] extended with operator key digest $DIGEST_HEX"
 else
     echo "initrd: no opkeydata disk — RTMR[3] left unbound"
