@@ -177,6 +177,13 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
                 .filter(|s| s.starts_with("CONFIG_"))
             {
                 requested.insert(symbol.to_string(), Request::Off(name.to_string()));
+            } else if line.starts_with("# CONFIG_") && line.contains(" is not set") {
+                // kconfig only honors the exact line; with trailing text the
+                // request silently no-ops in merge AND escapes verification.
+                return Err(anyhow!(
+                    "{name}: ineffective off-request {line:?} (trailing text after \
+                     \"is not set\"); kconfig ignores the whole line"
+                ));
             }
         }
     }
@@ -321,6 +328,17 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("hardening.config: CONFIG_SERIO_I8042 requested off"));
+    }
+
+    #[test]
+    fn verify_fragment_options_rejects_not_set_line_with_trailing_text() {
+        let d = TempDir::new().unwrap();
+        let frag = write(&d, "frag.config", "# CONFIG_A is not set  # rationale\n");
+        let resolved = write(&d, "resolved", "CONFIG_B=y\n");
+        let err = verify_fragment_options(&[frag.as_path()], &resolved)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ineffective off-request"));
     }
 
     #[test]
