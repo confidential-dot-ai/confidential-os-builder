@@ -29,6 +29,11 @@
 #                      once the attestation-rs `-gpu` image is published and
 #                      its digest pinned in attest-gpu/mkosi.sync (the
 #                      Stage-4 sentinel).
+#   C8S_DEV=1          demo/debug build: kernel/c8s-dev.config fragment
+#                      (8250 serial re-enabled) + the dev profile
+#                      (console=ttyS0, passwordless serial autologin).
+#                      Different measurement, root shell on the host-visible
+#                      serial socket — never ship. Default name: c8s-dev.
 #   C8S_NAME=...       output name (default c8s → output/c8s/)
 #   C8S_MEMORY=...     default-memory recorded in the manifest / used by
 #                      `confos run` (default 16G — etcd OOMs at the 4G default)
@@ -54,6 +59,12 @@ mkdir -p mkosi/base/mkosi.local
 printf '%s\n' "${C8S_REF:-}" > mkosi/base/mkosi.local/c8s-ref
 
 FRAGMENT=kernel/c8s.config
+DEV_PROFILE=()
+if [ "${C8S_DEV:-0}" = 1 ]; then
+    FRAGMENT=kernel/c8s-dev.config
+    DEV_PROFILE=(--profile dev)
+    : "${C8S_NAME:=c8s-dev}"
+fi
 KB_PKGS=dwarves,python3,pkg-config,zlib1g-dev
 
 bin/confos kernel \
@@ -73,6 +84,7 @@ fi
 
 exec bin/confos build "${C8S_NAME:-c8s}" \
     "${PROFILES[@]}" \
+    ${DEV_PROFILE[@]+"${DEV_PROFILE[@]}"} \
     --kernel-config-fragment "$FRAGMENT" \
     --kernel-builder-package "$KB_PKGS" \
     --cloud-init mkosi/base/mkosi.profiles/c8s/user-data \

@@ -24,9 +24,18 @@ on:
         description: "c8s commit short-SHA to bake the c8s binary from (resolves nri-image-policy:<ref>). Empty = the hardcoded NRI_IMAGE digest. The per-commit image must be published (c8s docker.yml)."
         required: false
         default: ""
+      dev:
+        description: "Build the c8s-dev variant (console=ttyS0 + serial root autologin). Same as pushing to ci/publish-c8s-dev-image, but dispatchable so it can carry a c8s_ref."
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - ci/publish-c8s-image
+      # Publishes the C8S_DEV=1 variant under :c8s-dev tags — console=ttyS0
+      # + serial root autologin for demos/debugging. Never overwrite :c8s
+      # with a dev build.
+      - ci/publish-c8s-dev-image
     paths:
       - "kernel/*.config"
       - "kernel/config-x86_64.snapshot"
@@ -57,8 +66,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set image ref
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY@L}" >> "$GITHUB_ENV"
+      - name: Set image ref and variant
+        # Dev variant when pushing to the dev branch OR when dispatched with
+        # dev=true (so a dispatched build can carry a c8s_ref and still be dev).
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY@L}" >> "$GITHUB_ENV"
+          if [ "${GITHUB_REF_NAME}" = "ci/publish-c8s-dev-image" ] || [ "${{ github.event.inputs.dev }}" = "true" ]; then
+            echo "VARIANT=c8s-dev" >> "$GITHUB_ENV"
+            echo "C8S_DEV=1" >> "$GITHUB_ENV"
+          else
+            echo "VARIANT=c8s" >> "$GITHUB_ENV"
+          fi
 
       - name: Free up disk space
         # kernel compile + NVIDIA userspace + rke2 airgap bundles + a ~6G
@@ -100,7 +118,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: output/kernel
-          key: ${{ runner.os }}-kernel-c8s-${{ hashFiles('mkosi/kernel-builder/mkosi.conf','kernel/c8s.config','kernel/required.config','kernel/hardening.config','kernel/confidential.config','kernel/config-x86_64.snapshot','kernel/version','bin/build-c8s') }}
+          key: ${{ runner.os }}-kernel-${{ env.VARIANT }}-${{ hashFiles('mkosi/kernel-builder/mkosi.conf','kernel/c8s.config','kernel/c8s-dev.config','kernel/required.config','kernel/hardening.config','kernel/confidential.config','kernel/config-x86_64.snapshot','kernel/version','bin/build-c8s') }}
 
       # Distinct key prefix from base.yml: the c8s build's profiles add
       # ToolsTreePackages (oras, jq, curl), so the tree differs from the
@@ -141,7 +159,9 @@ jobs:
           # Bake the c8s binary from a specific commit when dispatched with a
           # c8s_ref input; empty on push builds (uses the hardcoded digest).
           C8S_REF: ${{ github.event.inputs.c8s_ref }}
-        run: bin/build-c8s
+        # C8S_DEV comes from the variant step; pin C8S_NAME to the variant so
+        # the output dir and the push/roothash paths below stay aligned.
+        run: C8S_NAME="$VARIANT" bin/build-c8s
 
       - name: Setup ORAS
         uses: oras-project/setup-oras@v1
@@ -160,8 +180,8 @@ jobs:
         id: changed
         run: |
           set -uo pipefail
-          new=$(cat output/c8s/roothash 2>/dev/null || echo new)
-          digest=$(oras manifest fetch "${IMAGE}:c8s" 2>/dev/null \
+          new=$(cat "output/${VARIANT}/roothash" 2>/dev/null || echo new)
+          digest=$(oras manifest fetch "${IMAGE}:${VARIANT}" 2>/dev/null \
                      | jq -r '.layers[] | select(.annotations["org.opencontainers.image.title"] == "roothash") | .digest' \
                      || true)
           pub=none
@@ -191,19 +211,19 @@ jobs:
           # (per-file layers, for verifiers and `confos pull`) last: the
           # change-check above reads :c8s, so a partial failure here leaves
           # it stale and the next run re-publishes everything.
-          bin/confos push output/c8s --cdi \
+          bin/confos push "output/${VARIANT}" --cdi \
             --registry "$IMAGE" \
-            --tag "c8s-cdi,c8s-cdi-${SHORT_SHA}"
-          bin/confos push output/c8s \
+            --tag "${VARIANT}-cdi,${VARIANT}-cdi-${SHORT_SHA}"
+          bin/confos push "output/${VARIANT}" \
             --registry "$IMAGE" \
-            --tag "c8s,c8s-${SHORT_SHA}"
+            --tag "${VARIANT},${VARIANT}-${SHORT_SHA}"
 
       - name: Summary
         run: |
           {
-            echo "### c8s confidential node image"
-            echo "- artifact: \`${IMAGE}:c8s\`"
-            echo "- CDI image: \`${IMAGE}:c8s-cdi\`"
+            echo "### ${VARIANT} confidential node image"
+            echo "- artifact: \`${IMAGE}:${VARIANT}\`"
+            echo "- CDI image: \`${IMAGE}:${VARIANT}-cdi\`"
             echo ""
             echo "Launch as a TDX CVM with a serial=confai-scratch disk (>=64G),"
             echo "expose 6443, then \`c8s install --distro rke2\`. See docs/C8S-IMAGE.md."

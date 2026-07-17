@@ -22,6 +22,18 @@ if [ -n "$missing" ]; then
     exit 1
 fi
 
+# kernel/c8s-dev.config (C8S_DEV=1 demo builds) is the union of c8s.config
+# and dev.config, committed verbatim for the same one-fragment reason.
+for src in kernel/c8s.config kernel/dev.config; do
+    missing=$(grep -E '^CONFIG_|^# CONFIG_.* is not set$' "$src" \
+              | grep -vFxf kernel/c8s-dev.config || true)
+    if [ -n "$missing" ]; then
+        echo "bin/lint: kernel/c8s-dev.config must contain every effective line of $src; missing:" >&2
+        echo "$missing" >&2
+        exit 1
+    fi
+done
+
 # The NRI_IMAGE digest pinned in the c8s sync must be the one the baked
 # boot policy self-allows, or the measured fail-closed floor denies the
 # very plugin image it ships.
