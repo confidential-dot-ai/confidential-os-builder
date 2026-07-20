@@ -19,6 +19,13 @@
 cni: cilium
 disable-kube-proxy: true
 
+# Drop RKE2's bundled ingress-nginx: it binds hostPorts 80/443, which collide
+# with c8s tls-lb's hostPort 443 (the attested front door for workloads —
+# `c8s install` preflights this exact conflict). The node image's external
+# surface is tls-lb, not a generic ingress.
+disable:
+  - rke2-ingress-nginx
+
 # Add a stable hostname SAN to the apiserver serving cert. The operator
 # reaches the guest at a per-launch KubeVirt-assigned IP that RKE2 can't know
 # to include as a SAN, so the released kubeconfig can't verify against the IP.
