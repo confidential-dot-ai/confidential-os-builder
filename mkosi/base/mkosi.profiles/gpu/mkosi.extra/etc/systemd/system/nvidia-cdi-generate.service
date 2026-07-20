@@ -1,0 +1,21 @@
+[Unit]
+Description=Generate the NVIDIA CDI spec for GPU pods
+# The spec enumerates /dev/nvidia* nodes and the driver libraries, so it must
+# run after persistenced has attached the driver and created the device nodes.
+# kubelet/containerd need no ordering against this: the device plugin retries
+# until the spec exists, and containerd reads /var/run/cdi per pod creation.
+After=nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Skip (not fail) on a GPU-less boot — same degraded-nothing posture as the
+# other nvidia-* units.
+ExecCondition=/bin/sh -c 'grep -qx 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null'
+# /var/run is tmpfs: the spec is regenerated fresh every boot, matching
+# whatever GPUs this launch passed through.
+ExecStart=/usr/bin/nvidia-ctk cdi generate --output=/var/run/cdi/nvidia.yaml
+
+[Install]
+WantedBy=multi-user.target

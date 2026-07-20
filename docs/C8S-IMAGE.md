@@ -219,17 +219,28 @@ Two failure modes hard-won here (both fixed; noted so they stay fixed):
 - **S5 CI + publish**: c8s.yml green; a no-change rerun hits the
   roothash publish-skip; pulled artifact re-verifies.
 
-## Deferred: GPU pods (follow-up)
+## GPU pods
 
-The gpu profile makes GPUs host-visible (`nvidia-smi`, CC Ready) but NOT
-schedulable as pod resources. That needs (a) image-side:
-nvidia-container-toolkit (`nvidia-ctk`, `nvidia-container-runtime{,-hook}`,
-`libnvidia-container`) plus either a boot oneshot generating a CDI spec
-(`nvidia-ctk cdi generate` — lands on the overlay but derives from the
-measured driver) or a containerd runtime drop-in; and (b) cluster-side:
-nvidia-device-plugin (could be baked as a `server/manifests/` file,
-digest-pinned). Do this only after S4 passes so GPU-pod breakage never
-conflates with enforcement bring-up.
+GPUs are schedulable as `nvidia.com/gpu` on the inner cluster, CDI end to end
+— no nvidia-container-runtime wrapper:
+
+- **Image-side** (`bin/steep-fetch-gpu` + gpu profile): the CUDA userspace
+  driver stack (`libcuda` + JIT/compiler companions — without these the image
+  ran `nvidia-smi` but no CUDA workload), `nvidia-ctk`/`nvidia-cdi-hook` from
+  the pinned container-toolkit deb, and `nvidia-cdi-generate.service` — a boot
+  oneshot after persistenced that writes `/var/run/cdi/nvidia.yaml` (tmpfs;
+  regenerated per boot from the measured driver, skipped on GPU-less boots).
+- **Cluster-side** (c8s profile): a digest-pinned nvidia-device-plugin
+  DaemonSet baked at `server/manifests/nvidia-device-plugin.yaml`, kube-system
+  (PSA- and allowlist-exempt), `DEVICE_LIST_STRATEGY=cdi-cri`,
+  `FAIL_ON_INIT_ERROR=false` so GPU-less boots stay degraded-nothing.
+- **Runtime**: RKE2's containerd 2.x has CDI enabled by default and injects
+  the devices at pod creation.
+
+A GPU workload just requests `resources.limits: {nvidia.com/gpu: N}`. Its
+image must still be on the NRI allowlist (workload namespaces are not
+exempt). Not yet covered: NVSwitch passthrough + in-guest fabric manager —
+NVLink P2P for multi-GPU TP is unvalidated; NCCL may fall back to SHM.
 
 ## Risks / open questions
 
