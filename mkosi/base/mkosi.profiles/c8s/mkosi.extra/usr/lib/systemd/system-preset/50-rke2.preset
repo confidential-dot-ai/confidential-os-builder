@@ -24,6 +24,10 @@
 enable containerd-data-disk.service
 enable rke2-server.service
 disable rke2-agent.service
+# NTP: sync the free-running TDX guest clock so it doesn't drift behind the
+# operator and trip cred-release's JWT clock-skew check. Egress is via the
+# CVM's masquerade NAT.
+enable systemd-timesyncd.service
 # Attested operator credential release. Enabled always, but its
 # ConditionPathExists on the opkeydata disk means it only starts on operator
 # boots — a no-op on nodes launched without --operator-key.

@@ -65,11 +65,22 @@ fi
 #      cache); the serial comes from sysfs.
 DEV=""
 for _ in $(seq 1 20); do
+    # by-id first: virtio-scsi (KubeVirt Bus: scsi) surfaces the serial ONLY in
+    # /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<serial>, NOT in
+    # /sys/block/<dev>/serial (empty on SCSI). This is the confai path
+    # (--containerd-disk-gi attaches a scsi disk serial=confai-containerd).
+    for l in /dev/disk/by-id/*confai-containerd*; do
+        [ -e "$l" ] || continue
+        DEV="$(readlink -f "$l")"; break
+    done
+    [ -n "$DEV" ] && break
     for d in /dev/sd? /dev/vd?; do
         [ -b "$d" ] || continue
+        # host-prepared disk with a real filesystem LABEL
         if [ "$(blkid -p -s LABEL -o value "$d" 2>/dev/null || true)" = "containerd" ]; then
             DEV="$d"; break
         fi
+        # virtio-blk surfaces the serial in sysfs (SCSI does not — see above)
         if [ "$(cat "/sys/block/$(basename "$d")/serial" 2>/dev/null || true)" = "confai-containerd" ]; then
             DEV="$d"; break
         fi
