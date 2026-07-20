@@ -232,6 +232,11 @@ stage_lib libnvidia-nvvm.so
 stage_lib libnvidia-ptxjitcompiler.so
 stage_lib libnvidia-gpucomp.so
 stage_lib libnvidia-allocator.so
+# CC secure-session crypto: libcuda dlopens these during cuInit when the GPU is
+# CC-on; without them every CUDA init fails with error 801 (nvidia-smi still
+# works — NVML doesn't need them).
+stage_lib libnvidia-pkcs11.so
+stage_lib libnvidia-pkcs11-openssl3.so
 
 # GSP firmware: the open modules request_firmware() a GSP blob at load time.
 # It must live at /lib/firmware/nvidia/<ver>/. Stage the whole per-version dir.
