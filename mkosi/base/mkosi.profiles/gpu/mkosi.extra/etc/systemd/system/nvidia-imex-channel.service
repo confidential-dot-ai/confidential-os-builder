@@ -1,0 +1,31 @@
+[Unit]
+Description=Create the NVIDIA IMEX channel device node
+# B200/NVSwitch GPUs need an IMEX (Internode Memory Exchange) channel to
+# initialize the multi-GPU fabric — without /dev/nvidia-caps-imex-channels/channel0
+# CUDA fails with "error 802: system not yet initialized" (cudaGetDeviceCount),
+# even for single-node multi-GPU. On bare metal nvidia-imex/fabric-manager
+# creates it; in the CVM we create channel 0 explicitly. Must run after the
+# driver is attached and BEFORE nvidia-cdi-generate so the CDI spec can pick it
+# up (and before kubelet so GPU pods see it).
+After=nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+Before=nvidia-cdi-generate.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Skip on a GPU-less boot — same degraded-nothing posture as the other nvidia units.
+ExecCondition=/bin/sh -c 'grep -qx 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null'
+# nvidia-modprobe -c 0 registers the nvidia-caps-imex-channels chardev (its major
+# lands in /proc/devices, dynamically allocated); then mknod channel 0 at that
+# major. Idempotent: skip the mknod if the node already exists.
+ExecStart=/usr/bin/nvidia-modprobe -c 0
+ExecStart=/bin/sh -c 'test -e /dev/nvidia-caps-imex-channels/channel0 || { \
+    maj=$(awk "/nvidia-caps-imex-channels/ {print \$1}" /proc/devices); \
+    test -n "$maj" || { echo "nvidia-imex-channel: no imex major in /proc/devices" >&2; exit 1; }; \
+    mkdir -p /dev/nvidia-caps-imex-channels; \
+    mknod /dev/nvidia-caps-imex-channels/channel0 c "$maj" 0; \
+    chmod 0666 /dev/nvidia-caps-imex-channels/channel0; }'
+
+[Install]
+WantedBy=multi-user.target

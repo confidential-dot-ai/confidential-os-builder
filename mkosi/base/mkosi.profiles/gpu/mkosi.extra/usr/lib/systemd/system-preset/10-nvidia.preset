@@ -5,4 +5,5 @@ enable nvidia-gpu-flr.service
 enable nvidia-persistenced.service
 enable nvidia-cc-ready.service
 enable nvidia-modules-latch.service
+enable nvidia-imex-channel.service
 enable nvidia-cdi-generate.service
