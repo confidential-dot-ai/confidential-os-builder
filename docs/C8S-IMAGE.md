@@ -232,7 +232,7 @@ GPUs are schedulable as `nvidia.com/gpu` on the inner cluster, CDI end to end
   regenerated per boot from the measured driver, skipped on GPU-less boots).
 - **Cluster-side** (c8s profile): a digest-pinned nvidia-device-plugin
   DaemonSet baked at `server/manifests/nvidia-device-plugin.yaml`, kube-system
-  (PSA- and allowlist-exempt), `DEVICE_LIST_STRATEGY=cdi-cri`,
+  (PSA- and allowlist-exempt), `DEVICE_LIST_STRATEGY=cdi-annotations`,
   `FAIL_ON_INIT_ERROR=false` so GPU-less boots stay degraded-nothing.
 - **Runtime**: RKE2's containerd 2.x has CDI enabled by default and injects
   the devices at pod creation.
