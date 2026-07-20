@@ -1,21 +1,23 @@
 # NVIDIA device plugin — makes passed-through GPUs schedulable as
 # `nvidia.com/gpu` on the inner cluster. CDI end to end: the gpu profile's
-# nvidia-cdi-generate.service writes /var/run/cdi/nvidia.yaml at boot, the
-# plugin advertises devices with the cdi-cri strategy, and containerd 2.x
-# (CDI on by default) injects them at pod creation — no nvidia-container-runtime
-# wrapper anywhere.
+# nvidia-cdi-generate.service writes /var/run/cdi/nvidia.yaml at boot; the
+# plugin discovers the driver files under CONTAINER_DRIVER_ROOT, advertises the
+# GPUs, and containerd 2.x (CDI on by default) injects the CDI devices at pod
+# creation — no nvidia-container-runtime wrapper anywhere.
 #
-# kube-system placement is deliberate: PSA-exempt (the pod needs hostPath +
-# privileged to reach NVML and /dev) and exempt from the NRI image-policy
-# allowlist, so the plugin can start before CDS is up. Digest-pinned like every
-# other baked component.
+# kube-system placement is deliberate: PSA-exempt (privileged + hostPath to
+# reach the driver root and /dev) and NRI-allowlist-exempt, so the plugin can
+# start before CDS is up. Digest-pinned like every other baked component.
 #
-# The plugin itself dlopens NVML from the measured root's driver stack — the
-# image ships no toolkit runtime to inject it, hence the explicit lib mount +
-# LD_LIBRARY_PATH.
+# The plugin discovers NVML/libcuda + the CDI hooks from the measured root
+# mounted at /driver-root. It MUST NOT put the guest lib dir on LD_LIBRARY_PATH
+# — /usr/lib/x86_64-linux-gnu holds the guest's libc/libpthread, which would
+# shadow the container's own and crash the Go runtime with
+# "pthread_create failed: Invalid argument". Instead NVIDIA_DRIVER_ROOT=/ +
+# CONTAINER_DRIVER_ROOT=/driver-root let the plugin's own resolver find the libs.
 #
-# FAIL_ON_INIT_ERROR=false keeps GPU-less boots degraded-nothing: the plugin
-# idles instead of crash-looping when no NVIDIA device exists.
+# DEVICE_LIST_STRATEGY=cdi-annotations (v0.19.3 does NOT accept cdi-cri).
+# FAIL_ON_INIT_ERROR=false keeps GPU-less boots degraded-nothing.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -45,11 +47,15 @@ spec:
             - name: FAIL_ON_INIT_ERROR
               value: "false"
             - name: DEVICE_LIST_STRATEGY
-              value: cdi-cri
+              value: cdi-annotations
+            - name: DEVICE_ID_STRATEGY
+              value: uuid
+            - name: NVIDIA_DRIVER_ROOT
+              value: /
+            - name: CONTAINER_DRIVER_ROOT
+              value: /driver-root
             - name: NVIDIA_VISIBLE_DEVICES
               value: all
-            - name: LD_LIBRARY_PATH
-              value: /host-lib
           securityContext:
             privileged: true
           volumeMounts:
@@ -57,9 +63,8 @@ spec:
               mountPath: /var/lib/kubelet/device-plugins
             - name: cdi-dir
               mountPath: /var/run/cdi
-              readOnly: true
-            - name: host-lib
-              mountPath: /host-lib
+            - name: driver-root
+              mountPath: /driver-root
               readOnly: true
             - name: dev
               mountPath: /dev
@@ -71,9 +76,9 @@ spec:
           hostPath:
             path: /var/run/cdi
             type: DirectoryOrCreate
-        - name: host-lib
+        - name: driver-root
           hostPath:
-            path: /usr/lib/x86_64-linux-gnu
+            path: /
         - name: dev
           hostPath:
             path: /dev
