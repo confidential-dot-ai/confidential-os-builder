@@ -2,9 +2,11 @@
 Description=Generate the NVIDIA CDI spec for GPU pods
 # The spec enumerates /dev/nvidia* nodes and the driver libraries, so it must
 # run after persistenced has attached the driver and created the device nodes.
+# It also runs after nvidia-imex-channel so the IMEX channel node exists before
+# we fold it into every device (B200/NVSwitch needs it or CUDA errors 802).
 # kubelet/containerd need no ordering against this: the device plugin retries
 # until the spec exists, and containerd reads /var/run/cdi per pod creation.
-After=nvidia-persistenced.service
+After=nvidia-persistenced.service nvidia-imex-channel.service
 Wants=nvidia-persistenced.service
 
 [Service]
@@ -15,7 +17,17 @@ RemainAfterExit=yes
 ExecCondition=/bin/sh -c 'grep -qx 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null'
 # /var/run is tmpfs: the spec is regenerated fresh every boot, matching
 # whatever GPUs this launch passed through.
-ExecStart=/usr/bin/nvidia-ctk cdi generate --output=/var/run/cdi/nvidia.yaml
+#
+# nvml mode gives the full spec (device nodes + driver libraries) but omits the
+# IMEX channel; imex mode carries the channel but not the libraries. Neither
+# alone is complete for B200. Generate the nvml spec, then fold the IMEX channel
+# deviceNode into every device's containerEdits (one awk pass: after each
+# `deviceNodes:` line, insert the channel at matching indent, major read from
+# /proc/devices) so a pod requesting nvidia.com/gpu gets the fabric channel
+# alongside the GPUs — no separate resource request. No-op when the channel
+# node is absent (non-NVSwitch host).
+ExecStart=/usr/bin/nvidia-ctk cdi generate --mode=nvml --output=/var/run/cdi/nvidia.yaml
+ExecStart=/bin/sh /usr/local/bin/nvidia-cdi-add-imex.sh /var/run/cdi/nvidia.yaml
 
 [Install]
 WantedBy=multi-user.target
