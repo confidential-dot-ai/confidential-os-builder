@@ -1,4 +1,8 @@
-# nri-image-policy boot config — the MEASURED boot-time floor.
+# nri-image-policy boot config — the MEASURED boot-time floor. TEMPLATE:
+# mkosi.sync renders this to etc/nri/conf.d/image-policy.yaml at build time,
+# substituting @NRI_DIGEST@/@NRI_IMAGE@ and @CDS_DIGEST@/@CDS_IMAGE@ with the
+# C8S_REF-resolved digests (see render_nri_floor). Edit this file, not the
+# generated one.
 #
 # The plugin binary is baked at /opt/nri/plugins/10-nri-image-policy and
 # containerd launches it pre-registered (see the NRI drop-in under
@@ -27,12 +31,15 @@ plugin:
   health_addr: "unix:///var/run/nri-image-policy/health.sock"
 
 allowlist:
-  # Minimal valid floor: self-allow the baked plugin's own image (the same
-  # digest this profile's mkosi.sync pins). Nothing else needs admitting
-  # pre-install — everything that runs at boot is in an exempt namespace.
-  # Keep in lockstep with NRI_IMAGE in mkosi.sync.
+  # Cold-boot floor, both entries resolved from C8S_REF by mkosi.sync:
+  #   - the plugin's own image (self-allow), and
+  #   - CDS, so it can start against this fail-closed plugin and then serve the
+  #     live allowlist the pull loop below fetches. Without CDS admitted here,
+  #     no allowlist is ever served and `c8s install` deadlocks.
+  # Everything else at boot is in an exempt namespace.
   always_allow:
-    "sha256:56a831e76448a25e61842d71f72e27e1b29af71ee1f5c113db2cb396c552f181": "ghcr.io/confidential-dot-ai/nri-image-policy@sha256:56a831e76448a25e61842d71f72e27e1b29af71ee1f5c113db2cb396c552f181"
+    "@NRI_DIGEST@": "@NRI_IMAGE@"
+    "@CDS_DIGEST@": "@CDS_IMAGE@"
   pull:
     # CDS NodePort, node-local. No CDS is listening until c8s install; the
     # pull loop retries and the plugin stays Ready on the floor above.

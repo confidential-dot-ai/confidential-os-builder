@@ -35,6 +35,14 @@ readonly RUN_INSTALLER="https://us.download.nvidia.com/tesla/${NV_VERSION}/NVIDI
 readonly OGKM_SHA256="cb26114c97ef2568377a7eb55ef97e559c42f1b686238b4d09d7a6fabd0cad50"
 readonly RUN_SHA256="36203b8960b7e49c8a42f6ba1f5863cde34a05e93d2b24b798af06dd846f6b82"
 
+# nvidia-container-toolkit-base: nvidia-ctk (CDI spec generation at boot) +
+# nvidia-cdi-hook (referenced by the generated spec). CDI-only GPU-pod path —
+# no nvidia-container-runtime wrapper, containerd 2.x injects CDI devices
+# natively. sha256 from the repo's Packages index; bump both together.
+readonly TK_VERSION="1.19.1-1"
+readonly TK_DEB="https://nvidia.github.io/libnvidia-container/stable/deb/amd64/nvidia-container-toolkit-base_${TK_VERSION}_amd64.deb"
+readonly TK_SHA256="b6c5b4e77a28cde0197cc0e64edf75538604775d9f8aea502cef667e7e5b2132"
+
 # --- Paths ---
 readonly KERNEL_OUT="output/kernel"
 readonly TOOLS_TREE="mkosi/kernel-builder/mkosi.output/image"
@@ -215,6 +223,16 @@ stage_bin nvidia-smi
 stage_bin nvidia-persistenced
 stage_bin nvidia-modprobe 4755   # setuid root — creates device nodes on demand
 
+# CUDA userspace driver stack — what a CUDA app (inference containers via CDI
+# bind-mounts) actually dlopens: libcuda + its JIT/compiler companions. Without
+# these the image can run nvidia-smi but no CUDA workload.
+stage_lib libcuda.so
+stage_lib libcudadebugger.so
+stage_lib libnvidia-nvvm.so
+stage_lib libnvidia-ptxjitcompiler.so
+stage_lib libnvidia-gpucomp.so
+stage_lib libnvidia-allocator.so
+
 # GSP firmware: the open modules request_firmware() a GSP blob at load time.
 # It must live at /lib/firmware/nvidia/<ver>/. Stage the whole per-version dir.
 log "Staging GSP firmware"
@@ -222,5 +240,22 @@ FW_SRC="$(find "$RUN_SRC/firmware" -maxdepth 1 -name '*.bin' -print -quit 2>/dev
 [[ -n "$FW_SRC" ]] || die "no GSP firmware .bin found under $RUN_SRC/firmware"
 install -d "$STAGE/usr/lib/firmware/nvidia/${NV_VERSION}"
 install -m0644 "$RUN_SRC"/firmware/*.bin "$STAGE/usr/lib/firmware/nvidia/${NV_VERSION}/"
+
+# =============================================================================
+# Part 3: stage nvidia-ctk + nvidia-cdi-hook from the container-toolkit deb
+# =============================================================================
+# CDI GPU-pod path: a boot oneshot (nvidia-cdi-generate.service, gpu profile)
+# runs `nvidia-ctk cdi generate`; the spec's hooks exec nvidia-cdi-hook. The
+# nvidia-container-runtime shim in the same deb is deliberately NOT staged.
+log "Staging nvidia-ctk + nvidia-cdi-hook from container-toolkit ${TK_VERSION}"
+fetch "$TK_DEB" "$TK_SHA256" "$CACHE/nvidia-container-toolkit-base_${TK_VERSION}_amd64.deb"
+rm -rf "$WORK/tk"
+mkdir -p "$WORK/tk"
+dpkg-deb -x "$CACHE/nvidia-container-toolkit-base_${TK_VERSION}_amd64.deb" "$WORK/tk"
+for b in nvidia-ctk nvidia-cdi-hook; do
+  [[ -x "$WORK/tk/usr/bin/$b" ]] || die "$b not found in toolkit-base deb"
+  install -D -m0755 "$WORK/tk/usr/bin/$b" "$STAGE/usr/bin/$b"
+done
+rm -rf "$WORK/tk"
 
 log "steep-fetch-gpu done — modules + userspace staged under $STAGE"

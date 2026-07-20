@@ -155,6 +155,42 @@ against this image, all verified against the chart source:
   deployment's expected measurements (`cds.measurements` values) so the
   mesh verifies the node it runs on.
 
+## Operator-key access (console-free, non-TOFU)
+
+An external operator gets an admin kubeconfig for the sealed cluster with
+only their own ECDSA key — no console, no pre-shared secret, no host trust,
+not trust-on-first-use. Launch-time and boot-time pieces:
+
+- **Launch** binds the operator's public key: `confai launch
+  --operator-key <op.pub>` attaches a labelled `opkeydata` disk carrying the
+  raw pubkey (TDX only).
+- **Boot**: the initrd (`mkosi/initrd/mkosi.extra/init`) reads the pubkey,
+  hashes it, and extends `SHA384(0x00*48 || SHA384(op_pub))` into RTMR[3]
+  before `switch_root`, then stages the pubkey to
+  `/etc/confai/operator-pubkey`. Fail-closed: key supplied but extend fails
+  → reboot, never boot with the binding stripped.
+- **Release**: the baked `cred-release.service` (`:8443`, RA-TLS) re-checks
+  `SHA384(pubkey file) == own RTMR[3]`, then issues the operator a
+  cluster-admin client cert signed by the RKE2 **client** CA over an
+  attested channel. The operator runs `c8s get-kubeconfig --node <ip>
+  --operator-key <op.key>`: it verifies the node's TDX quote in-process
+  (rtmr[3] == H(op_pub)) and RA-TLS-verifies the `:8443` serving cert
+  against the same quote, so the host can't MITM.
+
+Two failure modes hard-won here (both fixed; noted so they stay fixed):
+
+- **RTMR[3] extend must be a single 48-byte write.** `bash` `printf` splits
+  its output at `0x0a` bytes, so redirecting it at the extend node fails for
+  the ~1-in-6 keys whose digest contains a newline — and the fail-closed
+  extender then reboot-loops. The initrd converts to a tmpfs file and
+  `dd bs=48 count=1`.
+- **The kubeconfig must carry the SERVING CA, not the client CA.** RKE2 signs
+  the apiserver serving cert with `server-ca.crt`, distinct from the
+  `client-ca.crt` that signs kube clients. `cred-release` releases the
+  serving CA (`--server-ca-cert`, RKE2 default) as the kubeconfig trust
+  anchor; releasing the client CA fails `kubectl` with "certificate signed
+  by unknown authority". On kubeadm both are `/etc/kubernetes/pki/ca.crt`.
+
 ## Validation stages
 
 - **S0 kernel**: `bin/confos kernel --kernel-config-fragment
@@ -183,17 +219,28 @@ against this image, all verified against the chart source:
 - **S5 CI + publish**: c8s.yml green; a no-change rerun hits the
   roothash publish-skip; pulled artifact re-verifies.
 
-## Deferred: GPU pods (follow-up)
+## GPU pods
 
-The gpu profile makes GPUs host-visible (`nvidia-smi`, CC Ready) but NOT
-schedulable as pod resources. That needs (a) image-side:
-nvidia-container-toolkit (`nvidia-ctk`, `nvidia-container-runtime{,-hook}`,
-`libnvidia-container`) plus either a boot oneshot generating a CDI spec
-(`nvidia-ctk cdi generate` — lands on the overlay but derives from the
-measured driver) or a containerd runtime drop-in; and (b) cluster-side:
-nvidia-device-plugin (could be baked as a `server/manifests/` file,
-digest-pinned). Do this only after S4 passes so GPU-pod breakage never
-conflates with enforcement bring-up.
+GPUs are schedulable as `nvidia.com/gpu` on the inner cluster, CDI end to end
+— no nvidia-container-runtime wrapper:
+
+- **Image-side** (`bin/steep-fetch-gpu` + gpu profile): the CUDA userspace
+  driver stack (`libcuda` + JIT/compiler companions — without these the image
+  ran `nvidia-smi` but no CUDA workload), `nvidia-ctk`/`nvidia-cdi-hook` from
+  the pinned container-toolkit deb, and `nvidia-cdi-generate.service` — a boot
+  oneshot after persistenced that writes `/var/run/cdi/nvidia.yaml` (tmpfs;
+  regenerated per boot from the measured driver, skipped on GPU-less boots).
+- **Cluster-side** (c8s profile): a digest-pinned nvidia-device-plugin
+  DaemonSet baked at `server/manifests/nvidia-device-plugin.yaml`, kube-system
+  (PSA- and allowlist-exempt), `DEVICE_LIST_STRATEGY=cdi-annotations`,
+  `FAIL_ON_INIT_ERROR=false` so GPU-less boots stay degraded-nothing.
+- **Runtime**: RKE2's containerd 2.x has CDI enabled by default and injects
+  the devices at pod creation.
+
+A GPU workload just requests `resources.limits: {nvidia.com/gpu: N}`. Its
+image must still be on the NRI allowlist (workload namespaces are not
+exempt). Not yet covered: NVSwitch passthrough + in-guest fabric manager —
+NVLink P2P for multi-GPU TP is unvalidated; NCCL may fall back to SHM.
 
 ## Risks / open questions
 

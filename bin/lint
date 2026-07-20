@@ -22,21 +22,26 @@ if [ -n "$missing" ]; then
     exit 1
 fi
 
-# The NRI_IMAGE digest pinned in the c8s sync must be the one the baked
-# boot policy self-allows, or the measured fail-closed floor denies the
-# very plugin image it ships.
+# kernel/c8s-dev.config (C8S_DEV=1 demo builds) is the union of c8s.config
+# and dev.config, committed verbatim for the same one-fragment reason.
+for src in kernel/c8s.config kernel/dev.config; do
+    missing=$(grep -E '^CONFIG_|^# CONFIG_.* is not set$' "$src" \
+              | grep -vFxf kernel/c8s-dev.config || true)
+    if [ -n "$missing" ]; then
+        echo "bin/lint: kernel/c8s-dev.config must contain every effective line of $src; missing:" >&2
+        echo "$missing" >&2
+        exit 1
+    fi
+done
+
+# The baked NRI floor is a template (image-policy.yaml.in) whose always_allow
+# entries are @-tokens the c8s sync fills with the ref-resolved nri + cds
+# digests. It must NOT carry a hardcoded sha256 there — a literal would bake a
+# stale digest the fail-closed floor then can't reconcile with the ref.
 c8s_profile=mkosi/base/mkosi.profiles/c8s
-nri_digest=$(sed -n 's/^NRI_IMAGE=.*@\(sha256:[a-f0-9]*\)".*$/\1/p' "$c8s_profile/mkosi.sync")
-policy="$c8s_profile/mkosi.extra/etc/nri/conf.d/image-policy.yaml"
-[ -n "$nri_digest" ] && [ -f "$policy" ] || {
-    echo "bin/lint: NRI_IMAGE pin or baked image-policy.yaml not found" >&2
-    exit 1
-}
-# Compare the full digest set (always_allow map keys AND reference values)
-# against the pin, so a half-bumped entry can't hide behind the other half.
-policy_digests=$(grep -F 'nri-image-policy' "$policy" | grep -oE 'sha256:[a-f0-9]{64}' | sort -u)
-if [ "$policy_digests" != "$nri_digest" ]; then
-    echo "bin/lint: $policy must reference exactly the NRI_IMAGE digest pinned in mkosi.sync ($nri_digest); found:" >&2
-    echo "${policy_digests:-  <none>}" >&2
+policy="$c8s_profile/image-policy.yaml.in"
+[ -f "$policy" ] || { echo "bin/lint: NRI floor template $policy not found" >&2; exit 1; }
+if grep -qE '^[[:space:]]*"sha256:[a-f0-9]{64}"[[:space:]]*:' "$policy"; then
+    echo "bin/lint: $policy has a hardcoded always_allow digest; use @NRI_DIGEST@/@CDS_DIGEST@ tokens (rendered from C8S_REF by mkosi.sync)" >&2
     exit 1
 fi

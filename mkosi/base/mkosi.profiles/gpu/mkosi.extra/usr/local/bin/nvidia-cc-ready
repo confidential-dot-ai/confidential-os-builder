@@ -17,19 +17,60 @@ if ! grep -qxl 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null; then
     exit 0
 fi
 
-# If the driver never came up (nvidia-smi fails), don't hard-fail the boot;
-# surface it and leave the GPU un-readied for an operator to inspect.
-if ! nvidia-smi >/dev/null 2>&1; then
-    echo "nvidia-cc-ready: nvidia-smi not responding; driver not up. Leaving GPUs un-readied." >&2
+# Gate on the ready-state QUERY (`-grs`) parsing, not just `nvidia-smi` exit.
+# Ordering After=nvidia-persistenced is not enough: the out-of-tree module load
+# + the GPU function-level reset can still be settling when persistenced reports
+# started, so nvidia-smi and the conf-compute queries fail transiently (and
+# `-srs 1` then errors with rc=6 — "no ready device"). The original unit bailed
+# on the first nvidia-smi failure and left the GPU un-readied forever (CC-locked:
+# nvidia-smi "No devices found" despite /dev/nvidia0 existing). `-grs` returning
+# a parseable Ready State is the precise proof the GPU is enumerated and the CC
+# subsystem is live — the exact precondition `-srs` needs.
+grs() { nvidia-smi conf-compute -grs 2>/dev/null; }
+cc_feature() { nvidia-smi conf-compute -f 2>/dev/null; }
+
+DEADLINE=$(( $(date +%s) + 180 ))
+until grs | grep -qiE 'ready state'; do
+    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+        # Never hard-fail — a GPU-less/degraded boot must still reach
+        # multi-user — but distinguish the failure mode for diagnosis.
+        if nvidia-smi >/dev/null 2>&1; then
+            echo "nvidia-cc-ready: driver up but '-grs' never reported a Ready State within 180s; leaving GPUs un-readied." >&2
+        else
+            echo "nvidia-cc-ready: nvidia-smi not responding within 180s; driver not up. Leaving GPUs un-readied." >&2
+        fi
+        exit 0
+    fi
+    sleep 2
+done
+
+# Already ready (idempotent re-run, or a prior boot readied it): nothing to do.
+if grs | grep -qiE 'ready state.*(enabled|ready)'; then
+    echo "nvidia-cc-ready: GPUs already Ready."
+    grs; exit 0
+fi
+
+# Non-CC launch: CC feature OFF → -srs is a no-op/error. Tolerate and skip.
+if ! cc_feature | grep -qiE 'cc feature.*(on|enabled)'; then
+    echo "nvidia-cc-ready: CC feature not ON; not a confidential launch. Skipping -srs."
     exit 0
 fi
 
-# Only meaningful when the GPUs are actually in CC mode. On a non-CC host the
-# query returns CC State: OFF and -srs is a no-op / error; tolerate it.
-if nvidia-smi conf-compute -q 2>/dev/null | grep -q 'CC State.*ON'; then
-    echo "nvidia-cc-ready: CC on — setting GPUs Ready State."
-    nvidia-smi conf-compute -srs 1
-    nvidia-smi conf-compute -q | grep -E 'CC State|Multi-GPU|Ready State' || true
-else
-    echo "nvidia-cc-ready: CC State not ON; not a confidential launch. Skipping -srs."
+# Flip the Ready-State gate once (it is a set action, not a poll), then confirm
+# via -grs. If -srs errors or the read-back lags, poll -grs briefly for the
+# state to settle before giving up — but do not blindly re-issue -srs.
+echo "nvidia-cc-ready: CC on — setting GPUs Ready State."
+if ! nvidia-smi conf-compute -srs 1; then
+    echo "nvidia-cc-ready: '-srs 1' returned nonzero; the GPU may not be in a settable state yet." >&2
 fi
+VERIFY_DEADLINE=$(( $(date +%s) + 30 ))
+until grs | grep -qiE 'ready state.*(enabled|ready)'; do
+    if [ "$(date +%s)" -ge "$VERIFY_DEADLINE" ]; then
+        echo "nvidia-cc-ready: Ready State did not read Ready within 30s of -srs. GPU left un-readied (unusable for CC compute)." >&2
+        grs >&2 || true
+        exit 0   # surface loudly; do not block boot
+    fi
+    sleep 2
+done
+echo "nvidia-cc-ready: GPUs Ready."
+grs

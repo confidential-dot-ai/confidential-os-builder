@@ -123,5 +123,88 @@ mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
 # Generate unique machine-id for this boot
 cat /proc/sys/kernel/random/uuid | tr -d '-' > /sysroot/etc/machine-id
 
+# --- Operator-key binding: extend RTMR[3] before switch_root ---------------
+# Bind a launch-supplied operator public key into the TDX measurement so an
+# external operator can attest that THIS node will only trust THEIR key, with
+# no console, no pre-shared cluster secret, and no trust in the (untrusted)
+# host that delivered the key. The launcher attaches a KubeVirt secret disk
+# labelled "opkeydata" (an ISO9660 filesystem, same mechanism as cloud-init's
+# "cidata") containing one file, `pubkey` — the raw operator public key. We
+# hash it here (SHA-384) and extend that into RTMR[3] — the one
+# guest-controllable measurement register (mrconfigid/mrowner are TD-init
+# fields KubeVirt does not set) — via the tdx_guest sysfs. Extend semantics:
+# RTMR_new = SHA384(RTMR_old || data48), so the operator verifies
+# rtmr3 == SHA384(0x00*48 || SHA384(op_pub)) offline against their own key.
+#
+# The initrd is the single place the key is hashed (it has sha384sum), so the
+# credential-release service can later trust the pubkey off this same disk
+# without a separate digest to cross-check: this initrd is measured, and it
+# only extends the hash of the exact bytes it reads.
+#
+# Why a labelled secret disk and not a raw serial-tagged block device: the
+# secret arrives as a file inside an ISO filesystem (KubeVirt's SecretVolume
+# renders it that way), so it is read by mount+file, not by raw offset. This
+# keeps the launcher side a plain Secret (no PVC lifecycle) at the cost of one
+# labelled mount here. Guest kernel has ISO9660 (CONFIG_ISO9660_FS=y).
+#
+# This runs BEFORE switch_root: nothing in the measured root or the (host-
+# writable) overlay executes first, so the value is fixed for the TD's life
+# and reflects only the launch-supplied key.
+#
+# Fail-closed asymmetry (security-critical):
+#   - no opkey disk               -> skip (unbound node; a non-operator boot)
+#   - disk present, extend FAILS  -> FATAL. Booting on with RTMR[3] unextended
+#     when a key was supplied would let the host strip the binding undetected.
+RTMR3=/sys/devices/virtual/misc/tdx_guest/measurements/rtmr3:sha384
+OPKEY_DEV=$(blkid -L opkeydata 2>/dev/null || true)
+
+if [ -n "$OPKEY_DEV" ]; then
+    echo "initrd: found opkeydata disk at $OPKEY_DEV — binding operator key into RTMR[3]"
+    fail_opkey() {
+        echo "FATAL: operator key supplied but RTMR[3] extend failed: $1" >&2
+        echo b > /proc/sysrq-trigger
+        exit 1  # fallback if sysrq disabled
+    }
+    [ -w "$RTMR3" ] || fail_opkey "no writable $RTMR3 (guest kernel lacks TDX runtime measurement?)"
+    mkdir -p /opkey
+    mount -o ro "$OPKEY_DEV" /opkey 2>/dev/null || fail_opkey "mount $OPKEY_DEV failed"
+    [ -s /opkey/pubkey ] || { umount /opkey 2>/dev/null; fail_opkey "no /opkey/pubkey on disk"; }
+    # SHA-384 of the exact pubkey bytes -> 96 hex chars (sha384sum prints
+    # "<hex>  -"). This is the sole place the key is hashed.
+    DIGEST_HEX=$(sha384sum < /opkey/pubkey | cut -d' ' -f1)
+    # Stage the pubkey into the (post-switch_root) rootfs so the cred-release
+    # service reads a plain file — it can't mount the ISO itself under systemd
+    # hardening. The initrd is the single reader of the disk; what it stages is
+    # exactly the bytes it hashed into RTMR[3], and the service re-checks
+    # SHA-384(file) against RTMR[3] before trusting it.
+    mkdir -p /sysroot/etc/confai
+    cp /opkey/pubkey /sysroot/etc/confai/operator-pubkey || { umount /opkey 2>/dev/null; fail_opkey "stage pubkey failed"; }
+    chmod 0644 /sysroot/etc/confai/operator-pubkey
+    umount /opkey 2>/dev/null || true
+    case "$DIGEST_HEX" in
+        *[!0-9a-f]* | "") fail_opkey "sha384sum produced non-hex" ;;
+    esac
+    [ "${#DIGEST_HEX}" = "96" ] || fail_opkey "digest is ${#DIGEST_HEX} hex chars, want 96"
+    # Convert 96 hex chars -> 48 raw bytes in a tmpfs file, then write to the
+    # extend node with dd in ONE 48-byte write(2): the node rejects any other
+    # size, and bash printf splits its output at 0x0a bytes (~17% of digests),
+    # so redirecting printf at the node fails for those keys. sed turns "ab"
+    # into "\xab"; printf interprets the escapes.
+    esc=$(printf '%s' "$DIGEST_HEX" | sed 's/../\\x&/g')
+    # Intentional: $esc IS the format string — that's what interprets the \x
+    # escapes into raw bytes. DIGEST_HEX is validated [0-9a-f]{96} above, so
+    # $esc contains only \xNN sequences, no user-controlled format directives.
+    # shellcheck disable=SC2059
+    printf "$esc" > /opkey-digest.bin
+    n=$(wc -c < /opkey-digest.bin)
+    [ "$n" = "48" ] || fail_opkey "digest converted to $n bytes, want 48"
+    dd if=/opkey-digest.bin of="$RTMR3" bs=48 count=1 2>/dev/null \
+        || fail_opkey "write to $RTMR3 rejected"
+    rm -f /opkey-digest.bin
+    echo "initrd: RTMR[3] extended with operator key digest $DIGEST_HEX"
+else
+    echo "initrd: no opkeydata disk — RTMR[3] left unbound"
+fi
+
 echo "initrd: switching root..."
 exec switch_root /sysroot /sbin/init

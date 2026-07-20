@@ -48,19 +48,29 @@ if mountpoint -q "$DIR"; then
     exit 0
 fi
 
-# Find a whole-device LABEL=containerd disk. vda is the verity rootfs. Prefer
-# the SCSI bus (sd*): under SEV-SNP/KubeVirt a secondary virtio-blk disk wedges
-# on every I/O (raw dd hangs in uninterruptible D-state — iommu=on is forced on
-# all virtio devices and the virtio-blk DMA path is broken for hot-attached data
-# disks; virtio-scsi works). Scan sd* first, then vd* as a fallback for
-# launches without that quirk. Poll briefly (~10s) so a slow udev probe doesn't
-# make us miss it. `blkid -p` probes the device directly rather than trusting
-# the (possibly stale) udev cache.
+# Find the containerd data disk. vda is the verity rootfs. Prefer the SCSI bus
+# (sd*): under SEV-SNP/KubeVirt a secondary virtio-blk disk wedges on every I/O
+# (raw dd hangs in uninterruptible D-state — iommu=on is forced on all virtio
+# devices and the virtio-blk DMA path is broken for hot-attached data disks;
+# virtio-scsi works). Scan sd* first, then vd* as a fallback for launches
+# without that quirk. Poll briefly (~10s) so a slow udev probe doesn't make us
+# miss it.
+#
+# Two ways a device qualifies:
+#   1. filesystem LABEL=containerd — a host-prepared, pre-labelled disk.
+#   2. device SERIAL=confai-containerd — a BLANK disk confai attaches with that
+#      serial (mirrors the confai-scratch datadisk). This is the confai path:
+#      the disk carries no filesystem, so the encrypted mkfs below lays one down
+#      per boot. `blkid -p` probes the device directly (not the stale udev
+#      cache); the serial comes from sysfs.
 DEV=""
 for _ in $(seq 1 20); do
     for d in /dev/sd? /dev/vd?; do
         [ -b "$d" ] || continue
         if [ "$(blkid -p -s LABEL -o value "$d" 2>/dev/null || true)" = "containerd" ]; then
+            DEV="$d"; break
+        fi
+        if [ "$(cat "/sys/block/$(basename "$d")/serial" 2>/dev/null || true)" = "confai-containerd" ]; then
             DEV="$d"; break
         fi
     done
