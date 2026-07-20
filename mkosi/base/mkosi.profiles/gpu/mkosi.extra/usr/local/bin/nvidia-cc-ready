@@ -52,8 +52,10 @@ if grs | grep -qiE 'ready state[[:space:]]*:[[:space:]]*(enabled|ready)[[:space:
     grs; exit 0
 fi
 
-# Non-CC launch: CC feature OFF → -srs is a no-op/error. Tolerate and skip.
-if ! cc_feature | grep -qiE 'cc feature.*(on|enabled)'; then
+# Non-CC launch: CC OFF → -srs is a no-op/error. Tolerate and skip.
+# Driver 595 prints "CC status: ON" (not "CC feature"); match either wording,
+# anchored on the value so OFF/disabled can't slip through.
+if ! cc_feature | grep -qiE 'cc (feature|status)[[:space:]]*:[[:space:]]*(on|enabled)[[:space:]]*$'; then
     echo "nvidia-cc-ready: CC feature not ON; not a confidential launch. Skipping -srs."
     exit 0
 fi
