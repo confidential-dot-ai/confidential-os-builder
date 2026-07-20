@@ -16,16 +16,10 @@ Type=oneshot
 RemainAfterExit=yes
 # Skip on a GPU-less boot — same degraded-nothing posture as the other nvidia units.
 ExecCondition=/bin/sh -c 'grep -qx 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null'
-# nvidia-modprobe -c 0 registers the nvidia-caps-imex-channels chardev (its major
-# lands in /proc/devices, dynamically allocated); then mknod channel 0 at that
-# major. Idempotent: skip the mknod if the node already exists.
-ExecStart=/usr/bin/nvidia-modprobe -c 0
-ExecStart=/bin/sh -c 'test -e /dev/nvidia-caps-imex-channels/channel0 || { \
-    maj=$(awk "/nvidia-caps-imex-channels/ {print \$1}" /proc/devices); \
-    test -n "$maj" || { echo "nvidia-imex-channel: no imex major in /proc/devices" >&2; exit 1; }; \
-    mkdir -p /dev/nvidia-caps-imex-channels; \
-    mknod /dev/nvidia-caps-imex-channels/channel0 c "$maj" 0; \
-    chmod 0666 /dev/nvidia-caps-imex-channels/channel0; }'
+# Logic lives in a script, not inline: systemd's unit parser mangles a multi-line
+# ExecStart with $()/backslash-continuations ("Ignoring unknown escape sequences"),
+# which silently skips the mknod and leaves CUDA at error 802.
+ExecStart=/bin/sh /usr/local/bin/nvidia-imex-channel.sh
 
 [Install]
 WantedBy=multi-user.target
