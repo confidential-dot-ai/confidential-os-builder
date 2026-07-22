@@ -43,6 +43,7 @@ CI's mode until the attestation-rs `-gpu` image digest is pinned),
 | Plugin boot config (measured floor) | profile mkosi.extra | `/etc/nri/conf.d/image-policy.yaml` |
 | RKE2 config: Cilium CNI, kube-proxy off, CIS, PSA, audit | ported from base-images rke2 (validated e2e under c8s) | `/etc/rancher/rke2/` + `server/manifests/` |
 | containerd-data-disk service | ported from base-images rke2 | encrypted `LABEL=containerd` backing for the image cache |
+| models-disk service | this profile | read-only mount of a pre-populated weights disk (serial `confai-models`) at `/var/lib/models` |
 | attestation-api | **attest-gpu profile** (or `attest` under `C8S_STOCK_ATTEST=1`), not this one | host service on `0.0.0.0:8400` |
 | NVIDIA driver stack | **gpu profile** | see docs/GPU-IMAGE-PLAN.md |
 
@@ -88,6 +89,11 @@ BTF-shipping distro kernel makes; the base/gpu images keep RANDSTRUCT.
   re-encrypts over it per boot). Keeps the multi-GiB image cache off guest
   RAM. Prefer virtio-scsi — the script scans `sd*` first; secondary
   virtio-blk disks have wedged under SEV-SNP/KubeVirt before.
+- **Optional: a pre-populated weights disk with serial `confai-models`**
+  (virtio-scsi). `models-disk.service` mounts it read-only at `/var/lib/models`
+  so a large HF cache survives relaunches instead of re-downloading. Not
+  encrypted / not mkfs'd — weights are public (integrity, not secrecy). Absent
+  → no-op. Attach via `confai launch --models-pvc <name>`.
 - Guest memory ≥16G (etcd OOMs at small sizes). TDX measurement is
   topology-invariant, so memory/SMP can vary per launch without changing
   the reference values.
