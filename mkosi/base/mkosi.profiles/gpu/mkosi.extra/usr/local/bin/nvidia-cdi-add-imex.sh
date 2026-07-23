@@ -29,4 +29,13 @@ awk -v ch="$CHANNEL" -v maj="$MAJOR" '
     printf "%s  permissions: rwm\n", ind
   }
 ' "$SPEC" > "$SPEC.tmp"
+
+# The insert keys on nvidia-ctk's exact "deviceNodes:" layout; a toolkit bump
+# that changes it would make the fold a silent no-op. Fail loudly instead and
+# keep the original spec (valid, just channel-less).
+if ! grep -q "$CHANNEL" "$SPEC.tmp"; then
+    rm -f "$SPEC.tmp"
+    echo "nvidia-cdi-add-imex: fold inserted nothing (nvidia-ctk spec layout changed?)" >&2
+    exit 1
+fi
 mv "$SPEC.tmp" "$SPEC"
