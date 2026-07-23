@@ -14,7 +14,8 @@
 # RAM on it is not.
 #
 # Ordered Before rke2 so the mount exists when pods start. Read-only, nodev,
-# nosuid: the guest never writes it and it holds no executables it should run.
+# nosuid, noexec: the guest never writes it, and nothing on a host-writable
+# disk may execute in the guest — workloads read weights, not binaries.
 set -u
 
 DIR=/var/lib/models
@@ -58,7 +59,7 @@ if [ -z "$DEV" ]; then
 fi
 
 echo "models-disk: found weights disk at $DEV — mounting read-only at $DIR"
-if timeout "$STEP_TIMEOUT" mount -o ro,nodev,nosuid "$DEV" "$DIR"; then
+if timeout "$STEP_TIMEOUT" mount -o ro,nodev,nosuid,noexec "$DEV" "$DIR"; then
     echo "models-disk: mounted $DEV read-only at $DIR"
     exit 0
 fi
