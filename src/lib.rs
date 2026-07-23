@@ -151,11 +151,19 @@ pub struct BuildArgs {
     #[arg(long, env = "CONFOS_FIRMWARE", default_value = "output/OVMF.fd")]
     pub firmware: PathBuf,
 
-    /// Path to OVMF firmware binary used for TDX measurement. Must be a
-    /// build with TDVF code paths compiled in (TD HOB processing, TDCALL
-    /// plumbing). Ubuntu's `ovmf` package binary at
-    /// `/usr/share/ovmf/OVMF.fd` works. confos's IGVM-aware firmware does
-    /// NOT include TDVF and will hang silently when booted as a TDX guest.
+    /// Path to OVMF firmware binary used for TDX measurement. Must be the
+    /// *unified* Intel TDX build (`OVMF.inteltdx.fd`) — a single flat image
+    /// with the TDVF reset vector + metadata that boots a TD via QEMU `-bios`.
+    /// Ubuntu's `ovmf` package ships it at `/usr/share/ovmf/OVMF.inteltdx.fd`.
+    ///
+    /// NOT the plain `/usr/share/ovmf/OVMF.fd`: that is the split/pflash CODE
+    /// image, and while `tdx-measure` can still hash it, it does NOT execute
+    /// as a TD `-bios` firmware — the guest hangs silently with zero console
+    /// output (verified on b200: OVMF.fd → 0 bytes, OVMF.inteltdx.fd → boots
+    /// to `tdx: Guest detected`). Since KubeVirt boots TDX via `-bios`, the
+    /// firmware whose bytes the manifest measures MUST be the -bios-bootable
+    /// one, or `c8s install --measurements <manifest mrtd>` can never match a
+    /// live quote (confidential-metal#82).
     ///
     /// If --platform is `snp`, this firmware is ignored. If --platform is
     /// `tdx` or `both`, the TDX `mrtd` in the manifest is the hash of
@@ -163,7 +171,7 @@ pub struct BuildArgs {
     #[arg(
         long = "tdx-firmware",
         env = "CONFOS_TDX_FIRMWARE",
-        default_value = "/usr/share/ovmf/OVMF.fd"
+        default_value = "/usr/share/ovmf/OVMF.inteltdx.fd"
     )]
     pub tdx_firmware: PathBuf,
 
