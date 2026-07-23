@@ -58,7 +58,13 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         let fw = args.tdx_firmware.clone();
         if !fw.exists() {
             anyhow::bail!(
-                "TDX firmware not found: {} (--tdx-firmware). Install ubuntu's `ovmf` package (`apt install ovmf`) or pass --tdx-firmware/-Eenv CONFOS_TDX_FIRMWARE.",
+                "TDX firmware not found: {} (--tdx-firmware). Needs the unified \
+                 Intel TDX build `OVMF.inteltdx.fd` (boots a TD via -bios); \
+                 ubuntu's `ovmf` package ships it under /usr/share/ovmf/. If \
+                 your distro names it differently (e.g. some builds ship only \
+                 OVMF.tdx.fd, which is pflash-style and does NOT -bios-boot), \
+                 point --tdx-firmware / CONFOS_TDX_FIRMWARE at a -bios-capable \
+                 OVMF.inteltdx.fd.",
                 fw.display()
             );
         }
