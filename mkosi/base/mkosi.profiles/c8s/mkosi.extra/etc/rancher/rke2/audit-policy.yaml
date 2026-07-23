@@ -18,13 +18,6 @@ rules:
         resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
       - group: "networking.k8s.io"
         resources: ["networkpolicies"]
-  # Log authentication decisions
-  - level: Metadata
-    nonResourceURLs:
-      - "/api*"
-      - "/healthz*"
-    omitStages:
-      - "RequestReceived"
   # Default: log metadata for everything else
   - level: Metadata
     omitStages:
