@@ -139,7 +139,7 @@ pub fn run_configure_phase(
 /// wants off but that the enabled stack select's anyway: the symbol must
 /// resolve `=y` without the fragment requesting it, so the assertion fails
 /// loudly when the forcing goes away (an actual `=y` pin would keep the
-/// symbol on silently).
+/// symbol on silently, so combining a pin with an assertion is rejected).
 fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     /// Final request for a symbol after last-fragment-wins merging; On/Off
     /// carry the requesting fragment's name for the error message.
@@ -154,9 +154,13 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
         /// requesting it, so the build fails if the forcing goes away
         /// instead of the fragment silently keeping the symbol on.
         Forced(String),
-        /// Non-boolean value; not verified.
-        Skip,
     }
+    fn valid_symbol(symbol: &str) -> bool {
+        symbol.strip_prefix("CONFIG_").is_some_and(|name| {
+            !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
+    }
+
     let config = fs_err::read_to_string(resolved)?;
     // symbol -> value from the resolved .config's `CONFIG_X=value` lines.
     let resolved_values: std::collections::HashMap<&str, &str> = config
@@ -165,63 +169,150 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
         .filter_map(|l| l.split_once('='))
         .collect();
     let mut requested: std::collections::BTreeMap<String, Request> = Default::default();
+    // Forced assertions are comments and therefore cannot retract an actual
+    // on-request. Remember every on-pin independently of last-wins state so a
+    // pin cannot make a forced assertion pass after its forcing chain vanishes.
+    let mut on_pins: std::collections::BTreeMap<String, (String, String)> = Default::default();
+    let mut forced: std::collections::BTreeMap<String, String> = Default::default();
     for frag in fragments {
         let name = frag.file_name().unwrap_or_default().to_string_lossy();
         for line in fs_err::read_to_string(frag)?.lines() {
-            // Match on the first whitespace-delimited token so a trailing
-            // comment can't smuggle a request past verification.
-            let token = line.split_whitespace().next().unwrap_or("");
-            if let Some((symbol, value)) = token
-                .split_once('=')
-                .filter(|_| token.starts_with("CONFIG_"))
-            {
-                let request = match value {
-                    "y" | "m" => Request::On(name.to_string()),
+            let trimmed = line.trim();
+            if trimmed.starts_with("CONFIG_") {
+                if line != trimmed {
+                    return Err(anyhow!(
+                        "{name}: ineffective request {line:?}; config assignments must \
+                         start in column 0 and have no surrounding whitespace"
+                    ));
+                }
+                let (symbol, value) = line.split_once('=').ok_or_else(|| {
+                    anyhow!(
+                        "{name}: ineffective request {line:?}; expected \
+                         `CONFIG_SYMBOL=value`"
+                    )
+                })?;
+                if !valid_symbol(symbol) {
+                    return Err(anyhow!(
+                        "{name}: ineffective request {line:?}; config symbols must match \
+                         `CONFIG_[A-Za-z0-9_]+`"
+                    ));
+                }
+                match value {
+                    "y" | "m" => {
+                        on_pins
+                            .entry(symbol.to_string())
+                            .or_insert_with(|| (name.to_string(), value.to_string()));
+                        requested.insert(symbol.to_string(), Request::On(name.to_string()));
+                    }
                     // kconfig treats `=n` exactly like `# is not set`.
-                    "n" => Request::Off(name.to_string()),
-                    _ => Request::Skip,
-                };
-                requested.insert(symbol.to_string(), request);
-            } else if let Some(symbol) = line
-                .strip_prefix("# ")
-                .and_then(|r| r.strip_suffix(" is not set"))
-                .filter(|s| s.starts_with("CONFIG_"))
-            {
-                requested.insert(symbol.to_string(), Request::Off(name.to_string()));
-            } else if let Some(symbol) = line
-                .strip_prefix("# ")
-                .and_then(|r| r.strip_suffix(" is forced on"))
-                .filter(|s| s.starts_with("CONFIG_"))
-            {
-                requested.insert(symbol.to_string(), Request::Forced(name.to_string()));
-            } else if line.starts_with("# CONFIG_")
-                && (line.contains(" is not set") || line.contains(" is forced on"))
-            {
-                // kconfig only honors the exact line; with trailing text the
-                // request silently no-ops in merge AND escapes verification.
+                    "n" => {
+                        requested.insert(symbol.to_string(), Request::Off(name.to_string()));
+                    }
+                    value
+                        if value.trim_start().bytes().next().is_some_and(|b| {
+                            matches!(b.to_ascii_lowercase(), b'y' | b'm' | b'n')
+                        }) =>
+                    {
+                        // Kconfig accepts a lowercase boolean by its first
+                        // character, while other boolean-like spellings are
+                        // ineffective. Require the complete canonical value so
+                        // neither case silently escapes verification.
+                        return Err(anyhow!(
+                            "{name}: non-canonical boolean value in {line:?}; use exactly \
+                             `{symbol}=y`, `{symbol}=m`, or `{symbol}=n`"
+                        ));
+                    }
+                    // Scalar/string request: not verified and, crucially,
+                    // does not erase an earlier boolean request.
+                    _ => {}
+                }
+                continue;
+            }
+
+            // Classify near-miss markers after trimming and whitespace
+            // normalization, then require their exact kconfig spelling. This
+            // catches leading whitespace, `#CONFIG_X`, tabs/double spaces,
+            // trailing text, and invalid symbol characters instead of
+            // silently treating them as comments.
+            let Some(comment) = trimmed.strip_prefix('#') else {
+                continue;
+            };
+            let words: Vec<&str> = comment.split_whitespace().collect();
+            let (symbol, is_forced) = match words.as_slice() {
+                [symbol, "is", "not", "set", ..] if symbol.starts_with("CONFIG_") => {
+                    (*symbol, false)
+                }
+                [symbol, "is", "forced", "on", ..] if symbol.starts_with("CONFIG_") => {
+                    (*symbol, true)
+                }
+                _ => continue,
+            };
+            if !valid_symbol(symbol) {
                 return Err(anyhow!(
-                    "{name}: ineffective request {line:?} (trailing text); \
-                     kconfig ignores the whole line"
+                    "{name}: ineffective request {line:?}; config symbols must match \
+                     `CONFIG_[A-Za-z0-9_]+`"
                 ));
+            }
+            let canonical = if is_forced {
+                format!("# {symbol} is forced on")
+            } else {
+                format!("# {symbol} is not set")
+            };
+            if line != canonical {
+                return Err(anyhow!(
+                    "{name}: ineffective request {line:?}; use the exact spelling \
+                     {canonical:?}"
+                ));
+            }
+            if is_forced {
+                forced
+                    .entry(symbol.to_string())
+                    .or_insert_with(|| name.to_string());
+                requested.insert(symbol.to_string(), Request::Forced(name.to_string()));
+            } else {
+                requested.insert(symbol.to_string(), Request::Off(name.to_string()));
             }
         }
     }
+    let pin_conflicts: Vec<String> = forced
+        .iter()
+        .filter_map(|(symbol, forced_name)| {
+            on_pins.get(symbol).map(|(pin_name, value)| {
+                format!(
+                    "  - {forced_name}: {symbol} asserted forced on, but {pin_name} pins \
+                     {symbol}={value}"
+                )
+            })
+        })
+        .collect();
+    if !pin_conflicts.is_empty() {
+        return Err(anyhow!(
+            "forced-on assertions must not have an =y/=m pin in any fragment; \
+             the pin would keep the symbol on and hide a vanished forcing chain:\n{}",
+            pin_conflicts.join("\n")
+        ));
+    }
+
     let mut mismatches = Vec::new();
     for (symbol, request) in &requested {
         match (request, resolved_values.get(symbol.as_str())) {
-            (Request::Skip, _) | (Request::On(_), Some(&"y")) => {}
+            (Request::On(_), Some(&"y")) => {}
             // Absent also covers a typo'd or removed symbol, which passes
             // silently; dependency-hidden symbols are absent too, so
             // treating absence as an error would false-positive.
             (Request::Off(_), None) => {}
             (Request::On(name), Some(v)) => {
-                mismatches.push(format!("  - {name}: {symbol} requested on, got {symbol}={v}"));
+                mismatches.push(format!(
+                    "  - {name}: {symbol} requested on, got {symbol}={v}"
+                ));
             }
             (Request::On(name), None) => {
                 mismatches.push(format!("  - {name}: {symbol} requested on, dropped"));
             }
             (Request::Off(name), Some(v)) => {
-                mismatches.push(format!("  - {name}: {symbol} requested off, got {symbol}={v}"));
+                mismatches.push(format!(
+                    "  - {name}: {symbol} requested off, got {symbol}={v}"
+                ));
             }
             (Request::Forced(_), Some(&"y")) => {}
             (Request::Forced(name), Some(v)) => {
@@ -369,6 +460,17 @@ mod tests {
     }
 
     #[test]
+    fn verify_fragment_options_reports_module_value_for_failed_off_request() {
+        let d = TempDir::new().unwrap();
+        let frag = write(&d, "frag.config", "# CONFIG_A is not set\n");
+        let resolved = write(&d, "resolved", "CONFIG_A=m\n");
+        let err = verify_fragment_options(&[frag.as_path()], &resolved)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("frag.config: CONFIG_A requested off, got CONFIG_A=m"));
+    }
+
+    #[test]
     fn verify_fragment_options_rejects_not_set_line_with_trailing_text() {
         let d = TempDir::new().unwrap();
         let frag = write(&d, "frag.config", "# CONFIG_A is not set  # rationale\n");
@@ -432,6 +534,65 @@ mod tests {
     }
 
     #[test]
+    fn verify_fragment_options_rejects_forced_assertion_with_pin_in_either_order() {
+        let d = TempDir::new().unwrap();
+        let pin = write(&d, "pin.config", "CONFIG_A=y\n");
+        let assertion = write(&d, "assert.config", "# CONFIG_A is forced on\n");
+        let resolved = write(&d, "resolved", "CONFIG_A=y\n");
+
+        for fragments in [
+            [pin.as_path(), assertion.as_path()],
+            [assertion.as_path(), pin.as_path()],
+        ] {
+            let err = verify_fragment_options(&fragments, &resolved)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("CONFIG_A asserted forced on"));
+            assert!(err.contains("pin.config pins CONFIG_A=y"));
+        }
+    }
+
+    #[test]
+    fn verify_fragment_options_rejects_noncanonical_boolean_values() {
+        let d = TempDir::new().unwrap();
+        let resolved = write(&d, "resolved", "CONFIG_A=y\n");
+        for value in ["yes", "modules", "no", "Y"] {
+            let frag = write(&d, "frag.config", &format!("CONFIG_A={value}\n"));
+            let err = verify_fragment_options(&[frag.as_path()], &resolved)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("non-canonical boolean value"));
+            assert!(err.contains(&format!("CONFIG_A={value}")));
+        }
+    }
+
+    #[test]
+    fn verify_fragment_options_rejects_ineffective_request_spellings() {
+        let d = TempDir::new().unwrap();
+        let resolved = write(&d, "resolved", "CONFIG_A=y\n");
+        for line in [
+            "  CONFIG_A=y",
+            "CONFIG_A = y",
+            "CONFIG_A-B=y",
+            "#CONFIG_A is not set",
+            "#  CONFIG_A is not set",
+            "#\tCONFIG_A is not set",
+            " # CONFIG_A is not set",
+            "# CONFIG_A  is not set",
+            "# CONFIG_A is forced on  # rationale",
+        ] {
+            let frag = write(&d, "frag.config", &format!("{line}\n"));
+            let err = verify_fragment_options(&[frag.as_path()], &resolved)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("ineffective request"),
+                "unexpected error for {line:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn verify_fragment_options_skips_non_boolean_values() {
         let d = TempDir::new().unwrap();
         let frag = write(
@@ -441,6 +602,18 @@ mod tests {
         );
         let resolved = write(&d, "resolved", "CONFIG_C=y\n");
         verify_fragment_options(&[frag.as_path()], &resolved).unwrap();
+    }
+
+    #[test]
+    fn verify_fragment_options_scalar_does_not_erase_earlier_boolean_request() {
+        let d = TempDir::new().unwrap();
+        let first = write(&d, "first.config", "CONFIG_A=y\n");
+        let scalar = write(&d, "scalar.config", "CONFIG_A=42\n");
+        let resolved = write(&d, "resolved", "CONFIG_B=y\n");
+        let err = verify_fragment_options(&[first.as_path(), scalar.as_path()], &resolved)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("first.config: CONFIG_A requested on, dropped"));
     }
 
     #[test]

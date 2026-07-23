@@ -18,3 +18,5 @@
       in [docs/ARCHITECTURE.md](https://github.com/confidential-dot-ai/confidential-os-builder/blob/main/docs/ARCHITECTURE.md))
 - [ ] If this changes the kernel config: `kernel/config-x86_64.snapshot`
       diff is committed and reviewed
+- [ ] If this bumps `kernel/version`: re-verify every
+      `# CONFIG_X is forced on` forcing chain against the new Kconfig
