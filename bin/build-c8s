@@ -20,7 +20,10 @@
 # Knobs:
 #   C8S_NO_GPU=1       GPU-less validation image: `attest` + `c8s` profiles
 #                      only (attestation-api still baked; compose ssh/dev
-#                      manually via extra args)
+#                      manually via extra args). Validation-only, never
+#                      publish: without the gpu profile nothing latches
+#                      kernel.modules_disabled=1, so module loading stays
+#                      enabled for the whole boot.
 #   C8S_STOCK_ATTEST=1 compose the stock `attest` profile instead of
 #                      `attest-gpu`: same attestation-api service on :8400,
 #                      TDX+SNP quotes, but no GPU (SPDM) evidence collection.
