@@ -92,10 +92,11 @@ BTF-shipping distro kernel makes; the base/gpu images keep RANDSTRUCT.
   RAM. Prefer virtio-scsi — the script scans `sd*` first; secondary
   virtio-blk disks have wedged under SEV-SNP/KubeVirt before.
 - **Optional: a pre-populated weights disk with serial `confai-models`**
-  (virtio-scsi). `models-disk.service` mounts it read-only at `/var/lib/models`
-  so a large HF cache survives relaunches instead of re-downloading. Not
-  encrypted / not mkfs'd — weights are public (integrity, not secrecy). Absent
-  → no-op. Attach via `confai launch --models-pvc <name>`.
+  (virtio-scsi). `models-disk.service` mounts it read-only
+  (`nodev,nosuid,noexec`) at `/var/lib/models` so a large HF cache survives
+  relaunches instead of re-downloading. Not encrypted / not mkfs'd — weights
+  are public (integrity, not secrecy; the workload verifies model digests).
+  Absent → no-op. Attach via `confai launch --models-pvc <name>`.
 - Guest memory ≥16G (etcd OOMs at small sizes). TDX measurement is
   topology-invariant, so memory/SMP can vary per launch without changing
   the reference values.
@@ -112,6 +113,21 @@ an integrity story (the scratch disk is plain-mode dm-crypt:
 confidentiality only) — out of scope for v1. Per-host hostname comes from
 NoCloud `meta-data` (`local-hostname`), outside the measurement; rke2
 config overrides go in `/etc/rancher/rke2/config.yaml.d/` at runtime.
+
+### Overlay integrity caveat
+
+The scratch-disk overlay upper is plain-mode dm-crypt: confidentiality only,
+no MAC. Everything written there at runtime — `/etc/rancher/rke2/
+config.yaml.d/` drop-ins, the installer-rendered NRI policy config — sits on
+host-malleable storage: the host can corrupt XTS ciphertext blocks and the
+guest decrypts attacker-chosen-position garbage silently. The measured
+posture does not depend on those files staying intact: the fail-closed NRI
+registration, the baked floor config, and the rke2 config all live on the
+verity root, and XTS malleation yields 16-byte garbage blocks, not targeted
+edits — so realistic tampering breaks parsing (rke2 or the plugin fails to
+start, containerd blocks pod creation) rather than widening admission. The
+exposure is denial of service, which the untrusted host has anyway. Same
+stance as the containerd image cache (see containerd-data-disk.sh).
 
 ## nri-image-policy trust posture
 
