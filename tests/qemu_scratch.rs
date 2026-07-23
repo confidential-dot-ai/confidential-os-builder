@@ -42,9 +42,13 @@ fn initrd_gates_scratch_on_serial() {
         init.contains("confai-scratch"),
         "init must compare against the confai-scratch serial value"
     );
+    // The scratch disk must be gated on the serial value, never on a
+    // blkid LABEL lookup. A `blkid -L <label>` scratch probe would regress
+    // that; assert none exists. (The unrelated opkeydata operator-key disk
+    // legitimately uses `blkid -L opkeydata`, so ban only a scratch label.)
     assert!(
-        !init.contains("blkid"),
-        "init must not use blkid LABEL detection (replaced by serial gate)"
+        !init.contains("blkid -L scratch") && !init.contains("blkid -L confai-scratch"),
+        "init must not use blkid LABEL detection for scratch (replaced by serial gate)"
     );
 }
 
