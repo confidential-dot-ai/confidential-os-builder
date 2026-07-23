@@ -10,10 +10,11 @@ sudo apt-get update
 # DSDT (mkosi/base/acpi-tables/dsdt.asl) that gets injected into the
 # initrd so the kernel's CONFIG_ACPI_TABLE_UPGRADE replaces the
 # VMM-supplied DSDT at boot.
-# ovmf provides OVMF.inteltdx.fd (the unified TDX firmware confos hashes +
-# the guest -bios-boots) for TDX builds. NOT OVMF.fd (pflash-style, hangs).
-# measurements. Keep host deps in lockstep with .github/workflows/base.yml.
-sudo apt install -y build-essential systemd-repart systemd-container qemu-utils genisoimage swtpm cpio acpica-tools ovmf ovmf-inteltdx
+# ovmf provides the OVMF.fd confos uses for the SNP measurement path. The TDX
+# firmware (OVMF.inteltdx.fd, -bios-bootable) is vendored at firmware/ — see
+# firmware/README, #82 — not apt-installed. Keep host deps in lockstep with
+# .github/workflows/base.yml.
+sudo apt install -y build-essential systemd-repart systemd-container qemu-utils genisoimage swtpm cpio acpica-tools ovmf
 
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
