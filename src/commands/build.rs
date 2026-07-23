@@ -435,16 +435,10 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     };
 
     println!("\n=== Calculating checksums ===");
-    // Read the disk checksum from the mkosi output
+    // mkosi records checksums for several split artifacts in this file. Do
+    // not rely on their order: image.roothash may precede image.raw.
     let mkosi_checksums = fs_err::read(mkosi_output.join("image.SHA256SUMS"))?;
-    let disk_checksum = String::from_utf8(mkosi_checksums)?
-        .split("\n")
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("bad checksum file"))?
-        .split(" ")
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("bad checksum file"))?
-        .to_owned();
+    let disk_checksum = checksum_for_file(&mkosi_checksums, "image.raw")?;
     println!("disk.raw {}", disk_checksum);
 
     // calculate the other checksums
@@ -562,6 +556,35 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     println!("===============================");
 
     Ok(())
+}
+
+/// Return the SHA-256 recorded for `filename` in a sha256sum-compatible file.
+fn checksum_for_file(contents: &[u8], filename: &str) -> anyhow::Result<String> {
+    let contents = std::str::from_utf8(contents)
+        .map_err(|e| anyhow::anyhow!("checksum file is not valid UTF-8: {e}"))?;
+    let mut found = None;
+
+    for line in contents.lines() {
+        let Some((checksum, recorded_name)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let recorded_name = recorded_name
+            .trim_start()
+            .strip_prefix('*')
+            .unwrap_or(recorded_name.trim_start());
+        if recorded_name != filename {
+            continue;
+        }
+        if checksum.len() != 64 || !checksum.chars().all(|c| c.is_ascii_hexdigit()) {
+            anyhow::bail!("invalid SHA-256 for {filename} in checksum file: {checksum:?}");
+        }
+        if found.is_some() {
+            anyhow::bail!("duplicate checksum entries for {filename}");
+        }
+        found = Some(checksum.to_ascii_lowercase());
+    }
+
+    found.ok_or_else(|| anyhow::anyhow!("checksum for {filename} not found in checksum file"))
 }
 
 /// Inject cloud-init user-data into the mkosi.local/mkosi.extra seed directory.
@@ -915,6 +938,53 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
+
+    const ROOT_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const DISK_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    #[test]
+    fn checksum_for_file_selects_image_raw_by_name() {
+        let sums = format!("{ROOT_HASH}  image.roothash\n{DISK_HASH}  image.raw\n");
+        assert_eq!(
+            checksum_for_file(sums.as_bytes(), "image.raw").unwrap(),
+            DISK_HASH
+        );
+    }
+
+    #[test]
+    fn checksum_for_file_accepts_binary_marker() {
+        let sums = format!("{DISK_HASH} *image.raw\n");
+        assert_eq!(
+            checksum_for_file(sums.as_bytes(), "image.raw").unwrap(),
+            DISK_HASH
+        );
+    }
+
+    #[test]
+    fn checksum_for_file_rejects_missing_image_raw() {
+        let sums = format!("{ROOT_HASH}  image.roothash\n");
+        assert!(checksum_for_file(sums.as_bytes(), "image.raw")
+            .unwrap_err()
+            .to_string()
+            .contains("image.raw not found"));
+    }
+
+    #[test]
+    fn checksum_for_file_rejects_invalid_image_raw_hash() {
+        assert!(checksum_for_file(b"not-a-hash  image.raw\n", "image.raw")
+            .unwrap_err()
+            .to_string()
+            .contains("invalid SHA-256 for image.raw"));
+    }
+
+    #[test]
+    fn checksum_for_file_rejects_duplicate_image_raw_entries() {
+        let sums = format!("{DISK_HASH}  image.raw\n{ROOT_HASH}  image.raw\n");
+        assert!(checksum_for_file(sums.as_bytes(), "image.raw")
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate checksum entries"));
+    }
 
     fn gzip_with_mtime(payload: &[u8], mtime: u32) -> Vec<u8> {
         use std::io::Write;
