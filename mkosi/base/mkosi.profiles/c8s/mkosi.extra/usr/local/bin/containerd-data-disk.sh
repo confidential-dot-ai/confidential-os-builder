@@ -76,12 +76,16 @@ for _ in $(seq 1 20); do
     [ -n "$DEV" ] && break
     for d in /dev/sd? /dev/vd?; do
         [ -b "$d" ] || continue
-        # host-prepared disk with a real filesystem LABEL
-        if [ "$(blkid -p -s LABEL -o value "$d" 2>/dev/null || true)" = "containerd" ]; then
+        # virtio-blk surfaces the serial in sysfs (SCSI does not — see above).
+        # Checked first: a sysfs read cannot wedge, a device probe can.
+        if [ "$(cat "/sys/block/$(basename "$d")/serial" 2>/dev/null || true)" = "confai-containerd" ]; then
             DEV="$d"; break
         fi
-        # virtio-blk surfaces the serial in sysfs (SCSI does not — see above)
-        if [ "$(cat "/sys/block/$(basename "$d")/serial" 2>/dev/null || true)" = "confai-containerd" ]; then
+        # host-prepared disk with a real filesystem LABEL. The probe reads the
+        # device itself, so timeout-bound it: this unit is Before=local-fs.target
+        # and must not hang on a wedged disk (SEV-SNP virtio-blk reads have
+        # gone D-state before; the bound is best-effort, D-state ignores it).
+        if [ "$(timeout 5 blkid -p -s LABEL -o value "$d" 2>/dev/null || true)" = "containerd" ]; then
             DEV="$d"; break
         fi
     done

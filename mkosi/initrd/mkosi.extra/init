@@ -42,6 +42,7 @@ while [ ! -e /dev/vda2 ] && [ "$WAITED" -lt 30 ]; do
 done
 if [ ! -e /dev/vda2 ]; then
     echo "FATAL: /dev/vda2 not found after ${WAITED}s"
+    sleep 5
     echo b > /proc/sysrq-trigger
     exit 1  # fallback if sysrq disabled
 fi

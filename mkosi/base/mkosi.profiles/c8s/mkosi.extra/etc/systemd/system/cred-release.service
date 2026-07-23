@@ -26,7 +26,11 @@ Type=simple
 # on-disk pubkey against RTMR[3] at startup and refuses (exits non-zero) if it
 # was substituted — fail closed. Non-operator boots never reach here (the
 # ConditionPathExists above skips the unit).
-ExecStartPre=/bin/sh -c 'test -r /var/lib/rancher/rke2/server/tls/client-ca.key'
+# Waits bounded (10 min) rather than failing fast: on a slow first boot the
+# CA can take minutes to appear, and 5 quick ExecStartPre failures 10s apart
+# would exhaust StartLimitBurst in under a minute and give up until reboot.
+ExecStartPre=/bin/sh -c 'for _ in $(seq 1 120); do [ -r /var/lib/rancher/rke2/server/tls/client-ca.key ] && exit 0; sleep 5; done; exit 1'
+TimeoutStartSec=630
 ExecStart=/usr/local/bin/c8s cred-release \
     --listen :8443 \
     --attestation-api-url http://127.0.0.1:8400 \
