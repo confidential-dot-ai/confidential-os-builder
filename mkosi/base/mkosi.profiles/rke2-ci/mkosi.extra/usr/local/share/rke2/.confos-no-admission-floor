@@ -1,0 +1,5 @@
+rke2-ci
+This image was composed with the rke2-ci profile: the NRI admission floor
+(nri-image-policy plugin + fail-closed containerd validator + measured
+policy floor) is deliberately NOT present. CI runner clusters only.
+See mkosi/base/mkosi.profiles/rke2-ci/mkosi.conf.

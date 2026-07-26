@@ -36,6 +36,11 @@
 #                      (console=ttyS0, passwordless serial autologin).
 #                      Different measurement, root shell on the host-visible
 #                      serial socket — never ship. Default name: c8s-dev.
+#   C8S_CI=1           CI runner-node variant: compose the rke2-ci profile on
+#                      top, the same image minus the NRI admission floor, so
+#                      a CI cluster can admit arbitrary job images. Different
+#                      measurement; CI runner clusters only, never a
+#                      production node. Default name: c8s-ci.
 #   C8S_NAME=...       output name (default c8s → output/c8s/)
 #   C8S_MEMORY=...     default-memory recorded in the manifest / used by
 #                      `confos run` (default 16G — etcd OOMs at the 4G default)
@@ -67,6 +72,11 @@ if [ "${C8S_DEV:-0}" = 1 ]; then
     DEV_PROFILE=(--profile dev)
     : "${C8S_NAME:=c8s-dev}"
 fi
+CI_PROFILE=()
+if [ "${C8S_CI:-0}" = 1 ]; then
+    CI_PROFILE=(--profile rke2-ci)
+    : "${C8S_NAME:=c8s-ci}"
+fi
 KB_PKGS=dwarves,python3,pkg-config,zlib1g-dev
 
 bin/confos kernel \
@@ -86,6 +96,7 @@ fi
 
 exec bin/confos build "${C8S_NAME:-c8s}" \
     "${PROFILES[@]}" \
+    ${CI_PROFILE[@]+"${CI_PROFILE[@]}"} \
     ${DEV_PROFILE[@]+"${DEV_PROFILE[@]}"} \
     --kernel-config-fragment "$FRAGMENT" \
     --kernel-builder-package "$KB_PKGS" \

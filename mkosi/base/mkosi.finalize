@@ -39,3 +39,36 @@ rm -f "$BUILDROOT"/etc/ssh/ssh_host_*
 
 # Remove cargo cache if present (non-deterministic)
 rm -rf "$BUILDROOT/root/.cargo"
+
+# ── rke2-ci: strip the NRI admission floor (marker-guarded) ─────────────────
+# The rke2-ci profile's mkosi.extra drops this marker. When present, remove
+# the three floor artifacts the c8s profile baked. Assert-then-delete: if the
+# c8s profile ever moves one of these paths, the build fails here instead of
+# silently shipping the floor in a variant that promises not to have it.
+# Inert for every other composition (marker absent). See
+# mkosi/base/mkosi.profiles/rke2-ci/mkosi.conf for the full rationale.
+if [ -f "$BUILDROOT/usr/local/share/rke2/.confos-no-admission-floor" ]; then
+    floor=(
+        "$BUILDROOT/var/lib/rancher/rke2/agent/etc/containerd/config-v3.toml.d/nri-image-policy.toml"
+        "$BUILDROOT/etc/nri/conf.d/image-policy.yaml"
+        "$BUILDROOT/opt/nri/plugins/10-nri-image-policy"
+    )
+    for f in "${floor[@]}"; do
+        if [ ! -f "$f" ]; then
+            echo "rke2-ci: expected floor artifact missing: ${f#"$BUILDROOT"}" >&2
+            echo "rke2-ci: compose this profile WITH c8s; if c8s moved the file, update this list" >&2
+            exit 1
+        fi
+        rm "$f"
+    done
+    # cred-release.service invokes `c8s cred-release`; the strip must not lose it.
+    if [ ! -x "$BUILDROOT/usr/local/bin/c8s" ]; then
+        echo "rke2-ci: /usr/local/bin/c8s missing after floor strip" >&2
+        exit 1
+    fi
+    # Drop the now-empty NRI dirs. Keep config-v3.toml.d: the baked template
+    # imports from it and an empty glob is a no-op.
+    rmdir "$BUILDROOT/etc/nri/conf.d" "$BUILDROOT/etc/nri" \
+          "$BUILDROOT/opt/nri/plugins" "$BUILDROOT/opt/nri" 2>/dev/null || true
+    echo "rke2-ci: NRI admission floor stripped (3 artifacts)"
+fi
