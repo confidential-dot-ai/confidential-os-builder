@@ -1,11 +1,15 @@
 [Unit]
 Description=NVIDIA Persistence Daemon
-# Modules are loaded by systemd-modules-load.service (see
-# /etc/modules-load.d/nvidia.conf). The daemon performs the FIRST driver
-# attach and HOLDS it for the life of the VM — load-bearing in CC mode, where
-# the GPU forbids re-establishing the SPDM session after teardown without a
-# fresh FLR. It must attach only AFTER nvidia-gpu-flr resets the GPU (the CC
-# SPDM precondition — see /usr/local/bin/nvidia-gpu-flr).
+# The driver is modprobe'd by nvidia-gpu-flr, NOT by modules-load.d — that is
+# the whole point of the FLR unit, and there is deliberately no
+# /etc/modules-load.d/nvidia.conf in this image (auto-loading would let the
+# kernel probe every GPU before any reset; see the rationale at the top of
+# /usr/local/bin/nvidia-gpu-flr).
+#
+# This daemon performs the FIRST driver attach and HOLDS it for the life of the
+# VM — load-bearing in CC mode, where the GPU forbids re-establishing the SPDM
+# session after teardown without a fresh FLR. It must therefore attach only
+# AFTER nvidia-gpu-flr has reset the GPUs and loaded the driver.
 After=systemd-modules-load.service nvidia-gpu-flr.service
 # Wants (not Requires) for the FLR unit deliberately: Requires= propagates
 # stops, so an operator re-running the oneshot at runtime would take
