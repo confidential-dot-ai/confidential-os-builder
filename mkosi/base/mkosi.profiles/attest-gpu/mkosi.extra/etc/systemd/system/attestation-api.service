@@ -13,10 +13,13 @@ Restart=on-failure
 RestartSec=3
 # TDX quote device.
 DeviceAllow=/dev/tdx_guest rwm
-# NVIDIA nodes the libnvat/NVML collector opens for SPDM evidence.
+# NVIDIA nodes the libnvat/NVML collector opens for SPDM evidence. The
+# per-GPU /dev/nvidiaN nodes register major 195 as "nvidia" in /proc/devices,
+# so the group rule is char-nvidia; "nvidia-frontend" resolves to nothing on
+# current drivers and NVML then enumerates zero GPUs.
 DeviceAllow=/dev/nvidiactl rwm
 DeviceAllow=/dev/nvidia-uvm rwm
-DeviceAllow=char-nvidia-frontend rwm
+DeviceAllow=char-nvidia rwm
 # --- vsock fence -------------------------------------------------------------
 # This is the ONLY unit in the image allowed AF_VSOCK: the TDX quote is fetched
 # from the host QGS over vsock (CID 2, port 4050). Every other unit carries a
