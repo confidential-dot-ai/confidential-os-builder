@@ -27,8 +27,36 @@
 #   - pull.url must be https, and attestation_api_url is then required.
 #   - empty cds_measurements = accept any RA-TLS-attested CDS (warns).
 
+# The CPU TEE this image boots on. bin/build-c8s composes the c8s profile with
+# `--platform tdx`, so this image is TDX-only and the value is fixed.
+#
+# It types the RA-TLS identity the admission inventory serves to CDS, and CDS
+# refuses a peer whose type disagrees with the evidence envelope the
+# attestation-api returns. The plugin defaults this to snp for backward
+# compatibility, so omitting it here denies every sandbox token on the node,
+# which denies every adopted workload a certificate.
+platform: "tdx"
+
 plugin:
   health_addr: "unix:///var/run/nri-image-policy/health.sock"
+
+# The node-CVM admission inventory (c8s docs/ratls.md, "Sandbox identity").
+# get-cert dials this socket for its pod's digests before CDS will issue a
+# certificate. In --cvm-mode=node the chart's nri-image-policy installer is
+# disabled, so nothing rewrites this file after boot and the section must be
+# baked in; without it the socket is never created and every adopted workload
+# hangs waiting for a certificate that cannot be issued.
+workload_claims:
+  socket_dir: "/var/run/nri-image-policy"
+  # The plugin is launched by containerd on the host, so its /proc is the
+  # host's — a caller PID from SO_PEERCRED resolves directly.
+  proc_root: "/proc"
+  # Empty falls back to NodeIPFile (node-ip in socket_dir). On a Kubernetes-
+  # hosted install the chart's installer writes that from its own status.hostIP;
+  # a node-as-CVM has no installer, so nri-node-ip.service writes it at boot
+  # instead. Without either, this resolves to 127.0.0.1 and the plugin refuses
+  # to start with "inventory host is not a routable unicast address".
+  advertise_host: ""
 
 allowlist:
   # Cold-boot floor, both entries resolved from C8S_REF by mkosi.sync:
