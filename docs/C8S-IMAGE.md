@@ -81,6 +81,14 @@ BTF-shipping distro kernel makes; the base/gpu images keep RANDSTRUCT.
 
 ## Launch requirements (hard, unlike the gpu image)
 
+- **The inner cluster uses pod CIDR `10.52.0.0/16` and service CIDR
+  `10.53.0.0/16` (CoreDNS `10.53.0.10`).** These deliberately differ from
+  the outer RKE2 host cluster's `10.42.0.0/16` and `10.43.0.0/16` defaults.
+  KubeVirt masquerade preserves the outer client source address; overlapping
+  CIDRs make the guest route replies into its own Cilium network once Cilium
+  starts, rendering every exposed VM port unreachable. Override
+  `cluster-cidr`, `service-cidr`, and `cluster-dns` together via an RKE2 config
+  drop-in when a deployment already uses the `10.52/10.53` ranges.
 - **A virtio-blk disk with device serial `confai-scratch`, ≥64G.** The
   initrd backs the overlay upper with it (per-boot-key encrypted,
   ephemeral). Without it the upper is a 2G tmpfs, which cannot hold RKE2's

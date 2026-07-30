@@ -45,3 +45,19 @@ if grep -qE '^[[:space:]]*"sha256:[a-f0-9]{64}"[[:space:]]*:' "$policy"; then
     echo "bin/lint: $policy has a hardcoded always_allow digest; use @NRI_DIGEST@/@CDS_DIGEST@ tokens (rendered from C8S_REF by mkosi.sync)" >&2
     exit 1
 fi
+
+# The c8s node is itself normally nested in an outer RKE2 cluster. Its pod
+# CIDR must not fall back to the outer cluster's default, and Cilium's pool
+# must exactly match the RKE2 server setting or pods receive unroutable IPs.
+rke2_config="$c8s_profile/mkosi.extra/etc/rancher/rke2/config.yaml"
+cilium_config="$c8s_profile/mkosi.extra/var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml"
+rke2_pod_cidr=$(sed -n 's/^cluster-cidr:[[:space:]]*//p' "$rke2_config")
+cilium_pod_cidr=$(sed -n '/clusterPoolIPv4PodCIDRList:/,/^[^[:space:]]/s/^[[:space:]]*-[[:space:]]*//p' "$cilium_config" | head -n 1)
+if [ -z "$rke2_pod_cidr" ] || [ "$rke2_pod_cidr" = "10.42.0.0/16" ]; then
+    echo "bin/lint: c8s RKE2 cluster-cidr must be explicit and must not overlap the outer RKE2 default" >&2
+    exit 1
+fi
+if [ "$rke2_pod_cidr" != "$cilium_pod_cidr" ]; then
+    echo "bin/lint: c8s RKE2 cluster-cidr ($rke2_pod_cidr) must match Cilium IPAM ($cilium_pod_cidr)" >&2
+    exit 1
+fi
