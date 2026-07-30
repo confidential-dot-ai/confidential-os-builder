@@ -15,10 +15,13 @@ unless the PCI function was **freshly FLR-reset**, and it allows exactly **one**
 attach per reset. Two consequences the image must honour:
 
 - **FLR before the driver's first probe.** We do NOT auto-load `nvidia` via
-  `modules-load.d` (deleted) — that would let the kernel probe every GPU before
-  any reset. `nvidia-gpu-flr.service` FLRs every GPU via
-  `/sys/bus/pci/.../reset` (no driver bound → clean), *then* modprobes the
-  driver, so its first probe lands on reset functions.
+  `modules-load.d`. That alone is not enough: udev coldplug resolves each PCI
+  modalias and calls `modprobe -b`, which can probe every GPU before the reset
+  unit reaches `multi-user.target`. `nvidia-flr-first.conf` therefore
+  blacklists alias-based `nvidia` loads. `nvidia-gpu-flr.service` FLRs every
+  GPU via `/sys/bus/pci/.../reset` (no driver bound → clean), *then* explicitly
+  modprobes the driver by name; an explicit load is not blocked by the alias
+  blacklist, so its first probe lands on freshly reset functions.
 - **`nvidia-persistenced` is load-bearing, not an optimisation.** It performs
   and *holds* that one good attach for the life of the VM. If it exits, a
   transient client (`nvidia-smi`) tears the session down and the next attach
@@ -41,8 +44,9 @@ Failure signature when this is wrong: `NVRM: osInitNvMapping: *** Cannot attach
 gpu` → `RmInitAdapter failed! (0x22:0x56:894)`, `nvidia-smi: No devices were
 found`. It is **silent at 1 GPU and racy at 8** (the old modules-load ordering
 recovered 5/8 and left 3 stuck) — which is why it slipped past single-GPU
-validation. Enforced in `usr/local/bin/nvidia-gpu-flr` +
-`nvidia-persistenced.service` + `bin/steep-fetch-gpu` (stages libnvidia-cfg).
+validation. Enforced in `etc/modprobe.d/nvidia-flr-first.conf` +
+`usr/local/bin/nvidia-gpu-flr` + `nvidia-persistenced.service` +
+`bin/steep-fetch-gpu` (stages libnvidia-cfg).
 
 The host-side FLR that vfio does at VM-open does NOT satisfy this by the time
 the guest driver attaches — the reset must happen *inside* the guest.
