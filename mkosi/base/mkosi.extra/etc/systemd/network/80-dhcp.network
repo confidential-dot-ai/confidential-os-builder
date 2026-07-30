@@ -1,5 +1,9 @@
 [Match]
 Type=ether
+# The kernel-created dummy0 link has Type=ether too, but it can never obtain a
+# DHCP lease. If networkd manages it, systemd-networkd-wait-online blocks until
+# its full timeout even though the real uplink is already routable.
+Kind=!dummy
 
 [Network]
 DHCP=yes
