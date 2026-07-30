@@ -49,8 +49,14 @@ RKE2_IMAGES_CILIUM_SHA256="1ab41422cc16f5d030b8f62889133dff5d9dce985fbf13360c160
 # (written by bin/build-c8s — an exported var never reaches this sandbox: mkosi
 # runs under sudo, stripping the env). Empty = main. The tag must be published
 # (c8s docker.yml on main, or workflow_dispatch for a feature branch).
-NRI_REPO="ghcr.io/confidential-dot-ai/nri-image-policy"
-CDS_REPO="ghcr.io/confidential-dot-ai/cds"
+# The registry the two component images resolve from. Overridable via
+# $SRCDIR/mkosi.local/c8s-registry (written by bin/build-c8s from C8S_REGISTRY)
+# so an unmerged or air-gapped build can bake components from a local registry
+# without publishing them. Defaults to the published org.
+C8S_REGISTRY=$(cat "$SRCDIR/mkosi.local/c8s-registry" 2>/dev/null || true)
+C8S_REGISTRY="${C8S_REGISTRY:-ghcr.io/confidential-dot-ai}"
+NRI_REPO="${C8S_REGISTRY}/nri-image-policy"
+CDS_REPO="${C8S_REGISTRY}/cds"
 C8S_REF=$(cat "$SRCDIR/mkosi.local/c8s-ref" 2>/dev/null || true)
 C8S_REF="${C8S_REF:-main}"
 echo "c8s sync: resolving nri-image-policy + cds at c8s ref ${C8S_REF}"

@@ -59,6 +59,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # $SRCDIR/mkosi.local/c8s-ref; absent or empty defaults to main.
 mkdir -p mkosi/base/mkosi.local
 printf '%s\n' "${C8S_REF:-}" > mkosi/base/mkosi.local/c8s-ref
+printf '%s\n' "${C8S_REGISTRY:-}" > mkosi/base/mkosi.local/c8s-registry
 
 FRAGMENT=kernel/c8s.config
 DEV_PROFILE=()

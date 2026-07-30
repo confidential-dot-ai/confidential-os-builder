@@ -138,9 +138,15 @@ sudo systemd-nspawn --quiet --register=no --keep-unit --ephemeral \
     # src/nvidia-modeset too, which needs g++ and (for its .ko) CONFIG_DRM —
     # neither of which we want. NV_KERNEL_MODULES already excludes the modeset
     # .ko; this also skips its object build.
-    make -C /nv SYSSRC=/ksrc -j${NPROC} kernel-open/nvidia/nv-kernel.o_binary
+    make -C /nv SYSSRC=/ksrc -j${NPROC} \\
+      KCFLAGS='-frandom-seed=\$(srctree)/\$@' \\
+      NV_BUILD_USER=c8s NV_BUILD_HOST=confos DATE='date -u -d @0' \\
+      kernel-open/nvidia/nv-kernel.o_binary
     # Then build just the .ko we ship, straight from kernel-open/ via kbuild.
-    make -C /nv/kernel-open SYSSRC=/ksrc NV_KERNEL_MODULES='${NV_NAMES}' -j${NPROC} modules
+    make -C /nv/kernel-open SYSSRC=/ksrc NV_KERNEL_MODULES='${NV_NAMES}' -j${NPROC} \\
+      KCFLAGS='-frandom-seed=\$(srctree)/\$@' \\
+      NV_BUILD_USER=c8s NV_BUILD_HOST=confos DATE='date -u -d @0' \\
+      modules
     test -f /nv/kernel-open/nvidia.ko"
 
 # The nspawn build ran as root (uid 0 in container == uid 0 on host via the
