@@ -30,18 +30,32 @@ if grep -q '^nvidia ' /proc/modules; then
     exit 1
 fi
 
+gpu_count=0
 reset_count=0
 for dev in /sys/bus/pci/devices/*; do
     [[ "$(cat "$dev/vendor" 2>/dev/null)" == "0x10de" ]] || continue
+    gpu_count=$((gpu_count + 1))
     [[ -f "$dev/reset" ]] || { echo "nvidia-gpu-flr: $(basename "$dev") has no reset method; skipping" >&2; continue; }
     echo "nvidia-gpu-flr: FLR $(basename "$dev")"
-    echo 1 > "$dev/reset"
+    # A failed reset (device wedged from a prior guest's teardown, EIO from
+    # the host's vfio) must not abort the whole bring-up: under set -e an
+    # unguarded write here would exit before modprobe, and once
+    # nvidia-modules-latch seals module loading the boot is GPU-dead with no
+    # recovery but a reboot. Degraded (some GPUs un-FLR'd, probe may fail
+    # per-GPU) beats none.
+    if ! echo 1 > "$dev/reset"; then
+        echo "nvidia-gpu-flr: FLR of $(basename "$dev") FAILED; continuing — its first probe lands pre-FLR and may not attach" >&2
+        continue
+    fi
     reset_count=$((reset_count + 1))
 done
 
-if [[ "$reset_count" -eq 0 ]]; then
+if [[ "$gpu_count" -eq 0 ]]; then
     echo "nvidia-gpu-flr: no NVIDIA devices present; nothing to do."
     exit 0
+fi
+if [[ "$reset_count" -lt "$gpu_count" ]]; then
+    echo "nvidia-gpu-flr: FLR'd only $reset_count/$gpu_count device(s); loading the driver anyway" >&2
 fi
 
 # Let the FLR(s) settle (~1s each on B200) before the driver's first probe.
@@ -50,7 +64,7 @@ sleep 3
 # NOW load the driver — this is the first time anything touches the freshly
 # reset GPUs, so every SPDM session establishes cleanly. modprobe nvidia_uvm
 # pulls nvidia; list both so a missing dep is obvious.
-echo "nvidia-gpu-flr: reset $reset_count device(s); loading driver"
+echo "nvidia-gpu-flr: reset $reset_count/$gpu_count device(s); loading driver"
 modprobe nvidia
 modprobe nvidia_uvm
 
@@ -72,7 +86,7 @@ modprobe nvidia_uvm
 # when run during the persistenced activation window). /proc reads are free.
 for _ in $(seq 1 90); do
     bound=$(ls /proc/driver/nvidia/gpus/ 2>/dev/null | wc -l)
-    [[ "$bound" -ge "$reset_count" ]] && break
+    [[ "$bound" -ge "$gpu_count" ]] && break
     sleep 2
 done
-echo "nvidia-gpu-flr: $bound/$reset_count GPU(s) bound and ready for persistenced"
+echo "nvidia-gpu-flr: $bound/$gpu_count GPU(s) bound and ready for persistenced"

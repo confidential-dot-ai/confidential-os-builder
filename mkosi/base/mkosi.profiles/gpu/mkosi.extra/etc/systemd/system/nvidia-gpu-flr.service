@@ -10,6 +10,12 @@ Before=nvidia-persistenced.service nvidia-cc-ready.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Worst case at 8 GPUs: ~17s of FLRs + ~65s driver probe + the script's
+# 180s bound-wait loop ≈ 260s. The systemd default (90s) kills the script
+# mid-bring-up on a slow boot — before modprobe on the slowest paths — and
+# nothing later reloads the driver (modules-latch seals module loading).
+# Bounded rather than infinity so a truly wedged GPU cannot hang boot.
+TimeoutStartSec=600
 ExecStart=/usr/local/bin/nvidia-gpu-flr
 
 # vsock fence: only attestation-api may use AF_VSOCK (see kernel/gpu.config).

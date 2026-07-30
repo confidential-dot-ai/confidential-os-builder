@@ -8,6 +8,10 @@ Wants=nvidia-persistenced.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# The helper polls up to 180s for a parseable Ready State plus 30s of -srs
+# read-back; the systemd default (90s) would kill it mid-poll and leave the
+# GPUs un-readied (NVAT then reports no CC GPUs).
+TimeoutStartSec=300
 ExecStart=/usr/local/bin/nvidia-cc-ready
 
 # vsock fence: only attestation-api may use AF_VSOCK (see kernel/gpu.config).
