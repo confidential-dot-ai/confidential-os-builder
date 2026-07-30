@@ -77,3 +77,23 @@ if ! grep -qx 'modprobe nvidia' "$flr_helper"; then
     echo "bin/lint: $flr_helper must explicitly load nvidia after the GPU resets" >&2
     exit 1
 fi
+
+# Type=oneshot units have no start timeout by default, and persistenced's
+# forking attach outruns the manager default; every GPU bring-up unit must
+# carry an explicit TimeoutStartSec so a wedged GPU fails visibly instead of
+# hanging the ordered chain (or being killed mid-attach).
+for unit in nvidia-gpu-flr nvidia-persistenced nvidia-cc-ready; do
+    unit_file="$gpu_profile/etc/systemd/system/$unit.service"
+    if ! grep -q '^TimeoutStartSec=' "$unit_file"; then
+        echo "bin/lint: $unit_file must set an explicit TimeoutStartSec" >&2
+        exit 1
+    fi
+done
+
+# The per-GPU reset write runs under set -e; unguarded, one wedged GPU aborts
+# the script before modprobe and the boot is GPU-dead once the modules latch
+# seals loading. The write must stay inside a failure-tolerant guard.
+if ! grep -q 'if ! echo 1 > "$dev/reset"' "$flr_helper"; then
+    echo "bin/lint: $flr_helper must guard the per-GPU reset write (one failed FLR must not abort bring-up)" >&2
+    exit 1
+fi

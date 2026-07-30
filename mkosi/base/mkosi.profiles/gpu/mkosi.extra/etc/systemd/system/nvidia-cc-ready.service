@@ -8,9 +8,12 @@ Wants=nvidia-persistenced.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# The helper polls up to 180s for a parseable Ready State plus 30s of -srs
-# read-back; the systemd default (90s) would kill it mid-poll and leave the
-# GPUs un-readied (NVAT then reports no CC GPUs).
+# Type=oneshot has NO start timeout by default (systemd.service(5):
+# DefaultTimeoutStartSec does not apply to oneshot), so a hung nvidia-smi
+# would stall this unit — and everything ordered After= it, including the
+# modules latch — indefinitely. Bound it above the helper's own worst case
+# (180s Ready-State poll + 30s -srs read-back) so a hang fails visibly
+# instead.
 TimeoutStartSec=300
 ExecStart=/usr/local/bin/nvidia-cc-ready
 

@@ -10,11 +10,13 @@ Before=nvidia-persistenced.service nvidia-cc-ready.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Worst case at 8 GPUs: ~17s of FLRs + ~65s driver probe + the script's
-# 180s bound-wait loop ≈ 260s. The systemd default (90s) kills the script
-# mid-bring-up on a slow boot — before modprobe on the slowest paths — and
-# nothing later reloads the driver (modules-latch seals module loading).
-# Bounded rather than infinity so a truly wedged GPU cannot hang boot.
+# Type=oneshot has NO start timeout by default (systemd.service(5):
+# DefaultTimeoutStartSec does not apply to oneshot). A wedged reset write or
+# a D-state modprobe would therefore hang this unit's start job forever —
+# and with it persistenced, cc-ready and the modules latch, all ordered
+# After= this unit. Bound well above the honest worst case at 8 GPUs (~17s
+# of FLRs + ~65s driver probe + the 180s bound-wait loop ≈ 260s) so a hang
+# becomes a visible unit failure instead.
 TimeoutStartSec=600
 ExecStart=/usr/local/bin/nvidia-gpu-flr
 
