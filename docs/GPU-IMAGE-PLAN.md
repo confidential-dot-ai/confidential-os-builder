@@ -58,7 +58,8 @@ kernel/version                             6.16.12 (folded in from feat/kernel-6
 bin/steep-fetch-gpu                        fetch(pinned sha)→build in kernel-builder nspawn→sign→depmod→stage
 mkosi/base/mkosi.profiles/gpu/
   mkosi.conf                               apt: kmod, pciutils; doc header
-  mkosi.extra/etc/modules-load.d/nvidia.conf
+  mkosi.extra/etc/modprobe.d/nvidia-flr-first.conf                  (blocks udev autoprobe until FLR)
+  mkosi.extra/usr/local/bin/nvidia-gpu-flr                          (FLR all, then explicit modprobe)
   mkosi.extra/etc/systemd/system/nvidia-persistenced.service        (--uvm-persistence-mode baked)
   mkosi.extra/etc/systemd/system/nvidia-cc-ready.service            (oneshot conf-compute -srs 1)
   mkosi.extra/etc/systemd/system/nvidia-modules-latch.service       (sysctl modules_disabled=1)

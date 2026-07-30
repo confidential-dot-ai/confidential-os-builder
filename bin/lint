@@ -61,3 +61,19 @@ if [ "$rke2_pod_cidr" != "$cilium_pod_cidr" ]; then
     echo "bin/lint: c8s RKE2 cluster-cidr ($rke2_pod_cidr) must match Cilium IPAM ($cilium_pod_cidr)" >&2
     exit 1
 fi
+
+# Omitting modules-load.d does not prevent udev coldplug from resolving an
+# NVIDIA PCI modalias and running `modprobe -b` before the FLR oneshot. The
+# alias blacklist is therefore part of the CC boot-order invariant; the
+# explicit post-reset modprobe by module name remains allowed.
+gpu_profile=mkosi/base/mkosi.profiles/gpu/mkosi.extra
+flr_blacklist="$gpu_profile/etc/modprobe.d/nvidia-flr-first.conf"
+flr_helper="$gpu_profile/usr/local/bin/nvidia-gpu-flr"
+if ! grep -qE '^[[:space:]]*blacklist[[:space:]]+nvidia([[:space:]]*(#.*)?)?$' "$flr_blacklist"; then
+    echo "bin/lint: $flr_blacklist must blacklist alias-based nvidia autoload" >&2
+    exit 1
+fi
+if ! grep -qx 'modprobe nvidia' "$flr_helper"; then
+    echo "bin/lint: $flr_helper must explicitly load nvidia after the GPU resets" >&2
+    exit 1
+fi

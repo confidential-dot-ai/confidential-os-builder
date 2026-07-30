@@ -1,6 +1,8 @@
 [Unit]
 Description=FLR NVIDIA GPUs before first driver attach (CC SPDM precondition)
-# After the module is resident, strictly before anything can attach the GPU.
+# Wait for unrelated declarative boot modules, then reset the GPUs and load
+# nvidia explicitly. PCI-modalias autoload is suppressed by modprobe.d so udev
+# coldplug cannot race this unit and consume the one valid post-FLR probe.
 # See /usr/local/bin/nvidia-gpu-flr for the full rationale.
 After=systemd-modules-load.service
 Before=nvidia-persistenced.service nvidia-cc-ready.service

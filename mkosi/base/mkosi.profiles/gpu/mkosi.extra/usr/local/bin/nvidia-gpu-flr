@@ -7,9 +7,10 @@
 # unless the function was freshly FLR-reset, and only ONE attach is allowed per
 # FLR. The critical ordering consequence: the very FIRST driver probe of each
 # GPU must land on a freshly-FLR'd function. So we do NOT auto-load nvidia via
-# modules-load.d (that would let the kernel probe all GPUs before any FLR).
-# Instead we FLR every GPU here — with no driver bound, so the reset is clean —
-# and only then modprobe the driver, so its first probe is the good one.
+# modules-load.d, and /etc/modprobe.d/nvidia-flr-first.conf blocks udev's PCI-
+# modalias coldplug from doing the same thing. Instead we FLR every GPU here —
+# with no driver bound, so the reset is clean — and only then explicitly
+# modprobe the driver, so its first probe is the good one.
 #
 # Getting this wrong is silent at 1 GPU and racy at 8: with modules-load.d
 # auto-loading nvidia first, the pre-FLR probe fails and the post-FLR re-attach
@@ -20,6 +21,14 @@
 # of the VM (in CC mode a torn-down session can't be re-established without
 # another FLR). Safe on a GPU-less boot: no 0x10de devices -> no-op.
 set -euo pipefail
+
+# The modprobe blacklist is the boot-order fence. Fail with a useful diagnosis
+# if another loader bypassed it; probing before FLR consumes the only usable CC
+# attach and cannot be repaired reliably during this boot.
+if grep -q '^nvidia ' /proc/modules; then
+    echo "nvidia-gpu-flr: nvidia loaded before FLR; refusing unsafe reset/probe sequence" >&2
+    exit 1
+fi
 
 reset_count=0
 for dev in /sys/bus/pci/devices/*; do
