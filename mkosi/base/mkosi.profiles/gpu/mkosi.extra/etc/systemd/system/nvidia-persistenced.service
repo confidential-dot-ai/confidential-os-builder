@@ -18,6 +18,10 @@ Wants=nvidia-gpu-flr.service syslog.target
 
 [Service]
 Type=forking
+# The parent exits only after the per-GPU SPDM attach completes: ~63s
+# observed on a good 8×B200 boot, leaving no margin under the systemd
+# default (90s). A start-timeout kill here destroys every held CC session.
+TimeoutStartSec=300
 # Skip (not fail) on a GPU-less boot — keeps the image degraded-nothing when
 # booted without a GPU attached.
 ExecCondition=/bin/sh -c 'grep -qx 0x10de /sys/bus/pci/devices/*/vendor 2>/dev/null'

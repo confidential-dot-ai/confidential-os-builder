@@ -8,6 +8,13 @@ Wants=nvidia-persistenced.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Type=oneshot has NO start timeout by default (systemd.service(5):
+# DefaultTimeoutStartSec does not apply to oneshot), so a hung nvidia-smi
+# would stall this unit — and everything ordered After= it, including the
+# modules latch — indefinitely. Bound it above the helper's own worst case
+# (180s Ready-State poll + 30s -srs read-back) so a hang fails visibly
+# instead.
+TimeoutStartSec=300
 ExecStart=/usr/local/bin/nvidia-cc-ready
 
 # vsock fence: only attestation-api may use AF_VSOCK (see kernel/gpu.config).
