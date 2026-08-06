@@ -98,9 +98,7 @@ if ! grep -q 'if ! echo 1 > "$dev/reset"' "$flr_helper"; then
     exit 1
 fi
 
-# Every apt mirror must stay time-pinned to snapshot.ubuntu.com; an
-# archive.ubuntu.com mirror drifts daily, making the measurement a function
-# of build date. Outage workarounds must not outlive the outage.
+# Apt mirrors must stay time-pinned to snapshot.ubuntu.com; archive.ubuntu.com drifts daily, making the measurement a function of build date.
 unpinned=$(grep -rn '^\(Mirror\|ToolsTreeMirror\)=' mkosi --include='*.conf' | grep -v 'snapshot\.ubuntu\.com' || true)
 if [ -n "$unpinned" ]; then
     echo "bin/lint: apt mirrors must point at a snapshot.ubuntu.com timestamp:" >&2
