@@ -54,11 +54,9 @@ Identical package *versions* across builds are enforced by pinning
 `snapshot.ubuntu.com` URL. Bumping that timestamp is the deliberate act
 that picks up security updates — and changes the roothash.
 
-> **Current status:** as of 2026-07-06 both mirrors are temporarily
-> reverted to the rolling `archive.ubuntu.com` mirror because of a
-> snapshot-service outage (see the `TEMP` comment in each mkosi.conf).
-> Until the pin is restored, package versions — and therefore
-> measurements — can drift between builds.
+`bin/lint` fails on any `Mirror=`/`ToolsTreeMirror=` that does not point
+at `snapshot.ubuntu.com`, so an outage workaround cannot outlive the
+outage.
 
 mkosi itself is pinned to v26 — `bin/setup` and CI install exactly
 `mkosi.git@v26`, and `mkosi.conf` enforces `MinimumVersion=26` as a

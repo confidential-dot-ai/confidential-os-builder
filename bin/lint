@@ -99,7 +99,7 @@ if ! grep -q 'if ! echo 1 > "$dev/reset"' "$flr_helper"; then
 fi
 
 # Apt mirrors must stay time-pinned to snapshot.ubuntu.com; archive.ubuntu.com drifts daily, making the measurement a function of build date.
-unpinned=$(grep -rn '^\(Mirror\|ToolsTreeMirror\)=' mkosi --include='*.conf' | grep -v 'snapshot\.ubuntu\.com' || true)
+unpinned=$(git grep -nE '^(Mirror|ToolsTreeMirror)=' -- 'mkosi/*.conf' | grep -v 'snapshot\.ubuntu\.com' || true)
 if [ -n "$unpinned" ]; then
     echo "bin/lint: apt mirrors must point at a snapshot.ubuntu.com timestamp:" >&2
     echo "$unpinned" >&2
