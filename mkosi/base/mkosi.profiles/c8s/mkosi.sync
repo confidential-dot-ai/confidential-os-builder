@@ -24,8 +24,8 @@
 # config-v3.toml.tmpl in this profile's mkosi.extra for why.
 #
 # c8s components (nri plugin binary + the CDS digest in the baked NRI floor)
-# are NOT hardcoded: both resolve from a single c8s ref (C8S_REF, default main)
-# so they always match each other and the images the chart later deploys.
+# are NOT hardcoded: both resolve from a single c8s ref (C8S_REF, default: the
+# pinned commit below) so they always match each other and the chart's images.
 #
 # Downloads are cached under mkosi.pkgcache/c8s/ — that dir survives across
 # builds; mkosi.local does NOT (the confos Rust driver wipes it on build
@@ -47,7 +47,8 @@ RKE2_IMAGES_CILIUM_SHA256="1ab41422cc16f5d030b8f62889133dff5d9dce985fbf13360c160
 # from the images the chart later deploys. C8S_REF pins a specific commit (short
 # SHA) for testing an unmerged build; it arrives via $SRCDIR/mkosi.local/c8s-ref
 # (written by bin/build-c8s — an exported var never reaches this sandbox: mkosi
-# runs under sudo, stripping the env). Empty = main. The tag must be published
+# runs under sudo, stripping the env). Empty = the pinned default below. The
+# tag must be published
 # (c8s docker.yml on main, or workflow_dispatch for a feature branch).
 # The registry the two component images resolve from. Overridable via
 # $SRCDIR/mkosi.local/c8s-registry (written by bin/build-c8s from C8S_REGISTRY)
@@ -58,7 +59,10 @@ C8S_REGISTRY="${C8S_REGISTRY:-ghcr.io/confidential-dot-ai}"
 NRI_REPO="${C8S_REGISTRY}/nri-image-policy"
 CDS_REPO="${C8S_REGISTRY}/cds"
 C8S_REF=$(cat "$SRCDIR/mkosi.local/c8s-ref" 2>/dev/null || true)
-C8S_REF="${C8S_REF:-main}"
+# Default: pinned published c8s commit (short SHA), not `main` — a local
+# build's components and measurement must not drift with c8s HEAD. c8s CI
+# overrides per build via mkosi.local/c8s-ref. Bump alongside chart pins.
+C8S_REF="${C8S_REF:-3cb601e}"
 echo "c8s sync: resolving nri-image-policy + cds at c8s ref ${C8S_REF}"
 resolve_digest() {  # <repo> <ref> -> prints sha256:... or FATALs
     local d
