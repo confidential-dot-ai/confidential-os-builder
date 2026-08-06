@@ -99,9 +99,22 @@ if ! grep -q 'if ! echo 1 > "$dev/reset"' "$flr_helper"; then
 fi
 
 # Apt mirrors must stay time-pinned to snapshot.ubuntu.com; archive.ubuntu.com drifts daily, making the measurement a function of build date.
+git rev-parse --is-inside-work-tree >/dev/null
 unpinned=$(git grep -nE '^(Mirror|ToolsTreeMirror)=' -- 'mkosi/*.conf' | grep -v 'snapshot\.ubuntu\.com' || true)
 if [ -n "$unpinned" ]; then
     echo "bin/lint: apt mirrors must point at a snapshot.ubuntu.com timestamp:" >&2
     echo "$unpinned" >&2
     exit 1
 fi
+# Presence, not just value: an image that installs packages with no Mirror= (or builds a tools tree with no ToolsTreeMirror=) uses the default drifting archive.ubuntu.com.
+for conf in mkosi/*/mkosi.conf; do
+    dir=$(dirname "$conf")
+    if git grep -qE '^Packages=' -- "$dir/*.conf" && ! git grep -qE '^Mirror=https://snapshot\.ubuntu\.com/' -- "$dir/*.conf"; then
+        echo "bin/lint: $dir installs packages but declares no snapshot.ubuntu.com Mirror= pin" >&2
+        exit 1
+    fi
+    if git grep -qE '^ToolsTree=' -- "$dir/*.conf" && ! git grep -qE '^ToolsTreeMirror=https://snapshot\.ubuntu\.com/' -- "$dir/*.conf"; then
+        echo "bin/lint: $dir builds a tools tree but declares no snapshot.ubuntu.com ToolsTreeMirror= pin" >&2
+        exit 1
+    fi
+done
