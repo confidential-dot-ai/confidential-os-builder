@@ -59,9 +59,7 @@ C8S_REGISTRY="${C8S_REGISTRY:-ghcr.io/confidential-dot-ai}"
 NRI_REPO="${C8S_REGISTRY}/nri-image-policy"
 CDS_REPO="${C8S_REGISTRY}/cds"
 C8S_REF=$(cat "$SRCDIR/mkosi.local/c8s-ref" 2>/dev/null || true)
-# Default: pinned published c8s commit (short SHA), not `main` — a local
-# build's components and measurement must not drift with c8s HEAD. c8s CI
-# overrides per build via mkosi.local/c8s-ref. Bump alongside chart pins.
+# Pinned published c8s commit, not `main` — a local build must not drift with c8s HEAD; bump alongside chart pins.
 C8S_REF="${C8S_REF:-3cb601e}"
 echo "c8s sync: resolving nri-image-policy + cds at c8s ref ${C8S_REF}"
 resolve_digest() {  # <repo> <ref> -> prints sha256:... or FATALs
