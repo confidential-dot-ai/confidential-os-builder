@@ -14,16 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
 
       - name: Setup mkosi
-        uses: systemd/mkosi@v26
+        uses: systemd/mkosi@84af20892b61c8e177e391f997ded8b4cb5514f2 # v26
 
       - name: Install build deps (nspawn, TDVF firmware, iasl, cpio)
         # Host deps for `confos build` — keep in lockstep with bin/setup.
@@ -32,13 +32,13 @@ jobs:
           sudo apt-get install -y systemd-container ovmf cpio acpica-tools
 
       - name: Cache kernel tools
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: mkosi/kernel-builder/mkosi.tools
           key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/kernel-builder/mkosi.conf') }}
 
       - name: Cache kernel
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: output/kernel
           key: ${{ runner.os }}-kernel-${{ hashFiles('mkosi/kernel-builder/{mkosi.conf,mkosi.tools.manifest}','kernel/*') }}
@@ -47,7 +47,7 @@ jobs:
         run: bin/confos kernel
 
       - name: Cache base image tools
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: mkosi/base/mkosi.tools
           key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf') }}
@@ -56,7 +56,7 @@ jobs:
         run: bin/confos build
 
       - name: Setup ORAS
-        uses: oras-project/setup-oras@v1
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
 
       - name: Push to GHCR
         run: |

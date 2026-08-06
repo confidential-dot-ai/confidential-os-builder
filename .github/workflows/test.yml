@@ -26,10 +26,10 @@ jobs:
         continue-on-error: ${{ matrix.checks == 'advisories' }}
         steps:
             - name: Check out repo
-              uses: actions/checkout@v6
+              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
             - name: Install cargo-deny
-              uses: EmbarkStudios/cargo-deny-action@v2
+              uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
               with:
                   command: check ${{ matrix.checks }}
 
@@ -38,8 +38,8 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
-            - uses: actions/checkout@v6
-            - uses: actions-rust-lang/setup-rust-toolchain@v1
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+            - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
               with:
                   components: rustfmt, clippy
             - name: Run linters
@@ -57,19 +57,21 @@ jobs:
                     - ubuntu-24.04-arm # linux-arm
 
         steps:
-            - uses: actions/checkout@v6
-            - uses: actions-rust-lang/setup-rust-toolchain@v1
-            - uses: taiki-e/install-action@nextest
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+            - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+            - uses: taiki-e/install-action@91ddec75689c4c78665b598d188dc821c5a43e5c # v2.85.9
+              with:
+                tool: nextest
             - run: ./bin/test
 
     build:
         name: Build Confidential OS Builder
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
-            - uses: actions-rust-lang/setup-rust-toolchain@v1
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+            - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
             - run: cargo build --release
-            - uses: actions/upload-artifact@v7
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                   name: confos
                   path: target/release/confos
