@@ -49,7 +49,8 @@ We use several techniques to ensure the results of our builds are reproducible, 
 ### apt mirror pinning
 
 Identical package *versions* across builds are enforced by pinning
-`Mirror=` (and `ToolsTreeMirror=`) in `mkosi/base/mkosi.conf` and
+`Mirror=` (and `ToolsTreeMirror=`) in `mkosi/base/mkosi.conf`,
+`mkosi/base/mkosi.conf.d/tools.conf`, and
 `mkosi/kernel-builder/mkosi.conf` to a point-in-time
 `snapshot.ubuntu.com` URL. Bumping that timestamp is the deliberate act
 that picks up security updates — and changes the roothash.
