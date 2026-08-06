@@ -97,3 +97,13 @@ if ! grep -q 'if ! echo 1 > "$dev/reset"' "$flr_helper"; then
     echo "bin/lint: $flr_helper must guard the per-GPU reset write (one failed FLR must not abort bring-up)" >&2
     exit 1
 fi
+
+# Every apt mirror must stay time-pinned to snapshot.ubuntu.com; an
+# archive.ubuntu.com mirror drifts daily, making the measurement a function
+# of build date. Outage workarounds must not outlive the outage.
+unpinned=$(grep -rn '^\(Mirror\|ToolsTreeMirror\)=' mkosi --include='*.conf' | grep -v 'snapshot\.ubuntu\.com' || true)
+if [ -n "$unpinned" ]; then
+    echo "bin/lint: apt mirrors must point at a snapshot.ubuntu.com timestamp:" >&2
+    echo "$unpinned" >&2
+    exit 1
+fi
