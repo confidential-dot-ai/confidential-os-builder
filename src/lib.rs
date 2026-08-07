@@ -207,7 +207,8 @@ pub struct BuildArgs {
     /// enabled as if passed via `--profile <basename>`, so a consumer repo
     /// can own its image profile while this repo stays the builder
     /// (confidential-dot-ai/c8s#264). Repeatable; the basename must not
-    /// collide with an in-tree profile.
+    /// collide with an in-tree profile. If the basename is also named via
+    /// `--profile`, that position decides the config-merge order.
     #[arg(long = "profile-dir", value_name = "DIR")]
     pub profile_dirs: Vec<PathBuf>,
 }

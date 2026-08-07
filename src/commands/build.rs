@@ -178,7 +178,12 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         });
         copy_extra(dir, &target)?;
         tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
-        profiles.push(name);
+        // Profile order decides mkosi's config-merge order. If the caller also
+        // named this profile via --profile, that position wins; otherwise it
+        // applies after all --profile entries.
+        if !profiles.contains(&name) {
+            profiles.push(name);
+        }
     }
     let profiles = profiles;
     let _profile_dir_guards = profile_dir_guards;
