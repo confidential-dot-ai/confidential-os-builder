@@ -107,7 +107,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // mkosi/base/mkosi.profiles/attest/mkosi.sync staging a binary into
     // mkosi.local/mkosi.extra/) must survive into the rest of the mkosi run.
     // The RemoveDirOnDrop guard below removes mkosi.local on normal exit;
-    // hard kills are recoverable via `make clean`.
+    // after a hard kill, remove mkosi/base/mkosi.local by hand.
     let mkosi_local = PathBuf::from("mkosi/base/mkosi.local");
     let mkosi_local_extra = mkosi_local.join("mkosi.extra");
     fs_err::create_dir_all(&mkosi_local_extra)?;
@@ -158,7 +158,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // operator's responsibility — see `bin/confos-fetch-<NAME>` helpers and
     // `make build-<NAME>` targets that chain prep + build.
     let mut profiles = args.profiles.clone();
-    let _profile_dir_guards = stage_profile_dirs(&args.profile_dirs, &mut profiles)?;
+    let _profile_dir_guards = stage_profile_dirs(
+        Path::new("mkosi/base/mkosi.profiles"),
+        &args.profile_dirs,
+        &mut profiles,
+    )?;
     for profile in &profiles {
         tracing::debug!("profile enabled: {profile}");
     }
@@ -677,6 +681,7 @@ fn external_profile_name(dir: &Path) -> anyhow::Result<String> {
 /// profile merge precedence identical to in-tree, which is what lets a
 /// moved-out profile build bit-identically.
 fn stage_profile_dirs(
+    profiles_root: &Path,
     dirs: &[PathBuf],
     profiles: &mut Vec<String>,
 ) -> anyhow::Result<Vec<RemoveDirOnDrop>> {
@@ -686,7 +691,7 @@ fn stage_profile_dirs(
         if !dir.join("mkosi.conf").is_file() {
             anyhow::bail!("--profile-dir has no mkosi.conf: {}", dir.display());
         }
-        let target = PathBuf::from("mkosi/base/mkosi.profiles").join(&name);
+        let target = profiles_root.join(&name);
         if guards.iter().any(|g| g.dir == target) {
             anyhow::bail!(
                 "two --profile-dir arguments share the basename {name:?}; the second ({}) would silently replace the first",
@@ -1152,6 +1157,79 @@ mod tests {
         let path = dir.path().join("not-gzip");
         fs_err::write(&path, b"070701-plain-cpio-not-gzip").unwrap();
         assert!(zero_gzip_mtime(&path, 0).is_err());
+    }
+
+    fn mk_profile(dir: &Path) {
+        fs_err::create_dir_all(dir).unwrap();
+        fs_err::write(dir.join("mkosi.conf"), "[Content]\n").unwrap();
+    }
+
+    #[test]
+    fn stage_profile_dirs_stages_marked_copy_and_appends_name() {
+        let src_root = TempDir::new().unwrap();
+        let profiles_root = TempDir::new().unwrap();
+        let src = src_root.path().join("c8s");
+        mk_profile(&src);
+        fs_err::write(src.join("data"), b"x").unwrap();
+        let mut profiles = vec!["gpu".to_string()];
+        let guards = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).unwrap();
+        let staged = profiles_root.path().join("c8s");
+        assert!(staged.join("mkosi.conf").is_file());
+        assert!(staged.join("data").is_file());
+        assert!(staged.join(STAGED_PROFILE_MARKER).is_file());
+        assert_eq!(profiles, ["gpu", "c8s"]);
+        drop(guards);
+        assert!(!staged.exists());
+    }
+
+    #[test]
+    fn stage_profile_dirs_keeps_explicit_profile_position() {
+        let src_root = TempDir::new().unwrap();
+        let profiles_root = TempDir::new().unwrap();
+        let src = src_root.path().join("c8s");
+        mk_profile(&src);
+        let mut profiles = vec!["c8s".to_string(), "dev".to_string()];
+        let _g = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).unwrap();
+        assert_eq!(profiles, ["c8s", "dev"]);
+    }
+
+    #[test]
+    fn stage_profile_dirs_rejects_unmarked_collision_but_replaces_stale() {
+        let src_root = TempDir::new().unwrap();
+        let profiles_root = TempDir::new().unwrap();
+        let src = src_root.path().join("c8s");
+        mk_profile(&src);
+        let in_tree = profiles_root.path().join("c8s");
+        mk_profile(&in_tree);
+        let mut profiles = vec![];
+        assert!(
+            stage_profile_dirs(
+                profiles_root.path(),
+                std::slice::from_ref(&src),
+                &mut profiles
+            )
+            .is_err(),
+            "unmarked (in-tree) profile must be a hard error"
+        );
+        fs_err::write(in_tree.join(STAGED_PROFILE_MARKER), b"").unwrap();
+        fs_err::write(in_tree.join("stale"), b"").unwrap();
+        let _g = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).unwrap();
+        assert!(
+            !profiles_root.path().join("c8s/stale").exists(),
+            "marked leftover must be replaced, not merged"
+        );
+    }
+
+    #[test]
+    fn stage_profile_dirs_rejects_duplicate_basenames() {
+        let src_root = TempDir::new().unwrap();
+        let profiles_root = TempDir::new().unwrap();
+        let a = src_root.path().join("a/c8s");
+        let b = src_root.path().join("b/c8s");
+        mk_profile(&a);
+        mk_profile(&b);
+        let mut profiles = vec![];
+        assert!(stage_profile_dirs(profiles_root.path(), &[a, b], &mut profiles).is_err());
     }
 
     #[test]
