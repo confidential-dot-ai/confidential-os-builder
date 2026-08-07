@@ -160,8 +160,15 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // walks and sandbox, so a moved-out profile cannot build differently.
     let mut profiles = args.profiles.clone();
     let mut profile_dir_guards = Vec::new();
+    let mut staged_names: Vec<String> = Vec::new();
     for dir in &args.profile_dirs {
         let name = external_profile_name(dir)?;
+        if staged_names.contains(&name) {
+            anyhow::bail!(
+                "two --profile-dir arguments share the basename {name:?}; the second ({}) would silently replace the first",
+                dir.display()
+            );
+        }
         if !dir.join("mkosi.conf").is_file() {
             anyhow::bail!("--profile-dir has no mkosi.conf: {}", dir.display());
         }
@@ -187,6 +194,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         });
         copy_extra(dir, &target)?;
         fs_err::write(target.join(STAGED_PROFILE_MARKER), b"")?;
+        staged_names.push(name.clone());
         tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
         // Profile order decides mkosi's config-merge order. If the caller also
         // named this profile via --profile, that position wins; otherwise it
