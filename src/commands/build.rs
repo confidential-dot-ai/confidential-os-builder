@@ -167,16 +167,26 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         }
         let target = PathBuf::from("mkosi/base/mkosi.profiles").join(&name);
         if fs_err::symlink_metadata(&target).is_ok() {
-            anyhow::bail!(
-                "--profile-dir {} collides with existing profile {name:?} at {}",
-                dir.display(),
-                target.display()
-            );
+            // A marker names the copy ours: a hard-killed build leaves its
+            // staged copy behind (the drop guard never ran), and that stale
+            // copy must be replaceable — while a genuine in-tree profile
+            // (git-tracked, never marked) must stay a hard error.
+            if target.join(STAGED_PROFILE_MARKER).is_file() {
+                tracing::warn!("removing stale staged profile {name} left by an interrupted build");
+                tools::force_remove_dir_all(&target)?;
+            } else {
+                anyhow::bail!(
+                    "--profile-dir {} collides with existing profile {name:?} at {}",
+                    dir.display(),
+                    target.display()
+                );
+            }
         }
         profile_dir_guards.push(MkosiLocalCleanup {
             dir: target.clone(),
         });
         copy_extra(dir, &target)?;
+        fs_err::write(target.join(STAGED_PROFILE_MARKER), b"")?;
         tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
         // Profile order decides mkosi's config-merge order. If the caller also
         // named this profile via --profile, that position wins; otherwise it
@@ -654,6 +664,11 @@ impl Drop for MkosiLocalCleanup {
         let _ = tools::force_remove_dir_all(&self.dir);
     }
 }
+
+/// Sits at a staged profile's root (next to mkosi.conf, so never inside the
+/// image's mkosi.extra tree) to mark the copy as ours — see the stale-copy
+/// handling above.
+const STAGED_PROFILE_MARKER: &str = ".confos-staged-profile";
 
 /// Profile name for an out-of-tree profile dir: its basename, restricted to
 /// characters mkosi accepts in profile names so the copy target and the
