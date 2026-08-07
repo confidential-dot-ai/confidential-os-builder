@@ -259,18 +259,21 @@ C8S-IMAGE.md still applies, and a /16 pod CIDR covers any realistic N.
 
 ### c8s on top
 
-Mostly untouched, by construction: installer, attestation-api and NRI
-config distribution are DaemonSets, and each node bakes its own
-attestation-api + NRI plugin + `nri-node-ip.service`. Deltas:
+Untouched, by construction: installer, attestation-api and NRI config
+distribution are DaemonSets, and each node bakes its own attestation-api
++ NRI plugin + `nri-node-ip.service`. Notes:
 
-- **Installer restart unit**: the NRI config refresh restarts
-  `rke2-server`; on agent nodes the unit is `rke2-agent`. The installer
-  script must restart whichever rke2 unit is active on its node. (c8s
-  repo change, small.)
-- **CDS placement**: single replica, unchanged; one node gets the
-  `role=cds` label. Agents' baked NRI plugins reach it via the
-  `127.0.0.1:30808` NodePort under Cilium kubeProxyReplacement
-  (validated in M1).
+- **Installer restart unit**: already role-agnostic. The chart's
+  `nri-image-policy.restartCommand` restarts whichever of
+  `rke2-server`/`rke2-agent` is active on the node. No change needed.
+- **CDS placement**: single replica pinned by the `role=cds` label,
+  unchanged. Every node's baked NRI plugin dials
+  `https://127.0.0.1:30808`, which on the single-node image has always
+  been node-local. On a multinode cluster the off-CDS nodes' NodePort hop
+  must actually traverse to the CDS node; kubeProxyReplacement should
+  route it, but this is the c8s-side assumption most likely to be wrong,
+  so M1 verifies it explicitly (and open question 5 covers whether that
+  leg rides the WG path).
 - **Measurements**: one image means one measurement set; the existing
   `cds.measurements` values cover every node with no schema change.
 - **Mesh**: ratls-mesh is node-scoped and derives identity per node
@@ -300,7 +303,7 @@ integrity for etcd has a story.
 |---|---|---|
 | confos c8s profile | `rke2-role.service` + role conditions on rke2 units and cred-release; `join-release.service`; `rke2-join.service`; Cilium WG values | ~150 lines of units/config |
 | confos kernel | `CONFIG_WIREGUARD=y` in `kernel/c8s.config` + snapshot regen | 1 line + snapshot |
-| c8s repo | `c8s join-release` + `c8s join` subcommands sharing cred-release's RA-TLS/quote plumbing; installer restarts the active rke2 unit | ~400 lines Go + tests |
+| c8s repo | `c8s join-release` + `c8s join` subcommands sharing cred-release's RA-TLS/quote plumbing | ~400 lines Go + tests |
 | launch tooling | routable node addressing; port matrix; per-host role/server drop-ins | deployment-repo scoped |
 
 No new dependencies: the join path reuses the ratls + attestation-api
