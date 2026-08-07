@@ -207,6 +207,9 @@ pub struct BuildArgs {
     /// enabled as if passed via `--profile <basename>`. Repeatable; the
     /// basename must not collide with an in-tree profile, and if it is also
     /// named via `--profile`, that position decides the config-merge order.
+    /// The basename is load-bearing: sync hooks that self-reference their
+    /// profile path (`$SRCDIR/mkosi.profiles/<name>/...`) only resolve if
+    /// the directory keeps the name they were written for.
     #[arg(long = "profile-dir", value_name = "DIR")]
     pub profile_dirs: Vec<PathBuf>,
 
