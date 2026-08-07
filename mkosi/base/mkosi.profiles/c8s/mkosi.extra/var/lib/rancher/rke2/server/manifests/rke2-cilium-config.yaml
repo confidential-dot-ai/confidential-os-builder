@@ -37,6 +37,14 @@ spec:
     bpf:
       masquerade: true
 
+    # WireGuard node-to-node encryption: cross-node pod traffic rides the
+    # untrusted host fabric. Peer trust chains to apiserver membership,
+    # which the attested join gates (docs/C8S-MULTINODE.md). No-op with a
+    # single node.
+    encryption:
+      enabled: true
+      type: wireguard
+
     # Direct apiserver address — single-node uses the host loopback.
     # RKE2's kube-apiserver binds on 0.0.0.0:6443 so 127.0.0.1 works.
     k8sServiceHost: 127.0.0.1
