@@ -8,6 +8,13 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Added
+- `confos build --profile-dir <dir>`: enable an mkosi profile from an
+  out-of-tree directory (copied under `mkosi.profiles/<basename>` for the
+  build's duration, enabled like `--profile <basename>`), so a consumer
+  repo can own its image profile while this repo stays the builder
+  ([c8s#264](https://github.com/confidential-dot-ai/c8s/issues/264))
+
 ## [0.3.0] — 2026-08-07
 
 ### Added

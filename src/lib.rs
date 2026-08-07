@@ -200,6 +200,16 @@ pub struct BuildArgs {
     /// debugging).
     #[arg(long = "profile", value_name = "NAME")]
     pub profiles: Vec<String>,
+
+    /// Enable an mkosi profile from an out-of-tree directory. The directory
+    /// (which must contain an mkosi.conf) is copied under
+    /// `mkosi/base/mkosi.profiles/<basename>` for the build's duration and
+    /// enabled as if passed via `--profile <basename>`, so a consumer repo
+    /// can own its image profile while this repo stays the builder
+    /// (confidential-dot-ai/c8s#264). Repeatable; the basename must not
+    /// collide with an in-tree profile.
+    #[arg(long = "profile-dir", value_name = "DIR")]
+    pub profile_dirs: Vec<PathBuf>,
 }
 
 #[derive(clap::Args)]

@@ -152,7 +152,37 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // needs (e.g. pulling a binary from a registry into mkosi.local/) is the
     // operator's responsibility — see `bin/confos-fetch-<NAME>` helpers and
     // `make build-<NAME>` targets that chain prep + build.
-    for profile in &args.profiles {
+    //
+    // Out-of-tree profiles (--profile-dir) are copied under mkosi.profiles/
+    // for the build's duration so mkosi sees them exactly like in-tree ones
+    // (mkosi.conf, mkosi.extra/, sync hooks). Copied, not symlinked — the
+    // copy behaves identically to an in-tree profile under mkosi's tree
+    // walks and sandbox, so a moved-out profile cannot build differently.
+    let mut profiles = args.profiles.clone();
+    let mut profile_dir_guards = Vec::new();
+    for dir in &args.profile_dirs {
+        let name = external_profile_name(dir)?;
+        if !dir.join("mkosi.conf").is_file() {
+            anyhow::bail!("--profile-dir has no mkosi.conf: {}", dir.display());
+        }
+        let target = PathBuf::from("mkosi/base/mkosi.profiles").join(&name);
+        if fs_err::symlink_metadata(&target).is_ok() {
+            anyhow::bail!(
+                "--profile-dir {} collides with existing profile {name:?} at {}",
+                dir.display(),
+                target.display()
+            );
+        }
+        profile_dir_guards.push(MkosiLocalCleanup {
+            dir: target.clone(),
+        });
+        copy_extra(dir, &target)?;
+        tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
+        profiles.push(name);
+    }
+    let profiles = profiles;
+    let _profile_dir_guards = profile_dir_guards;
+    for profile in &profiles {
         tracing::debug!("profile enabled: {profile}");
     }
 
@@ -247,7 +277,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         mkosi_args.push(format!("--postinst-script={}", canonical.display()));
         mkosi_args.push("--with-network=yes".to_string());
     }
-    for profile in &args.profiles {
+    for profile in &profiles {
         mkosi_args.push(format!("--profile={profile}"));
     }
     tools::run_command_streaming("sudo", &mkosi_args)?;
@@ -618,6 +648,30 @@ impl Drop for MkosiLocalCleanup {
     fn drop(&mut self) {
         let _ = tools::force_remove_dir_all(&self.dir);
     }
+}
+
+/// Profile name for an out-of-tree profile dir: its basename, restricted to
+/// characters mkosi accepts in profile names so the copy target and the
+/// `--profile=` value cannot smuggle path separators or shell metacharacters.
+fn external_profile_name(dir: &Path) -> anyhow::Result<String> {
+    let name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "--profile-dir has no usable directory name: {}",
+                dir.display()
+            )
+        })?
+        .to_string();
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        anyhow::bail!("--profile-dir basename {name:?} is not a valid mkosi profile name (want [A-Za-z0-9_-]+)");
+    }
+    Ok(name)
 }
 
 /// Recursively copy the contents of `src` into `dst`.
@@ -1047,6 +1101,28 @@ mod tests {
         let path = dir.path().join("not-gzip");
         fs_err::write(&path, b"070701-plain-cpio-not-gzip").unwrap();
         assert!(zero_gzip_mtime(&path, 0).is_err());
+    }
+
+    #[test]
+    fn external_profile_name_takes_basename() {
+        assert_eq!(
+            external_profile_name(Path::new("../c8s/node-guest-image/c8s")).unwrap(),
+            "c8s"
+        );
+        assert_eq!(
+            external_profile_name(Path::new("/abs/path/my_profile-2")).unwrap(),
+            "my_profile-2"
+        );
+    }
+
+    #[test]
+    fn external_profile_name_rejects_unsafe_names() {
+        for bad in ["/", "..", "a b", "pr!file", ""] {
+            assert!(
+                external_profile_name(Path::new(bad)).is_err(),
+                "expected rejection for {bad:?}"
+            );
+        }
     }
 
     #[test]
