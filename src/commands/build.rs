@@ -106,17 +106,22 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // Don't wipe mkosi.local at start: profile sync hooks (e.g.
     // mkosi/base/mkosi.profiles/attest/mkosi.sync staging a binary into
     // mkosi.local/mkosi.extra/) must survive into the rest of the mkosi run.
-    // The MkosiLocalCleanup guard below removes mkosi.local on normal exit;
+    // The RemoveDirOnDrop guard below removes mkosi.local on normal exit;
     // hard kills are recoverable via `make clean`.
     let mkosi_local = PathBuf::from("mkosi/base/mkosi.local");
     let mkosi_local_extra = mkosi_local.join("mkosi.extra");
     fs_err::create_dir_all(&mkosi_local_extra)?;
-    let _mkosi_local_guard = MkosiLocalCleanup {
+    let _mkosi_local_guard = RemoveDirOnDrop {
         dir: mkosi_local.clone(),
     };
 
     if let Some(ref extra) = args.extra {
         copy_extra(extra, &mkosi_local_extra)?;
+    }
+
+    for spec in &args.sync_inputs {
+        let (name, value) = parse_sync_input(spec)?;
+        fs_err::write(mkosi_local.join(name), format!("{value}\n"))?;
     }
 
     // Check required tools — resolve mkosi's full canonical path so sudo can invoke it
@@ -152,59 +157,8 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // needs (e.g. pulling a binary from a registry into mkosi.local/) is the
     // operator's responsibility — see `bin/confos-fetch-<NAME>` helpers and
     // `make build-<NAME>` targets that chain prep + build.
-    //
-    // Out-of-tree profiles (--profile-dir) are copied under mkosi.profiles/
-    // for the build's duration so mkosi sees them exactly like in-tree ones
-    // (mkosi.conf, mkosi.extra/, sync hooks). Copied, not symlinked — the
-    // copy behaves identically to an in-tree profile under mkosi's tree
-    // walks and sandbox, so a moved-out profile cannot build differently.
     let mut profiles = args.profiles.clone();
-    let mut profile_dir_guards = Vec::new();
-    let mut staged_names: Vec<String> = Vec::new();
-    for dir in &args.profile_dirs {
-        let name = external_profile_name(dir)?;
-        if staged_names.contains(&name) {
-            anyhow::bail!(
-                "two --profile-dir arguments share the basename {name:?}; the second ({}) would silently replace the first",
-                dir.display()
-            );
-        }
-        if !dir.join("mkosi.conf").is_file() {
-            anyhow::bail!("--profile-dir has no mkosi.conf: {}", dir.display());
-        }
-        let target = PathBuf::from("mkosi/base/mkosi.profiles").join(&name);
-        if fs_err::symlink_metadata(&target).is_ok() {
-            // A marker names the copy ours: a hard-killed build leaves its
-            // staged copy behind (the drop guard never ran), and that stale
-            // copy must be replaceable — while a genuine in-tree profile
-            // (git-tracked, never marked) must stay a hard error.
-            if target.join(STAGED_PROFILE_MARKER).is_file() {
-                tracing::warn!("removing stale staged profile {name} left by an interrupted build");
-                tools::force_remove_dir_all(&target)?;
-            } else {
-                anyhow::bail!(
-                    "--profile-dir {} collides with existing profile {name:?} at {}",
-                    dir.display(),
-                    target.display()
-                );
-            }
-        }
-        profile_dir_guards.push(MkosiLocalCleanup {
-            dir: target.clone(),
-        });
-        copy_extra(dir, &target)?;
-        fs_err::write(target.join(STAGED_PROFILE_MARKER), b"")?;
-        staged_names.push(name.clone());
-        tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
-        // Profile order decides mkosi's config-merge order. If the caller also
-        // named this profile via --profile, that position wins; otherwise it
-        // applies after all --profile entries.
-        if !profiles.contains(&name) {
-            profiles.push(name);
-        }
-    }
-    let profiles = profiles;
-    let _profile_dir_guards = profile_dir_guards;
+    let _profile_dir_guards = stage_profile_dirs(&args.profile_dirs, &mut profiles)?;
     for profile in &profiles {
         tracing::debug!("profile enabled: {profile}");
     }
@@ -663,11 +617,11 @@ fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
 /// the mkosi run, including when an error path drops the guard early. All
 /// per-build file injections (extra, kernel, console, cloud-init) live under
 /// this directory, so a single cleanup covers them all.
-struct MkosiLocalCleanup {
+struct RemoveDirOnDrop {
     dir: PathBuf,
 }
 
-impl Drop for MkosiLocalCleanup {
+impl Drop for RemoveDirOnDrop {
     fn drop(&mut self) {
         let _ = tools::force_remove_dir_all(&self.dir);
     }
@@ -675,31 +629,100 @@ impl Drop for MkosiLocalCleanup {
 
 /// Sits at a staged profile's root (next to mkosi.conf, so never inside the
 /// image's mkosi.extra tree) to mark the copy as ours — see the stale-copy
-/// handling above.
+/// handling in `stage_profile_dirs`.
 const STAGED_PROFILE_MARKER: &str = ".confos-staged-profile";
 
-/// Profile name for an out-of-tree profile dir: its basename, restricted to
-/// characters mkosi accepts in profile names so the copy target and the
-/// `--profile=` value cannot smuggle path separators or shell metacharacters.
-fn external_profile_name(dir: &Path) -> anyhow::Result<String> {
-    let name = dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "--profile-dir has no usable directory name: {}",
-                dir.display()
-            )
-        })?
-        .to_string();
-    if name.is_empty()
-        || !name
+/// Charset shared by staged file/profile names: safe as a filesystem path
+/// component and as an mkosi `--profile=` value (no separators, no shell
+/// metacharacters).
+fn is_safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        anyhow::bail!("--profile-dir basename {name:?} is not a valid mkosi profile name (want [A-Za-z0-9_-]+)");
+}
+
+/// Split a `--sync-input NAME=VALUE` spec; NAME becomes a file under
+/// mkosi.local, so it gets the same charset restriction as profile names.
+fn parse_sync_input(spec: &str) -> anyhow::Result<(&str, &str)> {
+    let (name, value) = spec
+        .split_once('=')
+        .ok_or_else(|| anyhow::anyhow!("--sync-input wants NAME=VALUE, got {spec:?}"))?;
+    if !is_safe_name(name) {
+        anyhow::bail!("--sync-input name {name:?} must match [A-Za-z0-9_-]+");
     }
-    Ok(name)
+    Ok((name, value))
+}
+
+/// Profile name for an out-of-tree profile dir: its basename.
+fn external_profile_name(dir: &Path) -> anyhow::Result<String> {
+    let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !is_safe_name(name) {
+        anyhow::bail!(
+            "--profile-dir {} basename is not a valid mkosi profile name (want [A-Za-z0-9_-]+)",
+            dir.display()
+        );
+    }
+    Ok(name.to_string())
+}
+
+/// Stage each `--profile-dir` as a copy under `mkosi/base/mkosi.profiles/`
+/// for the build's duration and add its basename to `profiles` — unless the
+/// caller already pinned a position for it via `--profile`, which decides
+/// mkosi's config-merge order. Returns the guards that remove the copies.
+///
+/// A copy, not a symlink or an `Include=`: mkosi v26 resolves profiles only
+/// under cwd's `mkosi.profiles/`, and CLI includes parse BEFORE the main
+/// config tree while profiles parse after it — only a staged copy keeps
+/// profile merge precedence identical to in-tree, which is what lets a
+/// moved-out profile build bit-identically.
+fn stage_profile_dirs(
+    dirs: &[PathBuf],
+    profiles: &mut Vec<String>,
+) -> anyhow::Result<Vec<RemoveDirOnDrop>> {
+    let mut guards: Vec<RemoveDirOnDrop> = Vec::new();
+    for dir in dirs {
+        let name = external_profile_name(dir)?;
+        if !dir.join("mkosi.conf").is_file() {
+            anyhow::bail!("--profile-dir has no mkosi.conf: {}", dir.display());
+        }
+        let target = PathBuf::from("mkosi/base/mkosi.profiles").join(&name);
+        if guards.iter().any(|g| g.dir == target) {
+            anyhow::bail!(
+                "two --profile-dir arguments share the basename {name:?}; the second ({}) would silently replace the first",
+                dir.display()
+            );
+        }
+        if fs_err::symlink_metadata(&target).is_ok() {
+            // The marker names a copy ours: a hard-killed build leaves its
+            // staged copy behind (the drop guard never ran), and that stale
+            // copy must be replaceable — while a genuine in-tree profile
+            // (git-tracked, never marked) must stay a hard error.
+            if target.join(STAGED_PROFILE_MARKER).is_file() {
+                tracing::warn!("removing stale staged profile {name} left by an interrupted build");
+                tools::force_remove_dir_all(&target)?;
+            } else {
+                anyhow::bail!(
+                    "--profile-dir {} collides with existing profile {name:?} at {}",
+                    dir.display(),
+                    target.display()
+                );
+            }
+        }
+        guards.push(RemoveDirOnDrop {
+            dir: target.clone(),
+        });
+        // Marker before content: a kill mid-copy must still leave a
+        // recognizably-ours dir, or the next run hard-errors on it.
+        fs_err::create_dir_all(&target)?;
+        fs_err::write(target.join(STAGED_PROFILE_MARKER), b"")?;
+        copy_extra(dir, &target)?;
+        tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
+        if !profiles.contains(&name) {
+            profiles.push(name);
+        }
+    }
+    Ok(guards)
 }
 
 /// Recursively copy the contents of `src` into `dst`.
@@ -1132,6 +1155,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_sync_input_splits_on_first_eq() {
+        assert_eq!(
+            parse_sync_input("c8s-ref=3a2517b").unwrap(),
+            ("c8s-ref", "3a2517b")
+        );
+        assert_eq!(parse_sync_input("k=a=b").unwrap(), ("k", "a=b"));
+        assert_eq!(parse_sync_input("empty=").unwrap(), ("empty", ""));
+    }
+
+    #[test]
+    fn parse_sync_input_rejects_bad_specs() {
+        for bad in ["no-eq", "=value", "a/b=x", "a b=x"] {
+            assert!(
+                parse_sync_input(bad).is_err(),
+                "expected rejection for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
     fn external_profile_name_takes_basename() {
         assert_eq!(
             external_profile_name(Path::new("../c8s/node-guest-image/c8s")).unwrap(),
@@ -1262,7 +1305,7 @@ mod tests {
         fs_err::write(dir.join("mkosi.extra/etc/file"), b"x").unwrap();
 
         {
-            let _guard = MkosiLocalCleanup { dir: dir.clone() };
+            let _guard = RemoveDirOnDrop { dir: dir.clone() };
             assert!(dir.exists());
         }
         assert!(!dir.exists());
@@ -1272,7 +1315,7 @@ mod tests {
     fn mkosi_local_cleanup_swallows_missing_directory() {
         let parent = TempDir::new().unwrap();
         let dir = parent.path().join("never-existed");
-        drop(MkosiLocalCleanup { dir });
+        drop(RemoveDirOnDrop { dir });
         // No panic == pass.
     }
 

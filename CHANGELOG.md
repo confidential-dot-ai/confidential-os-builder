@@ -14,6 +14,10 @@ build configs, since those invalidate published reference values.
   build's duration, enabled like `--profile <basename>`), so a consumer
   repo can own its image profile while this repo stays the builder
   ([c8s#264](https://github.com/confidential-dot-ai/c8s/issues/264))
+- `confos build --sync-input NAME=VALUE`: stage a value as
+  `mkosi.local/<NAME>` for profile sync hooks — the sanctioned tunnel for
+  consumer inputs (sudo strips the environment mkosi runs under), replacing
+  hand-written files in this repo's tree
 
 ## [0.3.0] — 2026-08-07
 
