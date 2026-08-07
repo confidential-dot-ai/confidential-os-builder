@@ -8,6 +8,35 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-07
+
+### Added
+- GPU confos profile (#68)
+- `bin/lint` gates apt mirrors: every mirror must be a time-pinned
+  `snapshot.ubuntu.com` URL, and every package-installing image (and
+  configured tools tree) must declare one — an outage workaround can no
+  longer outlive the outage (#79)
+
+### Changed
+- **Changes measurements.** Apt mirrors re-pinned to `snapshot.ubuntu.com`
+  (base + tools `20260430T000000Z`, kernel-builder `20260405T000000Z`),
+  removing the TEMP(2026-07-06) `archive.ubuntu.com` outage workaround, and
+  the verity initrd — previously never mirror-pinned — now builds from the
+  base snapshot. The next build of an otherwise-unchanged config rolls its
+  measurement once, after which rebuilds stop drifting with build date (#79)
+- c8s profile: default `C8S_REF` is the pinned published c8s commit
+  `3a2517b` (the deployed release) instead of tracking `main`; CI still
+  overrides per build (#79)
+
+### Fixed
+- GPU: udev probe held until FLR completes (#76); slow or degraded GPU
+  bring-up no longer fails boot (#77)
+- attestation-api: per-GPU nvidia char devices allowed (#73)
+- c8s profile: node-image admission inventory and a reproducible GPU
+  module build (#74); nested cluster networking kept reachable (#75)
+- Boot: 120s wait-online stall from the phantom `dummy0` link (#78)
+- Build manifests record the `image.raw` checksum (#55)
+
 ## [0.2.0] — 2026-07-13
 
 **Steep is renamed to ConfidentialOS Builder**
@@ -56,7 +85,8 @@ Initial public release.
 - `steep push` / `steep pull` (OCI via oras)
 - CI publishes base image as `ghcr.io/confidential-dot-ai/steep:base`
 
-[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/confidential-dot-ai/confidential-os-builder/releases/tag/v0.1.0
