@@ -1,0 +1,30 @@
+[Unit]
+Description=Attested RKE2 join-token release
+Documentation=https://github.com/confidential-dot-ai/c8s
+ConditionPathExists=/run/confos/role-server
+# Persistent failure = broken local attestation stack; stop, don't spin.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+# No rke2-server ordering: the handler 503s until the node-token appears,
+# so agents can poll while the control plane initialises.
+After=network-online.target rke2-role.service attestation-api.service
+Wants=network-online.target
+Requires=attestation-api.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/c8s join-release \
+    --listen :8444 \
+    --attestation-api-url http://127.0.0.1:8400 \
+    --platform tdx \
+    --token-path /var/lib/rancher/rke2/server/node-token
+Restart=on-failure
+RestartSec=10
+# Only ever reads the node-token; a read-only FS view suffices.
+ProtectSystem=strict
+ReadWritePaths=/run
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

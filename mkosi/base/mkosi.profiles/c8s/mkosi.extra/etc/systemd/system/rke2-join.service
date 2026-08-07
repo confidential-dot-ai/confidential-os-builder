@@ -1,0 +1,32 @@
+[Unit]
+Description=Attested RKE2 agent join
+Documentation=https://github.com/confidential-dot-ai/c8s
+ConditionPathExists=/run/confos/role-agent
+# Retry indefinitely: the dominant failure ("server not up yet") self-heals.
+StartLimitIntervalSec=0
+After=network-online.target rke2-role.service attestation-api.service
+Wants=network-online.target
+Requires=attestation-api.service
+
+[Service]
+# oneshot so rke2-agent's After= waits for the join to complete.
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/run/confos/join.env
+ExecStart=/usr/local/bin/c8s join \
+    --server ${JOIN_SERVER} \
+    --attestation-api-url http://127.0.0.1:8400 \
+    --platform tdx \
+    --token-out /run/confos/join-token \
+    --fragment-out /etc/rancher/rke2/config.yaml.d/50-join.yaml \
+    --timeout 30s
+Restart=on-failure
+RestartSec=15
+# Token stays on tmpfs; the fragment is the one write outside /run.
+ProtectSystem=strict
+ReadWritePaths=/run /etc/rancher/rke2/config.yaml.d
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
