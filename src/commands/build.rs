@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::{igvm, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform};
+use crate::{
+    igvm, is_safe_name, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform, SyncInput,
+};
 
 pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     tracing::info!("building base image with dm-verity + UKI");
@@ -103,17 +105,25 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Don't wipe mkosi.local at start: profile sync hooks (e.g.
-    // mkosi/base/mkosi.profiles/attest/mkosi.sync staging a binary into
-    // mkosi.local/mkosi.extra/) must survive into the rest of the mkosi run.
-    // The MkosiLocalCleanup guard below removes mkosi.local on normal exit;
-    // hard kills are recoverable via `make clean`.
+    // Nothing above this point writes to the repo; everything below stages
+    // into shared paths. Held for the rest of the run.
+    let _build_lock = lock_checkout(Path::new(BUILD_LOCK))?;
+
+    // Never wiped at start: sync hooks stage into it during the mkosi run,
+    // and bin/confos-fetch-<NAME> stages into it before the build.
     let mkosi_local = PathBuf::from("mkosi/base/mkosi.local");
-    let mkosi_local_extra = mkosi_local.join("mkosi.extra");
-    fs_err::create_dir_all(&mkosi_local_extra)?;
-    let _mkosi_local_guard = MkosiLocalCleanup {
+    let profiles_root = PathBuf::from("mkosi/base/mkosi.profiles");
+
+    // Both run unconditionally: the build that trips over a leftover is
+    // typically the one that passed neither flag.
+    sweep_stale_staged_profiles(&profiles_root)?;
+    write_sync_inputs(&mkosi_local, &args.sync_inputs)?;
+
+    let _mkosi_local_guard = RemoveDirOnDrop {
         dir: mkosi_local.clone(),
     };
+    let mkosi_local_extra = mkosi_local.join("mkosi.extra");
+    fs_err::create_dir_all(&mkosi_local_extra)?;
 
     if let Some(ref extra) = args.extra {
         copy_extra(extra, &mkosi_local_extra)?;
@@ -152,7 +162,10 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // needs (e.g. pulling a binary from a registry into mkosi.local/) is the
     // operator's responsibility — see `bin/confos-fetch-<NAME>` helpers and
     // `make build-<NAME>` targets that chain prep + build.
-    for profile in &args.profiles {
+    let mut profiles = args.profiles.clone();
+    let _profile_dir_guards =
+        stage_profile_dirs(&profiles_root, &args.profile_dirs, &mut profiles)?;
+    for profile in &profiles {
         tracing::debug!("profile enabled: {profile}");
     }
 
@@ -247,7 +260,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         mkosi_args.push(format!("--postinst-script={}", canonical.display()));
         mkosi_args.push("--with-network=yes".to_string());
     }
-    for profile in &args.profiles {
+    for profile in &profiles {
         mkosi_args.push(format!("--profile={profile}"));
     }
     tools::run_command_streaming("sudo", &mkosi_args)?;
@@ -606,18 +619,321 @@ fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// RAII guard that removes the entire per-build `mkosi.local/` overlay after
-/// the mkosi run, including when an error path drops the guard early. All
-/// per-build file injections (extra, kernel, console, cloud-init) live under
-/// this directory, so a single cleanup covers them all.
-struct MkosiLocalCleanup {
+/// Removes a staged directory on drop, error paths included. Used for the
+/// `mkosi.local/` overlay (which holds every per-build injection) and for each
+/// `--profile-dir` copy.
+///
+/// Cannot run on a hard kill; the next build recovers instead. Exit-time
+/// cleanup wipes `mkosi.local/` wholesale because everything in it is spent by
+/// then; entry-time recovery must stay scoped (the sync-input subdir, the
+/// staged-profile marker), since prep for the build about to run is
+/// indistinguishable from a dead build's residue.
+struct RemoveDirOnDrop {
     dir: PathBuf,
 }
 
-impl Drop for MkosiLocalCleanup {
+impl Drop for RemoveDirOnDrop {
     fn drop(&mut self) {
         let _ = tools::force_remove_dir_all(&self.dir);
     }
+}
+
+/// Marks a profile dir as staged; sits at its root, never inside the image's
+/// mkosi.extra tree. Absence means in-tree, which is never ours to remove.
+const STAGED_PROFILE_MARKER: &str = ".confos-staged-profile";
+
+/// Subdirectory of `mkosi.local` holding the `--sync-input` files. The
+/// directory boundary is the recovery scope: clearing it cannot touch
+/// operator prep staged elsewhere in `mkosi.local`.
+const SYNC_INPUT_DIR: &str = ".confos-sync-inputs";
+
+/// Whole-checkout build lock: builds share `mkosi.local/`, `mkosi.profiles/`,
+/// `mkosi.output/` and `output/`, so they cannot overlap.
+const BUILD_LOCK: &str = ".confos-build.lock";
+
+/// Take the exclusive build lock, released on drop and on process death (the
+/// kernel drops flock on close, hard kills included).
+///
+/// Holding it is what makes recovery decidable: no other build can be running,
+/// so anything still staged is abandoned.
+fn lock_checkout(path: &Path) -> anyhow::Result<fs_err::File> {
+    let lock = fs_err::File::create(path)?;
+    match lock.file().try_lock() {
+        Ok(()) => Ok(lock),
+        Err(std::fs::TryLockError::WouldBlock) => anyhow::bail!(
+            "another confos build is already running in this checkout (lock: {}). \
+             Builds share mkosi.local, mkosi.profiles and mkosi.output, so they \
+             cannot overlap — wait for it to finish.",
+            path.display()
+        ),
+        Err(std::fs::TryLockError::Error(e)) => {
+            Err(anyhow::Error::new(e).context(format!("taking build lock {}", path.display())))
+        }
+    }
+}
+
+/// Clear the `--sync-input` files a dead build left behind and stage this
+/// build's under `mkosi.local/.confos-sync-inputs/`.
+fn write_sync_inputs(mkosi_local: &Path, inputs: &[SyncInput]) -> anyhow::Result<()> {
+    let dir = mkosi_local.join(SYNC_INPUT_DIR);
+    if fs_err::symlink_metadata(&dir).is_ok() {
+        tracing::warn!("removing stale --sync-input files left by an interrupted build");
+        tools::force_remove_dir_all(&dir)?;
+    }
+    if inputs.is_empty() {
+        return Ok(());
+    }
+    fs_err::create_dir_all(&dir)?;
+    for input in inputs {
+        fs_err::write(dir.join(&input.name), format!("{}\n", input.value))?;
+    }
+    Ok(())
+}
+
+/// Profile name for an out-of-tree profile dir: its basename.
+fn external_profile_name(dir: &Path) -> anyhow::Result<String> {
+    let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !is_safe_name(name) {
+        anyhow::bail!(
+            "--profile-dir {} basename is not a valid mkosi profile name (want [A-Za-z0-9_-]+)",
+            dir.display()
+        );
+    }
+    Ok(name.to_string())
+}
+
+/// Stage each `--profile-dir` as a copy under `mkosi/base/mkosi.profiles/`
+/// for the build's duration and add its basename to `profiles` — unless the
+/// caller already pinned a position for it via `--profile`, which decides
+/// mkosi's config-merge order. Returns the guards that remove the copies.
+///
+/// A copy, not a symlink or an `Include=`: mkosi v26 resolves profiles only
+/// under cwd's `mkosi.profiles/`, and CLI includes parse BEFORE the main
+/// config tree while profiles parse after it — only a staged copy keeps
+/// profile merge precedence identical to in-tree, which is what lets a
+/// moved-out profile build bit-identically.
+///
+/// Expects `sweep_stale_staged_profiles` to have run first, so anything left
+/// at a target path is in-tree.
+fn stage_profile_dirs(
+    profiles_root: &Path,
+    dirs: &[PathBuf],
+    profiles: &mut Vec<String>,
+) -> anyhow::Result<Vec<RemoveDirOnDrop>> {
+    // Validate every dir before staging any: a bad argument stages nothing.
+    let mut validated: Vec<(String, &Path)> = Vec::new();
+    for dir in dirs {
+        let name = external_profile_name(dir)?;
+        if !dir.join("mkosi.conf").is_file() {
+            anyhow::bail!("--profile-dir has no mkosi.conf: {}", dir.display());
+        }
+        if validated.iter().any(|(staged, _)| *staged == name) {
+            anyhow::bail!(
+                "two --profile-dir arguments share the basename {name:?}; the second ({}) would silently replace the first",
+                dir.display()
+            );
+        }
+        if fs_err::symlink_metadata(profiles_root.join(&name)).is_ok() {
+            // The sweep took every staged leftover, so this is in-tree.
+            anyhow::bail!(
+                "--profile-dir {} collides with in-tree profile {name:?} at {}",
+                dir.display(),
+                profiles_root.join(&name).display()
+            );
+        }
+        reject_escaping_symlinks(dir)?;
+        reject_escaping_includes(dir, Path::new(""))?;
+        validated.push((name, dir));
+    }
+
+    let mut guards = Vec::new();
+    for (name, dir) in validated {
+        let target = profiles_root.join(&name);
+        guards.push(RemoveDirOnDrop {
+            dir: target.clone(),
+        });
+        // Marker before content: a kill mid-copy must leave a recognizably
+        // staged dir, or the next run hard-errors on it.
+        fs_err::create_dir_all(&target)?;
+        fs_err::write(target.join(STAGED_PROFILE_MARKER), b"")?;
+        copy_extra(dir, &target)?;
+        tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
+        if !profiles.contains(&name) {
+            profiles.push(name);
+        }
+    }
+    Ok(guards)
+}
+
+/// Remove every staged profile under `mkosi.profiles/`. Call under the build
+/// lock, which is what makes "staged" imply "abandoned".
+///
+/// Orphans are not just clutter: `--profile <name>` cannot tell one from an
+/// in-tree profile, and `mkosi.profiles/` is git-tracked territory
+/// `.gitignore` cannot cover by name, so `git add -A` would commit it.
+fn sweep_stale_staged_profiles(profiles_root: &Path) -> anyhow::Result<()> {
+    let entries = match fs_err::read_dir(profiles_root) {
+        Ok(entries) => entries,
+        // Staging creates it; absent is normal.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let dir = entry.path();
+        // Unmarked means in-tree: never ours to remove.
+        if !dir.join(STAGED_PROFILE_MARKER).is_file() {
+            continue;
+        }
+        tracing::warn!(
+            "removing stale staged profile {} left by an interrupted build",
+            dir.display()
+        );
+        tools::force_remove_dir_all(&dir)?;
+    }
+    Ok(())
+}
+
+/// Profile subtrees whose symlinks are resolved inside the built image rather
+/// than on the host, so re-parenting the profile cannot break them.
+const IMAGE_RELATIVE_SUBTREES: [&str; 2] = ["mkosi.extra", "mkosi.skeleton"];
+
+/// Reject symlinks in a profile's config tree that point outside the profile.
+///
+/// Staging re-parents the dir under `mkosi.profiles/<name>/`, so an escaping
+/// link (`mkosi.conf.d/shared.conf -> ../../common/shared.conf`, valid in the
+/// consumer's repo) dangles or resolves to an unrelated file in *this* repo.
+fn reject_escaping_symlinks(root: &Path) -> anyhow::Result<()> {
+    fn walk(root: &Path, rel: &Path) -> anyhow::Result<()> {
+        // Only the profile root can hold the exempt subtrees.
+        let at_root = rel.as_os_str().is_empty();
+        for entry in fs_err::read_dir(root.join(rel))? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let ft = entry.file_type()?;
+            if at_root && IMAGE_RELATIVE_SUBTREES.iter().any(|s| name == *s) {
+                // The exemption covers links *inside* these trees; the roots
+                // themselves are copied on the host, so a symlinked root is
+                // still re-parented by staging.
+                if ft.is_symlink() {
+                    anyhow::bail!(
+                        "--profile-dir {}: {} must be a real directory, not a symlink",
+                        root.display(),
+                        name.to_string_lossy()
+                    );
+                }
+                continue;
+            }
+            let rel_child = rel.join(&name);
+            if ft.is_symlink() {
+                let target = fs_err::read_link(entry.path())?;
+                if escapes_root(rel, &target) {
+                    anyhow::bail!(
+                        "--profile-dir {} contains symlink {} -> {}, which points outside \
+                         the profile; a profile dir must be self-contained because staging \
+                         re-parents it under mkosi.profiles/",
+                        root.display(),
+                        rel_child.display(),
+                        target.display()
+                    );
+                }
+            } else if ft.is_dir() {
+                walk(root, &rel_child)?;
+            }
+        }
+        Ok(())
+    }
+    walk(root, Path::new(""))
+}
+
+/// Reject `Include=` values in the profile's mkosi config files that resolve
+/// outside the profile. mkosi parses an extras dir with the process cwd set
+/// to that dir (the profile root, or a nested `mkosi.conf.d/<dir>`) and
+/// resolves relative include paths against it, so staging re-anchors them
+/// exactly like escaping symlinks — one that matches a sibling in-tree
+/// profile would silently merge the wrong config.
+///
+/// Scans exactly the files mkosi parses under an extras dir `anchor`:
+/// `mkosi.conf`, `mkosi.local.conf` and `mkosi.conf.d/*.conf` (all resolved
+/// against `anchor`, including the conf.d ones), recursing into
+/// `mkosi.conf.d/<dir>` as a nested extras dir.
+fn reject_escaping_includes(root: &Path, anchor: &Path) -> anyhow::Result<()> {
+    for name in ["mkosi.conf", "mkosi.local.conf"] {
+        let rel = anchor.join(name);
+        if root.join(&rel).is_file() {
+            reject_escaping_include_lines(root, anchor, &rel)?;
+        }
+    }
+    let confd = anchor.join("mkosi.conf.d");
+    if !root.join(&confd).is_dir() {
+        return Ok(());
+    }
+    for entry in fs_err::read_dir(root.join(&confd))? {
+        let entry = entry?;
+        let rel = confd.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            reject_escaping_includes(root, &rel)?;
+        } else if rel.extension() == Some("conf".as_ref()) {
+            reject_escaping_include_lines(root, anchor, &rel)?;
+        }
+    }
+    Ok(())
+}
+
+/// Check one config file's `Include=` lines against the extras dir `anchor`
+/// they resolve from. `@Include=` (deprecated spelling) is matched too;
+/// values are comma-delimited; mkosi's builtin config names are bare names,
+/// which never escape.
+fn reject_escaping_include_lines(root: &Path, anchor: &Path, rel: &Path) -> anyhow::Result<()> {
+    let text = fs_err::read_to_string(root.join(rel))?;
+    for line in text.lines() {
+        let Some(value) = line
+            .trim_start()
+            .trim_start_matches('@')
+            .strip_prefix("Include")
+            .map(str::trim_start)
+            .and_then(|rest| rest.strip_prefix('='))
+        else {
+            continue;
+        };
+        for target in value.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            if escapes_root(anchor, Path::new(target)) {
+                anyhow::bail!(
+                    "--profile-dir {}: {} has Include={target}, which resolves outside \
+                     the profile; a profile dir must be self-contained because staging \
+                     re-parents it under mkosi.profiles/",
+                    root.display(),
+                    rel.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Does a symlink at `rel_parent/<link>` resolve outside the tree root?
+/// Lexical and deliberately conservative: intermediate components count as
+/// directories, so a link that only *looks* like it escapes is rejected too.
+fn escapes_root(rel_parent: &Path, target: &Path) -> bool {
+    use std::path::Component;
+    let mut depth = rel_parent.components().count() as isize;
+    for component in target.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => return true,
+            Component::CurDir => {}
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return true;
+                }
+            }
+            Component::Normal(_) => depth += 1,
+        }
+    }
+    false
 }
 
 /// Recursively copy the contents of `src` into `dst`.
@@ -1049,6 +1365,349 @@ mod tests {
         assert!(zero_gzip_mtime(&path, 0).is_err());
     }
 
+    fn mk_profile(dir: &Path) {
+        fs_err::create_dir_all(dir).unwrap();
+        fs_err::write(dir.join("mkosi.conf"), "[Content]\n").unwrap();
+    }
+
+    /// A valid out-of-tree profile named `c8s` plus an empty profiles root.
+    fn profile_fixture() -> (TempDir, TempDir, PathBuf) {
+        let src_root = TempDir::new().unwrap();
+        let profiles_root = TempDir::new().unwrap();
+        let src = src_root.path().join("c8s");
+        mk_profile(&src);
+        (src_root, profiles_root, src)
+    }
+
+    #[test]
+    fn stage_profile_dirs_stages_marked_copy_and_appends_name() {
+        let (_src_root, profiles_root, src) = profile_fixture();
+        fs_err::write(src.join("data"), b"x").unwrap();
+        let mut profiles = vec!["gpu".to_string()];
+        let guards = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).unwrap();
+        let staged = profiles_root.path().join("c8s");
+        assert!(staged.join("mkosi.conf").is_file());
+        assert!(staged.join("data").is_file());
+        assert!(staged.join(STAGED_PROFILE_MARKER).is_file());
+        assert_eq!(profiles, ["gpu", "c8s"]);
+        drop(guards);
+        assert!(!staged.exists());
+    }
+
+    #[test]
+    fn stage_profile_dirs_keeps_explicit_profile_position() {
+        let (_src_root, profiles_root, src) = profile_fixture();
+        let mut profiles = vec!["c8s".to_string(), "dev".to_string()];
+        let _g = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).unwrap();
+        assert_eq!(profiles, ["c8s", "dev"]);
+    }
+
+    #[test]
+    fn stage_profile_dirs_rejects_unmarked_collision_but_replaces_stale() {
+        let (_src_root, profiles_root, src) = profile_fixture();
+        let in_tree = profiles_root.path().join("c8s");
+        mk_profile(&in_tree);
+        let mut profiles = vec![];
+        assert!(
+            stage_profile_dirs(
+                profiles_root.path(),
+                std::slice::from_ref(&src),
+                &mut profiles
+            )
+            .is_err(),
+            "unmarked (in-tree) profile must be a hard error"
+        );
+        // Once marked, the sweep is what frees the basename.
+        fs_err::write(in_tree.join(STAGED_PROFILE_MARKER), b"").unwrap();
+        fs_err::write(in_tree.join("stale"), b"").unwrap();
+        sweep_stale_staged_profiles(profiles_root.path()).unwrap();
+        let _g = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).unwrap();
+        assert!(
+            !profiles_root.path().join("c8s/stale").exists(),
+            "marked leftover must be replaced, not merged"
+        );
+    }
+
+    #[test]
+    fn stage_profile_dirs_rejects_duplicate_basenames() {
+        let src_root = TempDir::new().unwrap();
+        let profiles_root = TempDir::new().unwrap();
+        let a = src_root.path().join("a/c8s");
+        let b = src_root.path().join("b/c8s");
+        mk_profile(&a);
+        mk_profile(&b);
+        let mut profiles = vec![];
+        assert!(stage_profile_dirs(profiles_root.path(), &[a, b], &mut profiles).is_err());
+    }
+
+    #[test]
+    fn sweep_stale_staged_profiles_removes_orphans_and_spares_in_tree() {
+        let profiles_root = TempDir::new().unwrap();
+        let orphan = profiles_root.path().join("c8s");
+        mk_profile(&orphan);
+        fs_err::write(orphan.join(STAGED_PROFILE_MARKER), b"").unwrap();
+        let in_tree = profiles_root.path().join("attest");
+        mk_profile(&in_tree);
+
+        sweep_stale_staged_profiles(profiles_root.path()).unwrap();
+
+        assert!(!orphan.exists(), "orphaned staged profile must be swept");
+        assert!(in_tree.exists(), "in-tree profile must survive the sweep");
+    }
+
+    #[test]
+    fn sweep_stale_staged_profiles_tolerates_a_missing_profiles_root() {
+        let parent = TempDir::new().unwrap();
+        sweep_stale_staged_profiles(&parent.path().join("never-existed")).unwrap();
+    }
+
+    /// Child-mode switch for the lock test below.
+    const LOCK_PROBE_ENV: &str = "CONFOS_TEST_TRY_LOCK";
+
+    /// Re-run this test binary as a lock-probe child; its exit code reports
+    /// what `lock_checkout` saw in a separate process.
+    fn probe_lock_from_child(path: &Path) -> i32 {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::build::tests::build_lock_refuses_a_second_holder_and_frees_on_drop",
+                "--nocapture",
+            ])
+            .env(LOCK_PROBE_ENV, path)
+            .output()
+            .unwrap();
+        out.status.code().unwrap_or(-1)
+    }
+
+    #[test]
+    fn build_lock_refuses_a_second_holder_and_frees_on_drop() {
+        // Recovery rests on this exclusion. The contender is a child process:
+        // same-process retake is platform-dependent (fcntl-style locks are
+        // per-process), and the real contender is another build anyway.
+        if let Ok(path) = std::env::var(LOCK_PROBE_ENV) {
+            match lock_checkout(Path::new(&path)) {
+                Ok(_held) => std::process::exit(3),
+                Err(e) if e.to_string().contains("already running") => std::process::exit(42),
+                Err(_) => std::process::exit(44),
+            }
+        }
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(BUILD_LOCK);
+
+        let held = lock_checkout(&path).unwrap();
+        assert_eq!(
+            probe_lock_from_child(&path),
+            42,
+            "a second build must not get the lock"
+        );
+
+        drop(held);
+        assert_eq!(
+            probe_lock_from_child(&path),
+            3,
+            "lock must be free once the holder is gone"
+        );
+    }
+
+    #[test]
+    fn stage_profile_dirs_rejects_escaping_symlink_in_profile_config() {
+        let (_src_root, profiles_root, src) = profile_fixture();
+        fs_err::create_dir_all(src.join("mkosi.conf.d")).unwrap();
+        std::os::unix::fs::symlink(
+            "../../common/shared.conf",
+            src.join("mkosi.conf.d/shared.conf"),
+        )
+        .unwrap();
+
+        let mut profiles = vec![];
+        assert!(
+            stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).is_err(),
+            "a config symlink escaping the profile root must not be staged"
+        );
+        assert!(
+            !profiles_root.path().join("c8s").exists(),
+            "the rejected profile must not be left half-staged"
+        );
+    }
+
+    #[test]
+    fn reject_escaping_symlinks_allows_self_contained_and_image_relative_links() {
+        let root = TempDir::new().unwrap();
+        let root = root.path();
+        fs_err::create_dir_all(root.join("mkosi.conf.d")).unwrap();
+        fs_err::write(root.join("mkosi.conf.d/base.conf"), b"").unwrap();
+        // Self-contained: staging moves these wholesale.
+        std::os::unix::fs::symlink("base.conf", root.join("mkosi.conf.d/alias.conf")).unwrap();
+        std::os::unix::fs::symlink("mkosi.conf.d/base.conf", root.join("top.conf")).unwrap();
+        // Image-relative: exempt even when absolute or escaping.
+        fs_err::create_dir_all(root.join("mkosi.extra/usr/bin")).unwrap();
+        std::os::unix::fs::symlink(
+            "/usr/lib/systemd/systemd",
+            root.join("mkosi.extra/usr/bin/init"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            "../../../../etc/hosts",
+            root.join("mkosi.extra/usr/bin/hosts"),
+        )
+        .unwrap();
+
+        reject_escaping_symlinks(root).unwrap();
+    }
+
+    #[test]
+    fn reject_escaping_symlinks_rejects_absolute_host_links() {
+        let root = TempDir::new().unwrap();
+        std::os::unix::fs::symlink("/etc/confos/shared.conf", root.path().join("mkosi.conf"))
+            .unwrap();
+        assert!(reject_escaping_symlinks(root.path()).is_err());
+    }
+
+    #[test]
+    fn reject_escaping_symlinks_rejects_symlinked_image_relative_roots() {
+        // The exemption is for links inside these trees, not for the roots
+        // themselves being links.
+        for target in ["/outside", "../elsewhere"] {
+            for subtree in IMAGE_RELATIVE_SUBTREES {
+                let root = TempDir::new().unwrap();
+                std::os::unix::fs::symlink(target, root.path().join(subtree)).unwrap();
+                assert!(
+                    reject_escaping_symlinks(root.path()).is_err(),
+                    "symlinked {subtree} -> {target} must be rejected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reject_escaping_includes_rejects_relative_and_absolute_escapes() {
+        // The conf.d case is the subtle one: includes resolve against the
+        // profile root (mkosi's parse cwd), not the file's own directory.
+        for (file, line) in [
+            ("mkosi.conf", "Include=../../common/base.conf"),
+            ("mkosi.conf", "Include=/etc/mkosi/shared.conf"),
+            ("mkosi.conf", "@Include=../shared.conf"),
+            ("mkosi.local.conf", "Include=../shared.conf"),
+            ("mkosi.conf.d/extra.conf", "Include=../shared.conf"),
+        ] {
+            let root = TempDir::new().unwrap();
+            let path = root.path().join(file);
+            fs_err::create_dir_all(path.parent().unwrap()).unwrap();
+            fs_err::write(&path, format!("[Include]\n{line}\n")).unwrap();
+            assert!(
+                reject_escaping_includes(root.path(), Path::new("")).is_err(),
+                "expected rejection for {file}: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn reject_escaping_includes_allows_in_profile_and_builtin_targets() {
+        let root = TempDir::new().unwrap();
+        let root = root.path();
+        fs_err::create_dir_all(root.join("mkosi.conf.d/sub")).unwrap();
+        fs_err::write(
+            root.join("mkosi.conf"),
+            "[Include]\nInclude=mkosi.conf.d/common.conf, mkosi-vm\n# Include=../commented.conf\n",
+        )
+        .unwrap();
+        // Resolved against the profile root, so a bare name lands there even
+        // from a conf.d file.
+        fs_err::write(
+            root.join("mkosi.conf.d/extra.conf"),
+            "Include=common.conf\n",
+        )
+        .unwrap();
+        // A conf.d subdir is its own extras dir: mkosi chdirs into it, so one
+        // level up still stays inside the profile.
+        fs_err::write(
+            root.join("mkosi.conf.d/sub/mkosi.conf"),
+            "Include=../shared.conf\n",
+        )
+        .unwrap();
+
+        reject_escaping_includes(root, Path::new("")).unwrap();
+    }
+
+    #[test]
+    fn escapes_root_counts_depth_lexically() {
+        let at_root = Path::new("");
+        let nested = Path::new("mkosi.conf.d");
+        assert!(!escapes_root(at_root, Path::new("sibling.conf")));
+        assert!(!escapes_root(at_root, Path::new("./a/b")));
+        assert!(!escapes_root(nested, Path::new("../mkosi.conf")));
+        assert!(!escapes_root(nested, Path::new("../a/../mkosi.conf")));
+        assert!(escapes_root(at_root, Path::new("../outside")));
+        assert!(escapes_root(nested, Path::new("../../outside")));
+        assert!(escapes_root(nested, Path::new("/abs/path")));
+    }
+
+    fn sync_input(name: &str, value: &str) -> SyncInput {
+        SyncInput {
+            name: name.to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn write_sync_inputs_stages_values_under_the_input_dir() {
+        let local = TempDir::new().unwrap();
+        write_sync_inputs(local.path(), &[sync_input("c8s-ref", "abc123")]).unwrap();
+
+        assert_eq!(
+            fs_err::read_to_string(local.path().join(SYNC_INPUT_DIR).join("c8s-ref")).unwrap(),
+            "abc123\n"
+        );
+    }
+
+    #[test]
+    fn write_sync_inputs_clears_leftovers_even_with_no_inputs_of_its_own() {
+        // Guards the silent-reuse failure, in the build that passed none.
+        let local = TempDir::new().unwrap();
+        let dir = local.path().join(SYNC_INPUT_DIR);
+        fs_err::create_dir_all(&dir).unwrap();
+        fs_err::write(dir.join("c8s-ref"), "stale-ref\n").unwrap();
+
+        write_sync_inputs(local.path(), &[]).unwrap();
+
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn write_sync_inputs_leaves_operator_prep_alone() {
+        // Only the input dir is ours; fetch-helper prep is not.
+        let local = TempDir::new().unwrap();
+        fs_err::write(local.path().join("attest-binary"), b"prep").unwrap();
+        fs_err::create_dir_all(local.path().join(SYNC_INPUT_DIR)).unwrap();
+
+        write_sync_inputs(local.path(), &[]).unwrap();
+
+        assert!(local.path().join("attest-binary").exists());
+    }
+
+    #[test]
+    fn external_profile_name_takes_basename() {
+        assert_eq!(
+            external_profile_name(Path::new("../c8s/node-guest-image/c8s")).unwrap(),
+            "c8s"
+        );
+        assert_eq!(
+            external_profile_name(Path::new("/abs/path/my_profile-2")).unwrap(),
+            "my_profile-2"
+        );
+    }
+
+    #[test]
+    fn external_profile_name_rejects_unsafe_names() {
+        for bad in ["/", "..", "a b", "pr!file", ""] {
+            assert!(
+                external_profile_name(Path::new(bad)).is_err(),
+                "expected rejection for {bad:?}"
+            );
+        }
+    }
+
     #[test]
     fn copy_extra_copies_files_at_root() {
         let src = TempDir::new().unwrap();
@@ -1158,7 +1817,7 @@ mod tests {
         fs_err::write(dir.join("mkosi.extra/etc/file"), b"x").unwrap();
 
         {
-            let _guard = MkosiLocalCleanup { dir: dir.clone() };
+            let _guard = RemoveDirOnDrop { dir: dir.clone() };
             assert!(dir.exists());
         }
         assert!(!dir.exists());
@@ -1168,7 +1827,7 @@ mod tests {
     fn mkosi_local_cleanup_swallows_missing_directory() {
         let parent = TempDir::new().unwrap();
         let dir = parent.path().join("never-existed");
-        drop(MkosiLocalCleanup { dir });
+        drop(RemoveDirOnDrop { dir });
         // No panic == pass.
     }
 

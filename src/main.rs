@@ -21,7 +21,7 @@ enum Commands {
     #[command(hide = true)]
     Kernel(KernelArgs),
     /// Build base image with dm-verity, UKI, and IGVM for measured boot
-    Build(BuildArgs),
+    Build(Box<BuildArgs>),
     /// Generate IGVM files for additional SMP counts from a sealed output
     Igvm(IgvmArgs),
     /// Build and push an image to an OCI registry using oras
