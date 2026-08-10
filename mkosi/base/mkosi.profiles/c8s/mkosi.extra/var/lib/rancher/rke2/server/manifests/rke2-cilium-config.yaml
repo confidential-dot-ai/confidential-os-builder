@@ -4,7 +4,8 @@
 # and merges HelmChartConfig CRDs into the matching HelmChart spec it
 # already manages. For RKE2's cilium chart the chart name is `rke2-cilium`.
 #
-# Two important settings for this single-node, kube-proxy-replaced setup:
+# Two settings need explaining for this single-node, kube-proxy-replaced
+# setup:
 #
 #   1. kubeProxyReplacement: true
 #      Cilium provides cluster-IP service routing in eBPF instead of
@@ -37,10 +38,9 @@ spec:
     bpf:
       masquerade: true
 
-    # WireGuard node-to-node encryption: cross-node pod traffic rides the
-    # untrusted host fabric. Peer trust chains to apiserver membership,
-    # which the attested join gates (docs/C8S-MULTINODE.md). No-op with a
-    # single node.
+    # WireGuard node-to-node encryption — cross-node pod traffic rides the
+    # untrusted host fabric. Peer keys ride CiliumNode objects, so peer trust
+    # is only as strong as apiserver admission. Inert on a single node.
     encryption:
       enabled: true
       type: wireguard
