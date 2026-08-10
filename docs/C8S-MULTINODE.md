@@ -344,10 +344,8 @@ client code cred-release already links.
 
 ## Open questions
 
-1. Any-party admission: the same-image policy admits any TDX instance of
-   the public image; today only network reachability of :8444/:9345 keeps
-   foreign nodes out. Is the RTMR[3] cluster-ID binding worth doing now,
-   or acceptable while deployments run on operator-controlled networks?
+1. Any-party admission (see the known-gap paragraph): RTMR[3] cluster-ID
+   binding now, or acceptable while deployments run on operator networks?
 2. `k8sServiceHost` on agents: confirm the rke2 agent loopback LB serves
    6443 (M1); pick the fallback if not.
 3. Does the released full-format token's CA-hash check behave as assumed
