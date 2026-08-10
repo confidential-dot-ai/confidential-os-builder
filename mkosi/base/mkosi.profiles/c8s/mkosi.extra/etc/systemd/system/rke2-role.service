@@ -1,11 +1,10 @@
 [Unit]
 Description=RKE2 role dispatch from the joindata disk
-# Role-gated units condition on the /run/confos/role-* verdict this writes.
-Before=rke2-server.service rke2-agent.service rke2-join.service join-release.service cred-release.service
+# Role-gated units order After= this unit and condition on the
+# /run/confos/role-* verdict it writes.
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
 ExecStart=/usr/local/bin/rke2-role.sh
 
 [Install]
