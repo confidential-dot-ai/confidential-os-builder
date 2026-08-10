@@ -4,6 +4,9 @@ Documentation=https://github.com/confidential-dot-ai/c8s
 ConditionPathExists=/run/confos/role-agent
 # Retry indefinitely: the dominant failure ("server not up yet") self-heals.
 StartLimitIntervalSec=0
+# A failed first attempt cancels rke2-agent's queued start job and systemd
+# never re-queues it on its own; Upholds re-pulls the agent once we land.
+Upholds=rke2-agent.service
 After=network-online.target rke2-role.service attestation-api.service
 Wants=network-online.target
 Requires=attestation-api.service

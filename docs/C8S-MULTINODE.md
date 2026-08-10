@@ -170,8 +170,9 @@ Distributed-systems posture, per the engineering standards:
 - Idempotency: token release is a read, safely repeatable; rke2 node
   registration is idempotent by node name.
 - Timeouts: `c8s join` uses a bounded per-attempt timeout (flag, default
-  30s); the unit retries indefinitely, spaced out, because the dominant
-  failure (server not up yet) self-heals. `join-release` keeps a bounded
+  30s); the unit retries indefinitely, spaced out, and `Upholds=` re-pulls
+  rke2-agent once the join lands (a failed first attempt cancels the
+  agent's queued start job for good). `join-release` keeps a bounded
   StartLimit: its persistent failure is a broken local attestation stack.
 - Partition: an agent that cannot reach the server never joins and runs
   nothing. Already-joined agents ride out partitions with kubelet's own
