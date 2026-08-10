@@ -103,6 +103,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         }
     }
 
+    // Everything below stages into paths shared by every build in this
+    // checkout, so take the lock before touching any of them — and hold it
+    // for the rest of the run. Nothing above this point writes to the repo.
+    let _build_lock = lock_checkout(Path::new(BUILD_LOCK))?;
+
     // Don't wipe mkosi.local at start: profile sync hooks (e.g.
     // mkosi/base/mkosi.profiles/attest/mkosi.sync staging a binary into
     // mkosi.local/mkosi.extra/) must survive into the rest of the mkosi run,
@@ -117,10 +122,6 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // this build's own staging. Both halves run unconditionally: the build
     // that trips over a leftover is typically the one that passed neither
     // flag, so neither may be skipped when its own argument list is empty.
-    //
-    // Ahead of the guard, deliberately: write_sync_inputs is what decides
-    // whether this overlay is ours to use, and its "another build owns it"
-    // bail must not drop a guard that would then delete that build's overlay.
     sweep_stale_staged_profiles(&profiles_root)?;
     write_sync_inputs(&mkosi_local, &args.sync_inputs)?;
 
@@ -632,8 +633,10 @@ fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
 /// copy under `mkosi.profiles/`.
 ///
 /// The guard cannot run on a hard kill, so both staging paths also recover
-/// their own leftovers on the next build — see `write_sync_inputs` and
-/// `sweep_stale_staged_profiles`. Note the deliberate asymmetry with those:
+/// their own leftovers at the start of the next build, under the lock that
+/// makes a survivor unambiguously abandoned — see `lock_checkout`,
+/// `write_sync_inputs` and `sweep_stale_staged_profiles`. Note the deliberate
+/// asymmetry with those:
 /// on the way out this deletes `mkosi.local/` wholesale, because by then
 /// everything in it is spent, including what a fetch helper staged for this
 /// build. On the way in, recovery has to be name-scoped instead — nothing
@@ -650,9 +653,9 @@ impl Drop for RemoveDirOnDrop {
 }
 
 /// Sits at a staged profile's root (next to mkosi.conf, so never inside the
-/// image's mkosi.extra tree) to mark the copy as ours, and to name the build
-/// that owns it — see `sweep_stale_staged_profiles`. Its absence is what
-/// identifies a genuine in-tree profile, which is never ours to remove.
+/// image's mkosi.extra tree) to mark the copy as staged rather than committed
+/// — see `sweep_stale_staged_profiles`. Its absence is what identifies a
+/// genuine in-tree profile, which is never ours to remove.
 const STAGED_PROFILE_MARKER: &str = ".confos-staged-profile";
 
 /// Records which `mkosi.local/<NAME>` files the last `--sync-input` run wrote.
@@ -661,37 +664,32 @@ const STAGED_PROFILE_MARKER: &str = ".confos-staged-profile";
 /// builds against them.
 const SYNC_INPUT_MANIFEST: &str = ".confos-sync-inputs";
 
-/// Body of a marker/manifest file: the pid of the build that wrote it, so a
-/// later build can tell "leftover from a hard kill" from "in use right now".
-fn owner_stamp() -> String {
-    format!("pid={}\n", std::process::id())
-}
+/// Whole-checkout build lock. Every build stages into the same shared paths —
+/// `mkosi.local/`, `mkosi.profiles/`, `mkosi.output/`, `output/` — so two in
+/// one checkout corrupt each other regardless of which flags they were given.
+const BUILD_LOCK: &str = ".confos-build.lock";
 
-/// The pid recorded in a marker/manifest body, if it has one. A file truncated
-/// by a kill mid-write has none — callers treat that as "no live owner", which
-/// is the state it in fact records.
-fn recorded_owner(contents: &str) -> Option<u32> {
-    contents
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("pid="))
-        .and_then(|pid| pid.trim().parse().ok())
-}
-
-/// Is the build that wrote a marker still running? `/proc/<pid>` is the
-/// cheapest check that needs no signal permission. confos builds are
-/// Linux-only (mkosi is), so anywhere else we can only assume it is gone —
-/// which keeps recovery working rather than wedging on an unanswerable check.
-fn owner_is_live(pid: u32) -> bool {
-    cfg!(target_os = "linux") && Path::new("/proc").join(pid.to_string()).exists()
-}
-
-/// The pid recorded in `path`, or `None` if the file is missing, unreadable,
-/// or carries no pid.
-fn owner_of(path: &Path) -> Option<u32> {
-    fs_err::read_to_string(path)
-        .ok()
-        .as_deref()
-        .and_then(recorded_owner)
+/// Take the exclusive build lock for this checkout. The lock is released when
+/// the returned file is dropped, which the kernel also does on process death,
+/// hard kills included.
+///
+/// That is what makes leftover recovery decidable: while this lock is held, no
+/// other build is running, so anything still staged in the repo is by
+/// definition abandoned and can be cleared without checking who owns it.
+fn lock_checkout(path: &Path) -> anyhow::Result<fs_err::File> {
+    let lock = fs_err::File::create(path)?;
+    match lock.file().try_lock() {
+        Ok(()) => Ok(lock),
+        Err(std::fs::TryLockError::WouldBlock) => anyhow::bail!(
+            "another confos build is already running in this checkout (lock: {}). \
+             Builds share mkosi.local, mkosi.profiles and mkosi.output, so they \
+             cannot overlap — wait for it to finish.",
+            path.display()
+        ),
+        Err(std::fs::TryLockError::Error(e)) => {
+            Err(anyhow::Error::new(e).context(format!("taking build lock {}", path.display())))
+        }
+    }
 }
 
 /// Charset shared by staged file/profile names: safe as a filesystem path
@@ -734,17 +732,9 @@ fn write_sync_inputs(mkosi_local: &Path, specs: &[String]) -> anyhow::Result<()>
 
     let manifest = mkosi_local.join(SYNC_INPUT_MANIFEST);
     if let Ok(recorded) = fs_err::read_to_string(&manifest) {
-        // Deleting a concurrent build's inputs mid-run would corrupt it far
-        // more quietly than saying so here.
-        if let Some(pid) = recorded_owner(&recorded).filter(|&pid| owner_is_live(pid)) {
-            anyhow::bail!(
-                "another confos build (pid {pid}) is using {}; concurrent builds \
-                 share mkosi.local and would corrupt each other. Wait for it to \
-                 finish, or remove {} if that pid is gone.",
-                mkosi_local.display(),
-                manifest.display()
-            );
-        }
+        // Under the build lock a surviving manifest can only be a dead
+        // build's, so every name it lists is spent.
+        //
         // is_safe_name re-checked on the way out: the manifest is a file on
         // disk, so it cannot be trusted to hold path components that stay
         // inside mkosi.local.
@@ -765,10 +755,7 @@ fn write_sync_inputs(mkosi_local: &Path, specs: &[String]) -> anyhow::Result<()>
     // Manifest before content: a kill mid-write must still leave every name
     // recorded, or the next build inherits a leftover it cannot name.
     let names: Vec<&str> = inputs.iter().map(|(name, _)| *name).collect();
-    fs_err::write(
-        &manifest,
-        format!("{}{}\n", owner_stamp(), names.join("\n")),
-    )?;
+    fs_err::write(&manifest, format!("{}\n", names.join("\n")))?;
     for (name, value) in inputs {
         fs_err::write(mkosi_local.join(name), format!("{value}\n"))?;
     }
@@ -819,16 +806,10 @@ fn stage_profile_dirs(
             );
         }
         if fs_err::symlink_metadata(&target).is_ok() {
-            // The sweep in run() already took anything stale, so what is still
-            // here is either a genuine in-tree profile or a copy a concurrent
-            // build is using. Both are hard errors: deleting the latter would
-            // pull the config tree out from under a running mkosi.
-            let held = match owner_of(&target.join(STAGED_PROFILE_MARKER)) {
-                Some(pid) => format!("staged by a running confos build (pid {pid})"),
-                None => "an in-tree profile".to_string(),
-            };
+            // The sweep in run() took every staged leftover, and the build
+            // lock rules out a live one, so this is a real in-tree profile.
             anyhow::bail!(
-                "--profile-dir {} collides with existing profile {name:?} at {} ({held})",
+                "--profile-dir {} collides with in-tree profile {name:?} at {}",
                 dir.display(),
                 target.display()
             );
@@ -838,9 +819,9 @@ fn stage_profile_dirs(
             dir: target.clone(),
         });
         // Marker before content: a kill mid-copy must still leave a
-        // recognizably-ours dir, or the next run hard-errors on it.
+        // recognizably-staged dir, or the next run hard-errors on it.
         fs_err::create_dir_all(&target)?;
-        fs_err::write(target.join(STAGED_PROFILE_MARKER), owner_stamp())?;
+        fs_err::write(target.join(STAGED_PROFILE_MARKER), b"")?;
         copy_extra(dir, &target)?;
         tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
         if !profiles.contains(&name) {
@@ -850,7 +831,9 @@ fn stage_profile_dirs(
     Ok(guards)
 }
 
-/// Remove staged profiles under `mkosi.profiles/` whose build is gone.
+/// Remove every staged profile under `mkosi.profiles/`. Call under the build
+/// lock, which is what makes "staged" imply "abandoned": no other build can be
+/// running, so any copy still present outlived the one that made it.
 ///
 /// An orphan is worse than clutter. `--profile <name>` cannot tell a leftover
 /// copy from a real in-tree profile, so a later build that never asked for the
@@ -871,16 +854,8 @@ fn sweep_stale_staged_profiles(profiles_root: &Path) -> anyhow::Result<()> {
             continue;
         }
         let dir = entry.path();
-        let marker = dir.join(STAGED_PROFILE_MARKER);
         // Unmarked means in-tree: never ours to remove.
-        if !marker.is_file() {
-            continue;
-        }
-        if let Some(pid) = owner_of(&marker).filter(|&pid| owner_is_live(pid)) {
-            tracing::warn!(
-                "leaving staged profile {} alone; confos build pid {pid} is still using it",
-                dir.display()
-            );
+        if !dir.join(STAGED_PROFILE_MARKER).is_file() {
             continue;
         }
         tracing::warn!(
@@ -1466,15 +1441,12 @@ mod tests {
         assert!(stage_profile_dirs(profiles_root.path(), &[a, b], &mut profiles).is_err());
     }
 
-    /// A dead pid: /proc/0 never exists, so this always reads as "owner gone".
-    const DEAD_PID: &str = "pid=0\n";
-
     #[test]
     fn sweep_stale_staged_profiles_removes_orphans_and_spares_in_tree() {
         let profiles_root = TempDir::new().unwrap();
         let orphan = profiles_root.path().join("c8s");
         mk_profile(&orphan);
-        fs_err::write(orphan.join(STAGED_PROFILE_MARKER), DEAD_PID).unwrap();
+        fs_err::write(orphan.join(STAGED_PROFILE_MARKER), b"").unwrap();
         let in_tree = profiles_root.path().join("attest");
         mk_profile(&in_tree);
 
@@ -1485,46 +1457,31 @@ mod tests {
     }
 
     #[test]
-    fn sweep_stale_staged_profiles_spares_a_live_owners_copy() {
-        let profiles_root = TempDir::new().unwrap();
-        let live = profiles_root.path().join("c8s");
-        mk_profile(&live);
-        fs_err::write(live.join(STAGED_PROFILE_MARKER), owner_stamp()).unwrap();
-
-        sweep_stale_staged_profiles(profiles_root.path()).unwrap();
-
-        assert!(live.exists(), "a running build's staged copy must survive");
-    }
-
-    #[test]
     fn sweep_stale_staged_profiles_tolerates_a_missing_profiles_root() {
         let parent = TempDir::new().unwrap();
         sweep_stale_staged_profiles(&parent.path().join("never-existed")).unwrap();
     }
 
     #[test]
-    fn stage_profile_dirs_rejects_a_live_owners_copy_by_name() {
-        // A copy the sweep spared belongs to a running build. Before the
-        // marker existed this collision was a hard error, and it has to stay
-        // one — deleting it would break that build silently.
-        let src_root = TempDir::new().unwrap();
-        let profiles_root = TempDir::new().unwrap();
-        let src = src_root.path().join("c8s");
-        mk_profile(&src);
-        let live = profiles_root.path().join("c8s");
-        mk_profile(&live);
-        fs_err::write(live.join(STAGED_PROFILE_MARKER), owner_stamp()).unwrap();
+    fn build_lock_refuses_a_second_holder_and_frees_on_drop() {
+        // The whole recovery design rests on this: a second build cannot run,
+        // so a leftover is unambiguously abandoned. flock is held per open
+        // file description, so a second open contends even in-process — and
+        // the kernel drops it on close, which is what covers a hard kill.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(BUILD_LOCK);
 
-        let mut profiles = vec![];
-        let Err(err) = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles) else {
-            panic!("collision with a live owner's copy must be an error");
+        let held = lock_checkout(&path).unwrap();
+        let Err(err) = lock_checkout(&path) else {
+            panic!("a second build must not get the lock");
         };
-
-        assert!(live.exists(), "a live build's staged copy must survive");
         assert!(
-            err.to_string().contains("running confos build"),
-            "error should name the live owner, got: {err}"
+            err.to_string().contains("already running"),
+            "error should say a build is running, got: {err}"
         );
+
+        drop(held);
+        lock_checkout(&path).expect("lock must be free once the holder is gone");
     }
 
     #[test]
@@ -1599,16 +1556,6 @@ mod tests {
     }
 
     #[test]
-    fn recorded_owner_reads_the_pid_or_nothing() {
-        assert_eq!(recorded_owner("pid=1234\n"), Some(1234));
-        assert_eq!(recorded_owner("pid=7\nc8s-ref\nother\n"), Some(7));
-        // Truncated by a kill mid-write, or a marker from an older confos.
-        assert_eq!(recorded_owner(""), None);
-        assert_eq!(recorded_owner("c8s-ref\n"), None);
-        assert_eq!(recorded_owner("pid=notanumber\n"), None);
-    }
-
-    #[test]
     fn write_sync_inputs_stages_values_and_records_names() {
         let local = TempDir::new().unwrap();
         write_sync_inputs(local.path(), &["c8s-ref=abc123".to_string()]).unwrap();
@@ -1618,8 +1565,7 @@ mod tests {
             "abc123\n"
         );
         let manifest = fs_err::read_to_string(local.path().join(SYNC_INPUT_MANIFEST)).unwrap();
-        assert_eq!(recorded_owner(&manifest), Some(std::process::id()));
-        assert!(manifest.contains("c8s-ref"));
+        assert_eq!(manifest.lines().collect::<Vec<_>>(), ["c8s-ref"]);
     }
 
     #[test]
@@ -1628,11 +1574,7 @@ mod tests {
         // by the next build, which passed no --sync-input at all.
         let local = TempDir::new().unwrap();
         fs_err::write(local.path().join("c8s-ref"), "stale-ref\n").unwrap();
-        fs_err::write(
-            local.path().join(SYNC_INPUT_MANIFEST),
-            format!("{DEAD_PID}c8s-ref\n"),
-        )
-        .unwrap();
+        fs_err::write(local.path().join(SYNC_INPUT_MANIFEST), "c8s-ref\n").unwrap();
 
         write_sync_inputs(local.path(), &[]).unwrap();
 
@@ -1646,32 +1588,11 @@ mod tests {
         // only names we recorded are ours to delete.
         let local = TempDir::new().unwrap();
         fs_err::write(local.path().join("attest-binary"), b"prep").unwrap();
-        fs_err::write(
-            local.path().join(SYNC_INPUT_MANIFEST),
-            format!("{DEAD_PID}c8s-ref\n"),
-        )
-        .unwrap();
+        fs_err::write(local.path().join(SYNC_INPUT_MANIFEST), "c8s-ref\n").unwrap();
 
         write_sync_inputs(local.path(), &[]).unwrap();
 
         assert!(local.path().join("attest-binary").exists());
-    }
-
-    #[test]
-    fn write_sync_inputs_refuses_to_disturb_a_live_build() {
-        let local = TempDir::new().unwrap();
-        fs_err::write(local.path().join("c8s-ref"), "in-use\n").unwrap();
-        fs_err::write(
-            local.path().join(SYNC_INPUT_MANIFEST),
-            format!("{}c8s-ref\n", owner_stamp()),
-        )
-        .unwrap();
-
-        assert!(write_sync_inputs(local.path(), &[]).is_err());
-        assert_eq!(
-            fs_err::read_to_string(local.path().join("c8s-ref")).unwrap(),
-            "in-use\n"
-        );
     }
 
     #[test]

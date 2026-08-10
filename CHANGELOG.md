@@ -22,6 +22,15 @@ build configs, since those invalidate published reference values.
   consumer inputs (sudo strips the environment mkosi runs under), replacing
   hand-written files in this repo's tree
 
+### Changed
+- `confos build` takes an exclusive whole-checkout lock (`.confos-build.lock`)
+  for the duration of the run. Builds already could not overlap — they share
+  `mkosi.local/`, `mkosi.profiles/`, `mkosi.output/` and `output/` — but the
+  second one raced silently instead of saying so; it now fails immediately.
+  The kernel releases the lock on process death, hard kills included, which
+  is what lets the recovery below tell "abandoned" from "in use" without
+  guessing
+
 ### Fixed
 - A hard-killed build no longer leaks staged inputs into the next one. Both
   staging paths run cleanup on the way *in* as well as out: `--sync-input`
@@ -29,9 +38,7 @@ build configs, since those invalidate published reference values.
   can't silently inherit, say, the wrong component ref), and orphaned
   `--profile-dir` copies are swept from `mkosi.profiles/` on every build —
   previously one could be picked up by a plain `--profile <name>`, or
-  committed into this repo by `git add -A`. Copies belonging to a build
-  that is still running are identified by pid and left alone, with the
-  collision reported rather than deleted
+  committed into this repo by `git add -A`
 
 ## [0.3.0] — 2026-08-07
 

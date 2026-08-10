@@ -30,6 +30,9 @@ PROGRESS*.md
 /mkosi/base/mkosi.extra/usr/lib/modules/
 .claude/
 
+# Whole-checkout build lock (confos build holds it for the run)
+/.confos-build.lock
+
 # iasl build artifacts (dsdt.asl is the source)
 mkosi/base/acpi-tables/dsdt.aml
 mkosi/base/acpi-tables/dsdt.hex

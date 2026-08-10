@@ -82,6 +82,8 @@ mkosi directly.
 
 Produces `output/<name>/{disk.raw, uki.efi, manifest.json, roothash}` and (unless `--platform tdx`/`--skip-igvm`) one `guest-smp<N>.igvm` per `--smp` value.
 
+One build at a time per checkout: builds stage into shared paths (`mkosi.local/`, `mkosi.profiles/`, `mkosi.output/`, `output/`), so `confos build` holds an exclusive lock on `.confos-build.lock` for the run and a second build in the same checkout exits immediately rather than corrupting the first. To build two images at once, use two checkouts. The lock is released by the kernel when the process ends, so a hard-killed build leaves nothing to clean up by hand — the next build clears what it staged.
+
 ```bash
 confos build [OPTIONS] [NAME]
 ```
