@@ -814,6 +814,16 @@ fn reject_escaping_symlinks(root: &Path) -> anyhow::Result<()> {
             let name = entry.file_name();
             let ft = entry.file_type()?;
             if at_root && IMAGE_RELATIVE_SUBTREES.iter().any(|s| name == *s) {
+                // The exemption covers links *inside* these trees; the roots
+                // themselves are copied on the host, so a symlinked root is
+                // still re-parented by staging.
+                if ft.is_symlink() {
+                    anyhow::bail!(
+                        "--profile-dir {}: {} must be a real directory, not a symlink",
+                        root.display(),
+                        name.to_string_lossy()
+                    );
+                }
                 continue;
             }
             let rel_child = rel.join(&name);
@@ -1457,6 +1467,22 @@ mod tests {
         std::os::unix::fs::symlink("/etc/confos/shared.conf", root.path().join("mkosi.conf"))
             .unwrap();
         assert!(reject_escaping_symlinks(root.path()).is_err());
+    }
+
+    #[test]
+    fn reject_escaping_symlinks_rejects_symlinked_image_relative_roots() {
+        // The exemption is for links inside these trees, not for the roots
+        // themselves being links.
+        for target in ["/outside", "../elsewhere"] {
+            for subtree in IMAGE_RELATIVE_SUBTREES {
+                let root = TempDir::new().unwrap();
+                std::os::unix::fs::symlink(target, root.path().join(subtree)).unwrap();
+                assert!(
+                    reject_escaping_symlinks(root.path()).is_err(),
+                    "symlinked {subtree} -> {target} must be rejected"
+                );
+            }
+        }
     }
 
     #[test]
