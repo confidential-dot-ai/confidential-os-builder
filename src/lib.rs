@@ -213,11 +213,12 @@ pub struct BuildArgs {
     #[arg(long = "profile-dir", value_name = "DIR")]
     pub profile_dirs: Vec<PathBuf>,
 
-    /// Write VALUE (newline-terminated) to `mkosi/base/mkosi.local/<NAME>`
-    /// before the build, for profile sync hooks to read. mkosi runs under
-    /// sudo with a stripped environment, so this is the sanctioned way to
-    /// hand a value (e.g. a component ref) to a profile's mkosi.sync
-    /// without writing into this repo's tree by hand. Repeatable.
+    /// Write VALUE (newline-terminated) to
+    /// `mkosi/base/mkosi.local/.confos-sync-inputs/<NAME>` before the build,
+    /// for profile sync hooks to read. mkosi runs under sudo with a stripped
+    /// environment, so this is the sanctioned way to hand a value (e.g. a
+    /// component ref) to a profile's mkosi.sync without writing into this
+    /// repo's tree by hand. Repeatable.
     #[arg(long = "sync-input", value_name = "NAME=VALUE", value_parser = parse_sync_input)]
     pub sync_inputs: Vec<SyncInput>,
 }

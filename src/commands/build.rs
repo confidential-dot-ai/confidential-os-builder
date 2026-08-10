@@ -625,8 +625,9 @@ fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
 ///
 /// Cannot run on a hard kill; the next build recovers instead. Exit-time
 /// cleanup wipes `mkosi.local/` wholesale because everything in it is spent by
-/// then; entry-time recovery must be name-scoped, since prep for the build
-/// about to run is indistinguishable from a dead build's residue.
+/// then; entry-time recovery must stay scoped (the sync-input subdir, the
+/// staged-profile marker), since prep for the build about to run is
+/// indistinguishable from a dead build's residue.
 struct RemoveDirOnDrop {
     dir: PathBuf,
 }
@@ -641,9 +642,10 @@ impl Drop for RemoveDirOnDrop {
 /// mkosi.extra tree. Absence means in-tree, which is never ours to remove.
 const STAGED_PROFILE_MARKER: &str = ".confos-staged-profile";
 
-/// Names the `mkosi.local/<NAME>` files the last `--sync-input` run wrote —
-/// the only way a build passing no `--sync-input` can clear a dead one's.
-const SYNC_INPUT_MANIFEST: &str = ".confos-sync-inputs";
+/// Subdirectory of `mkosi.local` holding the `--sync-input` files. The
+/// directory boundary is the recovery scope: clearing it cannot touch
+/// operator prep staged elsewhere in `mkosi.local`.
+const SYNC_INPUT_DIR: &str = ".confos-sync-inputs";
 
 /// Whole-checkout build lock: builds share `mkosi.local/`, `mkosi.profiles/`,
 /// `mkosi.output/` and `output/`, so they cannot overlap.
@@ -670,36 +672,20 @@ fn lock_checkout(path: &Path) -> anyhow::Result<fs_err::File> {
     }
 }
 
-/// Clear the `--sync-input` files a dead build left in `mkosi.local` and stage
-/// this build's, recording the names so the next build can do the same.
-///
-/// Scoped to recorded names only: mkosi.local survives across builds, and
-/// operator prep staged there must not be touched.
+/// Clear the `--sync-input` files a dead build left behind and stage this
+/// build's under `mkosi.local/.confos-sync-inputs/`.
 fn write_sync_inputs(mkosi_local: &Path, inputs: &[SyncInput]) -> anyhow::Result<()> {
-    let manifest = mkosi_local.join(SYNC_INPUT_MANIFEST);
-    if let Ok(recorded) = fs_err::read_to_string(&manifest) {
-        // is_safe_name re-checked: the manifest is on-disk data, not trusted
-        // to hold components that stay inside mkosi.local.
-        for name in recorded.lines().map(str::trim).filter(|n| is_safe_name(n)) {
-            let stale = mkosi_local.join(name);
-            if fs_err::symlink_metadata(&stale).is_ok() {
-                tracing::warn!("removing stale --sync-input {name} left by an interrupted build");
-                fs_err::remove_file(&stale)?;
-            }
-        }
-        fs_err::remove_file(&manifest)?;
+    let dir = mkosi_local.join(SYNC_INPUT_DIR);
+    if fs_err::symlink_metadata(&dir).is_ok() {
+        tracing::warn!("removing stale --sync-input files left by an interrupted build");
+        tools::force_remove_dir_all(&dir)?;
     }
-
     if inputs.is_empty() {
         return Ok(());
     }
-    fs_err::create_dir_all(mkosi_local)?;
-    // Manifest before content: a kill mid-write must leave every name
-    // recorded, or the next build inherits a leftover it cannot name.
-    let names: Vec<&str> = inputs.iter().map(|i| i.name.as_str()).collect();
-    fs_err::write(&manifest, format!("{}\n", names.join("\n")))?;
+    fs_err::create_dir_all(&dir)?;
     for input in inputs {
-        fs_err::write(mkosi_local.join(&input.name), format!("{}\n", input.value))?;
+        fs_err::write(dir.join(&input.name), format!("{}\n", input.value))?;
     }
     Ok(())
 }
@@ -1491,37 +1477,35 @@ mod tests {
     }
 
     #[test]
-    fn write_sync_inputs_stages_values_and_records_names() {
+    fn write_sync_inputs_stages_values_under_the_input_dir() {
         let local = TempDir::new().unwrap();
         write_sync_inputs(local.path(), &[sync_input("c8s-ref", "abc123")]).unwrap();
 
         assert_eq!(
-            fs_err::read_to_string(local.path().join("c8s-ref")).unwrap(),
+            fs_err::read_to_string(local.path().join(SYNC_INPUT_DIR).join("c8s-ref")).unwrap(),
             "abc123\n"
         );
-        let manifest = fs_err::read_to_string(local.path().join(SYNC_INPUT_MANIFEST)).unwrap();
-        assert_eq!(manifest.lines().collect::<Vec<_>>(), ["c8s-ref"]);
     }
 
     #[test]
     fn write_sync_inputs_clears_leftovers_even_with_no_inputs_of_its_own() {
         // Guards the silent-reuse failure, in the build that passed none.
         let local = TempDir::new().unwrap();
-        fs_err::write(local.path().join("c8s-ref"), "stale-ref\n").unwrap();
-        fs_err::write(local.path().join(SYNC_INPUT_MANIFEST), "c8s-ref\n").unwrap();
+        let dir = local.path().join(SYNC_INPUT_DIR);
+        fs_err::create_dir_all(&dir).unwrap();
+        fs_err::write(dir.join("c8s-ref"), "stale-ref\n").unwrap();
 
         write_sync_inputs(local.path(), &[]).unwrap();
 
-        assert!(!local.path().join("c8s-ref").exists());
-        assert!(!local.path().join(SYNC_INPUT_MANIFEST).exists());
+        assert!(!dir.exists());
     }
 
     #[test]
     fn write_sync_inputs_leaves_operator_prep_alone() {
-        // Only recorded names are ours; fetch-helper prep is not.
+        // Only the input dir is ours; fetch-helper prep is not.
         let local = TempDir::new().unwrap();
         fs_err::write(local.path().join("attest-binary"), b"prep").unwrap();
-        fs_err::write(local.path().join(SYNC_INPUT_MANIFEST), "c8s-ref\n").unwrap();
+        fs_err::create_dir_all(local.path().join(SYNC_INPUT_DIR)).unwrap();
 
         write_sync_inputs(local.path(), &[]).unwrap();
 

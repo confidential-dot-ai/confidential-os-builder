@@ -18,9 +18,9 @@ build configs, since those invalidate published reference values.
   own `mkosi.extra/` are exempt, being image-relative)
   ([c8s#264](https://github.com/confidential-dot-ai/c8s/issues/264))
 - `confos build --sync-input NAME=VALUE`: stage a value as
-  `mkosi.local/<NAME>` for profile sync hooks — the sanctioned tunnel for
-  consumer inputs (sudo strips the environment mkosi runs under), replacing
-  hand-written files in this repo's tree
+  `mkosi.local/.confos-sync-inputs/<NAME>` for profile sync hooks — the
+  sanctioned tunnel for consumer inputs (sudo strips the environment mkosi
+  runs under), replacing hand-written files in this repo's tree
 
 ### Changed
 - `confos build` takes an exclusive whole-checkout lock (`.confos-build.lock`)
@@ -33,9 +33,9 @@ build configs, since those invalidate published reference values.
 
 ### Fixed
 - A hard-killed build no longer leaks staged inputs into the next one. Both
-  staging paths run cleanup on the way *in* as well as out: `--sync-input`
-  files are cleared by name (so a later build that passes none of its own
-  can't silently inherit, say, the wrong component ref), and orphaned
+  staging paths run cleanup on the way *in* as well as out: the
+  `--sync-input` directory is cleared (so a later build that passes none of
+  its own can't silently inherit, say, the wrong component ref), and orphaned
   `--profile-dir` copies are swept from `mkosi.profiles/` on every build —
   previously one could be picked up by a plain `--profile <name>`, or
   committed into this repo by `git add -A`
