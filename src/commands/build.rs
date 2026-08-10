@@ -742,6 +742,7 @@ fn stage_profile_dirs(
             );
         }
         reject_escaping_symlinks(dir)?;
+        reject_escaping_includes(dir, Path::new(""))?;
         validated.push((name, dir));
     }
 
@@ -846,6 +847,71 @@ fn reject_escaping_symlinks(root: &Path) -> anyhow::Result<()> {
         Ok(())
     }
     walk(root, Path::new(""))
+}
+
+/// Reject `Include=` values in the profile's mkosi config files that resolve
+/// outside the profile. mkosi parses an extras dir with the process cwd set
+/// to that dir (the profile root, or a nested `mkosi.conf.d/<dir>`) and
+/// resolves relative include paths against it, so staging re-anchors them
+/// exactly like escaping symlinks — one that matches a sibling in-tree
+/// profile would silently merge the wrong config.
+///
+/// Scans exactly the files mkosi parses under an extras dir `anchor`:
+/// `mkosi.conf`, `mkosi.local.conf` and `mkosi.conf.d/*.conf` (all resolved
+/// against `anchor`, including the conf.d ones), recursing into
+/// `mkosi.conf.d/<dir>` as a nested extras dir.
+fn reject_escaping_includes(root: &Path, anchor: &Path) -> anyhow::Result<()> {
+    for name in ["mkosi.conf", "mkosi.local.conf"] {
+        let rel = anchor.join(name);
+        if root.join(&rel).is_file() {
+            reject_escaping_include_lines(root, anchor, &rel)?;
+        }
+    }
+    let confd = anchor.join("mkosi.conf.d");
+    if !root.join(&confd).is_dir() {
+        return Ok(());
+    }
+    for entry in fs_err::read_dir(root.join(&confd))? {
+        let entry = entry?;
+        let rel = confd.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            reject_escaping_includes(root, &rel)?;
+        } else if rel.extension() == Some("conf".as_ref()) {
+            reject_escaping_include_lines(root, anchor, &rel)?;
+        }
+    }
+    Ok(())
+}
+
+/// Check one config file's `Include=` lines against the extras dir `anchor`
+/// they resolve from. `@Include=` (deprecated spelling) is matched too;
+/// values are comma-delimited; mkosi's builtin config names are bare names,
+/// which never escape.
+fn reject_escaping_include_lines(root: &Path, anchor: &Path, rel: &Path) -> anyhow::Result<()> {
+    let text = fs_err::read_to_string(root.join(rel))?;
+    for line in text.lines() {
+        let Some(value) = line
+            .trim_start()
+            .trim_start_matches('@')
+            .strip_prefix("Include")
+            .map(str::trim_start)
+            .and_then(|rest| rest.strip_prefix('='))
+        else {
+            continue;
+        };
+        for target in value.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            if escapes_root(anchor, Path::new(target)) {
+                anyhow::bail!(
+                    "--profile-dir {}: {} has Include={target}, which resolves outside \
+                     the profile; a profile dir must be self-contained because staging \
+                     re-parents it under mkosi.profiles/",
+                    root.display(),
+                    rel.display()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Does a symlink at `rel_parent/<link>` resolve outside the tree root?
@@ -1512,6 +1578,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn reject_escaping_includes_rejects_relative_and_absolute_escapes() {
+        // The conf.d case is the subtle one: includes resolve against the
+        // profile root (mkosi's parse cwd), not the file's own directory.
+        for (file, line) in [
+            ("mkosi.conf", "Include=../../common/base.conf"),
+            ("mkosi.conf", "Include=/etc/mkosi/shared.conf"),
+            ("mkosi.conf", "@Include=../shared.conf"),
+            ("mkosi.local.conf", "Include=../shared.conf"),
+            ("mkosi.conf.d/extra.conf", "Include=../shared.conf"),
+        ] {
+            let root = TempDir::new().unwrap();
+            let path = root.path().join(file);
+            fs_err::create_dir_all(path.parent().unwrap()).unwrap();
+            fs_err::write(&path, format!("[Include]\n{line}\n")).unwrap();
+            assert!(
+                reject_escaping_includes(root.path(), Path::new("")).is_err(),
+                "expected rejection for {file}: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn reject_escaping_includes_allows_in_profile_and_builtin_targets() {
+        let root = TempDir::new().unwrap();
+        let root = root.path();
+        fs_err::create_dir_all(root.join("mkosi.conf.d/sub")).unwrap();
+        fs_err::write(
+            root.join("mkosi.conf"),
+            "[Include]\nInclude=mkosi.conf.d/common.conf, mkosi-vm\n# Include=../commented.conf\n",
+        )
+        .unwrap();
+        // Resolved against the profile root, so a bare name lands there even
+        // from a conf.d file.
+        fs_err::write(
+            root.join("mkosi.conf.d/extra.conf"),
+            "Include=common.conf\n",
+        )
+        .unwrap();
+        // A conf.d subdir is its own extras dir: mkosi chdirs into it, so one
+        // level up still stays inside the profile.
+        fs_err::write(
+            root.join("mkosi.conf.d/sub/mkosi.conf"),
+            "Include=../shared.conf\n",
+        )
+        .unwrap();
+
+        reject_escaping_includes(root, Path::new("")).unwrap();
     }
 
     #[test]
