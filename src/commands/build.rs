@@ -1294,12 +1294,18 @@ mod tests {
         fs_err::write(dir.join("mkosi.conf"), "[Content]\n").unwrap();
     }
 
-    #[test]
-    fn stage_profile_dirs_stages_marked_copy_and_appends_name() {
+    /// A valid out-of-tree profile named `c8s` plus an empty profiles root.
+    fn profile_fixture() -> (TempDir, TempDir, PathBuf) {
         let src_root = TempDir::new().unwrap();
         let profiles_root = TempDir::new().unwrap();
         let src = src_root.path().join("c8s");
         mk_profile(&src);
+        (src_root, profiles_root, src)
+    }
+
+    #[test]
+    fn stage_profile_dirs_stages_marked_copy_and_appends_name() {
+        let (_src_root, profiles_root, src) = profile_fixture();
         fs_err::write(src.join("data"), b"x").unwrap();
         let mut profiles = vec!["gpu".to_string()];
         let guards = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).unwrap();
@@ -1314,10 +1320,7 @@ mod tests {
 
     #[test]
     fn stage_profile_dirs_keeps_explicit_profile_position() {
-        let src_root = TempDir::new().unwrap();
-        let profiles_root = TempDir::new().unwrap();
-        let src = src_root.path().join("c8s");
-        mk_profile(&src);
+        let (_src_root, profiles_root, src) = profile_fixture();
         let mut profiles = vec!["c8s".to_string(), "dev".to_string()];
         let _g = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).unwrap();
         assert_eq!(profiles, ["c8s", "dev"]);
@@ -1325,10 +1328,7 @@ mod tests {
 
     #[test]
     fn stage_profile_dirs_rejects_unmarked_collision_but_replaces_stale() {
-        let src_root = TempDir::new().unwrap();
-        let profiles_root = TempDir::new().unwrap();
-        let src = src_root.path().join("c8s");
-        mk_profile(&src);
+        let (_src_root, profiles_root, src) = profile_fixture();
         let in_tree = profiles_root.path().join("c8s");
         mk_profile(&in_tree);
         let mut profiles = vec![];
@@ -1407,10 +1407,7 @@ mod tests {
 
     #[test]
     fn stage_profile_dirs_rejects_escaping_symlink_in_profile_config() {
-        let src_root = TempDir::new().unwrap();
-        let profiles_root = TempDir::new().unwrap();
-        let src = src_root.path().join("c8s");
-        mk_profile(&src);
+        let (_src_root, profiles_root, src) = profile_fixture();
         fs_err::create_dir_all(src.join("mkosi.conf.d")).unwrap();
         std::os::unix::fs::symlink(
             "../../common/shared.conf",

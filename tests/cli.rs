@@ -223,21 +223,13 @@ fn test_build_script_flag() {
 }
 
 #[test]
-fn test_build_profile_dir_flag() {
+fn test_build_out_of_tree_profile_flags() {
     let mut cmd = Command::cargo_bin("confos").unwrap();
     cmd.args(["build", "--help"])
         .assert()
         .success()
         .stdout(predicates::str::contains("--profile-dir"))
-        .stdout(predicates::str::contains("<DIR>"));
-}
-
-#[test]
-fn test_build_sync_input_flag() {
-    let mut cmd = Command::cargo_bin("confos").unwrap();
-    cmd.args(["build", "--help"])
-        .assert()
-        .success()
+        .stdout(predicates::str::contains("<DIR>"))
         .stdout(predicates::str::contains("--sync-input"))
         .stdout(predicates::str::contains("<NAME=VALUE>"));
 }
