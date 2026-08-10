@@ -26,7 +26,8 @@ fi
 
 MNT="$RUN/joindata"
 mkdir -p "$MNT"
-mount -o ro "$DEV" "$MNT"
+# Host-controlled device: pin the fs parser, bound a wedged mount.
+timeout 10 mount -t iso9660 -o ro,nodev,nosuid,noexec "$DEV" "$MNT"
 trap 'umount "$MNT" 2>/dev/null || true' EXIT
 
 role=$(tr -d '[:space:]' < "$MNT/role")
