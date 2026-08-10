@@ -1395,24 +1395,53 @@ mod tests {
         sweep_stale_staged_profiles(&parent.path().join("never-existed")).unwrap();
     }
 
+    /// Child-mode switch for the lock test below.
+    const LOCK_PROBE_ENV: &str = "CONFOS_TEST_TRY_LOCK";
+
+    /// Re-run this test binary as a lock-probe child; its exit code reports
+    /// what `lock_checkout` saw in a separate process.
+    fn probe_lock_from_child(path: &Path) -> i32 {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::build::tests::build_lock_refuses_a_second_holder_and_frees_on_drop",
+                "--nocapture",
+            ])
+            .env(LOCK_PROBE_ENV, path)
+            .output()
+            .unwrap();
+        out.status.code().unwrap_or(-1)
+    }
+
     #[test]
     fn build_lock_refuses_a_second_holder_and_frees_on_drop() {
-        // Recovery rests on this exclusion. flock is per open file
-        // description, so a second open contends even in-process.
+        // Recovery rests on this exclusion. The contender is a child process:
+        // same-process retake is platform-dependent (fcntl-style locks are
+        // per-process), and the real contender is another build anyway.
+        if let Ok(path) = std::env::var(LOCK_PROBE_ENV) {
+            match lock_checkout(Path::new(&path)) {
+                Ok(_held) => std::process::exit(3),
+                Err(e) if e.to_string().contains("already running") => std::process::exit(42),
+                Err(_) => std::process::exit(44),
+            }
+        }
+
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(BUILD_LOCK);
 
         let held = lock_checkout(&path).unwrap();
-        let Err(err) = lock_checkout(&path) else {
-            panic!("a second build must not get the lock");
-        };
-        assert!(
-            err.to_string().contains("already running"),
-            "error should say a build is running, got: {err}"
+        assert_eq!(
+            probe_lock_from_child(&path),
+            42,
+            "a second build must not get the lock"
         );
 
         drop(held);
-        lock_checkout(&path).expect("lock must be free once the holder is gone");
+        assert_eq!(
+            probe_lock_from_child(&path),
+            3,
+            "lock must be free once the holder is gone"
+        );
     }
 
     #[test]
