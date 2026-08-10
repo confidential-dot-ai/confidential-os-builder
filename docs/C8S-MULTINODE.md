@@ -182,15 +182,20 @@ Distributed-systems posture, per the engineering standards:
   binding, not wall-clock based; timesyncd already covers cert-validity
   skew.
 
-Known gap, deliberate: two deployments of the same image are mutually
-attested, so a host could point a new agent at a *different* deployment's
-server (cross-cluster splice). Both clusters are attested and
-operator-owned, so this moves capacity, not trust. If it matters, the fix
-is a launch-bound cluster ID extended into RTMR[3] by the initrd (the
-operator-key mechanism already does exactly this) with join-release
-requiring RTMR[3] equality; note that re-includes rtmr[3] in the policy
-and must compose with the operator-key extend (ordered, deterministic).
-Deferred; see open questions.
+Known gap, deliberate: the image is public, so **any party** with TDX
+hardware can boot an instance that passes the same-image policy — the
+policy binds "this image", not "this operator" (rtmr[3] is excluded) or
+"this cluster". That covers both the cross-cluster splice (a host points
+a new agent at a different deployment's server) and a foreign operator
+joining their own instance into ours. A foreign same-image node is still
+a measured guest, so this moves capacity and scheduling, not data. The
+interim control is network reachability: :8444 and :9345 must only be
+reachable from the operator's network. The fix is a launch-bound cluster
+ID extended into RTMR[3] by the initrd (the operator-key mechanism
+already does exactly this) with join-release requiring RTMR[3] equality;
+note that re-includes rtmr[3] in the policy and must compose with the
+operator-key extend (ordered, deterministic). Deferred; see open
+questions.
 
 ### Cross-node datapath encryption
 
@@ -339,8 +344,10 @@ client code cred-release already links.
 
 ## Open questions
 
-1. Cross-cluster splice: is the RTMR[3] cluster-ID binding worth doing
-   now, or acceptable to defer while all deployments are one-cluster?
+1. Any-party admission: the same-image policy admits any TDX instance of
+   the public image; today only network reachability of :8444/:9345 keeps
+   foreign nodes out. Is the RTMR[3] cluster-ID binding worth doing now,
+   or acceptable while deployments run on operator-controlled networks?
 2. `k8sServiceHost` on agents: confirm the rke2 agent loopback LB serves
    6443 (M1); pick the fallback if not.
 3. Does the released full-format token's CA-hash check behave as assumed
@@ -352,6 +359,6 @@ client code cred-release already links.
    the inter-node leg rides the WG path under kubeProxyReplacement.
 6. The baked `config.yaml` carries server-only keys; confirm rke2-agent
    treats them as warnings, not fatal (M1).
-6. WG throughput on TDX hardware (M3 numbers): acceptable for cross-node
+7. WG throughput on TDX hardware (M3 numbers): acceptable for cross-node
    GPU workloads, or does multinode need a datapath exception with its
    own protection story?
