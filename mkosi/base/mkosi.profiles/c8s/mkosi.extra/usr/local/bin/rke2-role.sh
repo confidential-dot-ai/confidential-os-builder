@@ -15,8 +15,8 @@ DEV=/dev/disk/by-label/joindata
 mkdir -p "$RUN"
 
 # Drain the udev queue so a late-enumerating joindata disk can't make an
-# agent boot silently default to server.
-udevadm settle --timeout=10 || true
+# agent boot silently default to server; a settle timeout fails the unit.
+udevadm settle --timeout=10
 
 if [[ ! -e "$DEV" ]]; then
     : > "$RUN/role-server"
@@ -30,13 +30,17 @@ mkdir -p "$MNT"
 timeout 10 mount -t iso9660 -o ro,nodev,nosuid,noexec "$DEV" "$MNT"
 trap 'umount "$MNT" 2>/dev/null || true' EXIT
 
-role=$(tr -d '[:space:]' < "$MNT/role")
+# Edge-trim only: interior whitespace survives and fails validation
+# below rather than being silently repaired.
+role=""
+IFS=$' \t\r\n' read -r role < "$MNT/role" || true
 case "$role" in
 server)
     : > "$RUN/role-server"
     ;;
 agent)
-    server_addr=$(tr -d '[:space:]' < "$MNT/server")
+    server_addr=""
+    IFS=$' \t\r\n' read -r server_addr < "$MNT/server" || true
     if [[ -z "$server_addr" ]]; then
         echo "rke2-role: agent role but no server address" >&2
         exit 1
