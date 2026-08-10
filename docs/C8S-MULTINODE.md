@@ -172,8 +172,8 @@ Distributed-systems posture, per the engineering standards:
 - Timeouts: `c8s join` uses a bounded per-attempt timeout (flag, default
   30s); the unit retries indefinitely, spaced out, and `Upholds=` re-pulls
   rke2-agent once the join lands (a failed first attempt cancels the
-  agent's queued start job for good). `join-release` keeps a bounded
-  StartLimit: its persistent failure is a broken local attestation stack.
+  agent's queued start job for good). `join-release` also retries
+  indefinitely: a sealed image can only recover a stopped unit by reboot.
 - Partition: an agent that cannot reach the server never joins and runs
   nothing. Already-joined agents ride out partitions with kubelet's own
   reconnect; workloads keep running, no split-brain is possible with a
