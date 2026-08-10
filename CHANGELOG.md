@@ -12,12 +12,26 @@ build configs, since those invalidate published reference values.
 - `confos build --profile-dir <dir>`: enable an mkosi profile from an
   out-of-tree directory (copied under `mkosi.profiles/<basename>` for the
   build's duration, enabled like `--profile <basename>`), so a consumer
-  repo can own its image profile while this repo stays the builder
+  repo can own its image profile while this repo stays the builder. The
+  directory must be self-contained — symlinks in its config tree pointing
+  outside it are rejected, since staging re-parents them (links under its
+  own `mkosi.extra/` are exempt, being image-relative)
   ([c8s#264](https://github.com/confidential-dot-ai/c8s/issues/264))
 - `confos build --sync-input NAME=VALUE`: stage a value as
   `mkosi.local/<NAME>` for profile sync hooks — the sanctioned tunnel for
   consumer inputs (sudo strips the environment mkosi runs under), replacing
   hand-written files in this repo's tree
+
+### Fixed
+- A hard-killed build no longer leaks staged inputs into the next one. Both
+  staging paths run cleanup on the way *in* as well as out: `--sync-input`
+  files are cleared by name (so a later build that passes none of its own
+  can't silently inherit, say, the wrong component ref), and orphaned
+  `--profile-dir` copies are swept from `mkosi.profiles/` on every build —
+  previously one could be picked up by a plain `--profile <name>`, or
+  committed into this repo by `git add -A`. Copies belonging to a build
+  that is still running are identified by pid and left alone, with the
+  collision reported rather than deleted
 
 ## [0.3.0] — 2026-08-07
 

@@ -105,23 +105,26 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Don't wipe mkosi.local at start: profile sync hooks (e.g.
     // mkosi/base/mkosi.profiles/attest/mkosi.sync staging a binary into
-    // mkosi.local/mkosi.extra/) must survive into the rest of the mkosi run.
-    // The RemoveDirOnDrop guard below removes mkosi.local on normal exit;
-    // after a hard kill, remove mkosi/base/mkosi.local by hand.
+    // mkosi.local/mkosi.extra/) must survive into the rest of the mkosi run,
+    // and operator prep (bin/confos-fetch-<NAME>) stages into it *before* the
+    // build. The RemoveDirOnDrop guard below removes mkosi.local on normal
+    // exit; what a hard-killed build left behind is recovered by name in
+    // write_sync_inputs.
     let mkosi_local = PathBuf::from("mkosi/base/mkosi.local");
-    let mkosi_local_extra = mkosi_local.join("mkosi.extra");
-    fs_err::create_dir_all(&mkosi_local_extra)?;
+
+    // Ahead of the guard, deliberately: write_sync_inputs is what decides
+    // whether this overlay is ours to use, and its "another build owns it"
+    // bail must not drop a guard that would then delete that build's overlay.
+    write_sync_inputs(&mkosi_local, &args.sync_inputs)?;
+
     let _mkosi_local_guard = RemoveDirOnDrop {
         dir: mkosi_local.clone(),
     };
+    let mkosi_local_extra = mkosi_local.join("mkosi.extra");
+    fs_err::create_dir_all(&mkosi_local_extra)?;
 
     if let Some(ref extra) = args.extra {
         copy_extra(extra, &mkosi_local_extra)?;
-    }
-
-    for spec in &args.sync_inputs {
-        let (name, value) = parse_sync_input(spec)?;
-        fs_err::write(mkosi_local.join(name), format!("{value}\n"))?;
     }
 
     // Check required tools — resolve mkosi's full canonical path so sudo can invoke it
@@ -617,10 +620,16 @@ fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// RAII guard that removes the entire per-build `mkosi.local/` overlay after
-/// the mkosi run, including when an error path drops the guard early. All
-/// per-build file injections (extra, kernel, console, cloud-init) live under
-/// this directory, so a single cleanup covers them all.
+/// RAII guard that removes a directory this build staged into the repo, after
+/// the mkosi run and including when an error path drops the guard early. Two
+/// kinds of instance exist: one for the `mkosi.local/` overlay (which holds
+/// every per-build file injection — extra, kernel, console, cloud-init, sync
+/// inputs — so a single cleanup covers them all), and one per `--profile-dir`
+/// copy under `mkosi.profiles/`.
+///
+/// The guard cannot run on a hard kill, so both staging paths also recover
+/// their own leftovers on the next build — see `write_sync_inputs` and
+/// `sweep_stale_staged_profiles`.
 struct RemoveDirOnDrop {
     dir: PathBuf,
 }
@@ -632,9 +641,49 @@ impl Drop for RemoveDirOnDrop {
 }
 
 /// Sits at a staged profile's root (next to mkosi.conf, so never inside the
-/// image's mkosi.extra tree) to mark the copy as ours — see the stale-copy
-/// handling in `stage_profile_dirs`.
+/// image's mkosi.extra tree) to mark the copy as ours, and to name the build
+/// that owns it — see `sweep_stale_staged_profiles`. Its absence is what
+/// identifies a genuine in-tree profile, which is never ours to remove.
 const STAGED_PROFILE_MARKER: &str = ".confos-staged-profile";
+
+/// Records which `mkosi.local/<NAME>` files the last `--sync-input` run wrote.
+/// Without it a hard-killed build's values linger and the *next* build — which
+/// may pass no `--sync-input` at all, so it has no name to overwrite — silently
+/// builds against them.
+const SYNC_INPUT_MANIFEST: &str = ".confos-sync-inputs";
+
+/// Body of a marker/manifest file: the pid of the build that wrote it, so a
+/// later build can tell "leftover from a hard kill" from "in use right now".
+fn owner_stamp() -> String {
+    format!("pid={}\n", std::process::id())
+}
+
+/// The pid recorded in a marker/manifest body, if it has one. A file truncated
+/// by a kill mid-write has none — callers treat that as "no live owner", which
+/// is the state it in fact records.
+fn recorded_owner(contents: &str) -> Option<u32> {
+    contents
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("pid="))
+        .and_then(|pid| pid.trim().parse().ok())
+}
+
+/// Is the build that wrote a marker still running? `/proc/<pid>` is the
+/// cheapest check that needs no signal permission. confos builds are
+/// Linux-only (mkosi is), so anywhere else we can only assume it is gone —
+/// which keeps recovery working rather than wedging on an unanswerable check.
+fn owner_is_live(pid: u32) -> bool {
+    cfg!(target_os = "linux") && Path::new("/proc").join(pid.to_string()).exists()
+}
+
+/// The pid recorded in `path`, or `None` if the file is missing, unreadable,
+/// or carries no pid.
+fn owner_of(path: &Path) -> Option<u32> {
+    fs_err::read_to_string(path)
+        .ok()
+        .as_deref()
+        .and_then(recorded_owner)
+}
 
 /// Charset shared by staged file/profile names: safe as a filesystem path
 /// component and as an mkosi `--profile=` value (no separators, no shell
@@ -656,6 +705,69 @@ fn parse_sync_input(spec: &str) -> anyhow::Result<(&str, &str)> {
         anyhow::bail!("--sync-input name {name:?} must match [A-Za-z0-9_-]+");
     }
     Ok((name, value))
+}
+
+/// Clear `--sync-input` files a previous build left in `mkosi.local` and stage
+/// this build's, recording the names so the next build can do the same.
+///
+/// mkosi.local deliberately survives across builds (operator prep stages into
+/// it), so a sync input from a hard-killed build would otherwise be picked up
+/// by whatever runs next — an image built against, say, the wrong component
+/// ref, with nothing in the log to say so. Only names this tool recorded are
+/// removed; anything a fetch helper staged is left alone.
+fn write_sync_inputs(mkosi_local: &Path, specs: &[String]) -> anyhow::Result<()> {
+    // Parse everything before touching the filesystem so a typo in the last
+    // spec doesn't leave the earlier ones staged.
+    let inputs = specs
+        .iter()
+        .map(|spec| parse_sync_input(spec))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let manifest = mkosi_local.join(SYNC_INPUT_MANIFEST);
+    if let Ok(recorded) = fs_err::read_to_string(&manifest) {
+        match recorded_owner(&recorded) {
+            // Deleting a concurrent build's inputs mid-run would corrupt it
+            // far more quietly than saying so here.
+            Some(pid) if owner_is_live(pid) => anyhow::bail!(
+                "another confos build (pid {pid}) is using {}; concurrent builds \
+                 share mkosi.local and would corrupt each other. Wait for it to \
+                 finish, or remove {} if that pid is gone.",
+                mkosi_local.display(),
+                manifest.display()
+            ),
+            _ => {
+                // is_safe_name re-checked on the way out: the manifest is a
+                // file on disk, so it cannot be trusted to hold path
+                // components that stay inside mkosi.local.
+                for name in recorded.lines().map(str::trim).filter(|n| is_safe_name(n)) {
+                    let stale = mkosi_local.join(name);
+                    if fs_err::symlink_metadata(&stale).is_ok() {
+                        tracing::warn!(
+                            "removing stale --sync-input {name} left by an interrupted build"
+                        );
+                        fs_err::remove_file(&stale)?;
+                    }
+                }
+                fs_err::remove_file(&manifest)?;
+            }
+        }
+    }
+
+    if inputs.is_empty() {
+        return Ok(());
+    }
+    fs_err::create_dir_all(mkosi_local)?;
+    // Manifest before content: a kill mid-write must still leave every name
+    // recorded, or the next build inherits a leftover it cannot name.
+    let names: Vec<&str> = inputs.iter().map(|(name, _)| *name).collect();
+    fs_err::write(
+        &manifest,
+        format!("{}{}\n", owner_stamp(), names.join("\n")),
+    )?;
+    for (name, value) in inputs {
+        fs_err::write(mkosi_local.join(name), format!("{value}\n"))?;
+    }
+    Ok(())
 }
 
 /// Profile name for an out-of-tree profile dir: its basename.
@@ -685,6 +797,11 @@ fn stage_profile_dirs(
     dirs: &[PathBuf],
     profiles: &mut Vec<String>,
 ) -> anyhow::Result<Vec<RemoveDirOnDrop>> {
+    // Unconditionally, before looking at this build's own arguments: an
+    // orphan left by a hard kill is what the *next* build trips over, and that
+    // build need not pass --profile-dir at all.
+    sweep_stale_staged_profiles(profiles_root)?;
+
     let mut guards: Vec<RemoveDirOnDrop> = Vec::new();
     for dir in dirs {
         let name = external_profile_name(dir)?;
@@ -699,28 +816,28 @@ fn stage_profile_dirs(
             );
         }
         if fs_err::symlink_metadata(&target).is_ok() {
-            // The marker names a copy ours: a hard-killed build leaves its
-            // staged copy behind (the drop guard never ran), and that stale
-            // copy must be replaceable — while a genuine in-tree profile
-            // (git-tracked, never marked) must stay a hard error.
-            if target.join(STAGED_PROFILE_MARKER).is_file() {
-                tracing::warn!("removing stale staged profile {name} left by an interrupted build");
-                tools::force_remove_dir_all(&target)?;
-            } else {
-                anyhow::bail!(
-                    "--profile-dir {} collides with existing profile {name:?} at {}",
-                    dir.display(),
-                    target.display()
-                );
-            }
+            // The sweep above already took anything stale, so what is still
+            // here is either a genuine in-tree profile or a copy a concurrent
+            // build is using. Both are hard errors: deleting the latter would
+            // pull the config tree out from under a running mkosi.
+            let held = match owner_of(&target.join(STAGED_PROFILE_MARKER)) {
+                Some(pid) => format!("staged by a running confos build (pid {pid})"),
+                None => "an in-tree profile".to_string(),
+            };
+            anyhow::bail!(
+                "--profile-dir {} collides with existing profile {name:?} at {} ({held})",
+                dir.display(),
+                target.display()
+            );
         }
+        reject_escaping_symlinks(dir)?;
         guards.push(RemoveDirOnDrop {
             dir: target.clone(),
         });
         // Marker before content: a kill mid-copy must still leave a
         // recognizably-ours dir, or the next run hard-errors on it.
         fs_err::create_dir_all(&target)?;
-        fs_err::write(target.join(STAGED_PROFILE_MARKER), b"")?;
+        fs_err::write(target.join(STAGED_PROFILE_MARKER), owner_stamp())?;
         copy_extra(dir, &target)?;
         tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
         if !profiles.contains(&name) {
@@ -728,6 +845,118 @@ fn stage_profile_dirs(
         }
     }
     Ok(guards)
+}
+
+/// Remove staged profiles under `mkosi.profiles/` whose build is gone.
+///
+/// An orphan is worse than clutter. `--profile <name>` cannot tell a leftover
+/// copy from a real in-tree profile, so a later build that never asked for the
+/// out-of-tree profile silently gets its content — and since `mkosi.profiles/`
+/// is git-tracked territory that `.gitignore` cannot cover by name, `git add
+/// -A` would commit another repo's profile into this one.
+fn sweep_stale_staged_profiles(profiles_root: &Path) -> anyhow::Result<()> {
+    let entries = match fs_err::read_dir(profiles_root) {
+        Ok(entries) => entries,
+        // No profiles dir at all is normal in tests and harmless in a build:
+        // staging creates it.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let dir = entry.path();
+        let marker = dir.join(STAGED_PROFILE_MARKER);
+        // Unmarked means in-tree: never ours to remove.
+        if !marker.is_file() {
+            continue;
+        }
+        if let Some(pid) = owner_of(&marker).filter(|&pid| owner_is_live(pid)) {
+            tracing::warn!(
+                "leaving staged profile {} alone; confos build pid {pid} is still using it",
+                dir.display()
+            );
+            continue;
+        }
+        tracing::warn!(
+            "removing stale staged profile {} left by an interrupted build",
+            dir.display()
+        );
+        tools::force_remove_dir_all(&dir)?;
+    }
+    Ok(())
+}
+
+/// Profile subtrees whose symlinks are resolved inside the built image rather
+/// than on the host, so re-parenting the profile cannot break them.
+const IMAGE_RELATIVE_SUBTREES: [&str; 2] = ["mkosi.extra", "mkosi.skeleton"];
+
+/// Reject symlinks in a profile's config tree that point outside the profile.
+///
+/// Staging re-parents the directory under `mkosi.profiles/<name>/`, so a
+/// relative link that escaped its own root — `mkosi.conf.d/shared.conf ->
+/// ../../common/shared.conf`, perfectly valid in the consumer's repo — either
+/// dangles or, worse, resolves to an unrelated file inside *this* repo. A
+/// profile dir has to be self-contained; say so loudly instead of building
+/// against whatever the link happens to land on.
+fn reject_escaping_symlinks(root: &Path) -> anyhow::Result<()> {
+    fn walk(root: &Path, rel: &Path) -> anyhow::Result<()> {
+        for entry in fs_err::read_dir(root.join(rel))? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let ft = entry.file_type()?;
+            if rel.as_os_str().is_empty()
+                && IMAGE_RELATIVE_SUBTREES
+                    .iter()
+                    .any(|s| name.as_os_str() == *s)
+            {
+                continue;
+            }
+            let rel_child = rel.join(&name);
+            if ft.is_symlink() {
+                let target = fs_err::read_link(entry.path())?;
+                if escapes_root(rel, &target) {
+                    anyhow::bail!(
+                        "--profile-dir {} contains symlink {} -> {}, which points outside \
+                         the profile; a profile dir must be self-contained because staging \
+                         re-parents it under mkosi.profiles/",
+                        root.display(),
+                        rel_child.display(),
+                        target.display()
+                    );
+                }
+            } else if ft.is_dir() {
+                walk(root, &rel_child)?;
+            }
+        }
+        Ok(())
+    }
+    walk(root, Path::new(""))
+}
+
+/// Would a symlink at `rel_parent/<link>` with target `target` resolve outside
+/// the tree root? Purely lexical, and deliberately conservative: intermediate
+/// components are counted as directories, so a link that only *looks* like it
+/// escapes is rejected too.
+fn escapes_root(rel_parent: &Path, target: &Path) -> bool {
+    use std::path::Component;
+    let mut depth = rel_parent.components().count() as isize;
+    for component in target.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => return true,
+            Component::CurDir => {}
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return true;
+                }
+            }
+            Component::Normal(_) => depth += 1,
+        }
+    }
+    false
 }
 
 /// Recursively copy the contents of `src` into `dst`.
@@ -1230,6 +1459,214 @@ mod tests {
         mk_profile(&b);
         let mut profiles = vec![];
         assert!(stage_profile_dirs(profiles_root.path(), &[a, b], &mut profiles).is_err());
+    }
+
+    /// A dead pid: /proc/0 never exists, so this always reads as "owner gone".
+    const DEAD_PID: &str = "pid=0\n";
+
+    #[test]
+    fn stage_profile_dirs_sweeps_orphans_even_without_profile_dir_args() {
+        // The build that trips over an orphan is typically the one that never
+        // asked for an out-of-tree profile at all.
+        let profiles_root = TempDir::new().unwrap();
+        let orphan = profiles_root.path().join("c8s");
+        mk_profile(&orphan);
+        fs_err::write(orphan.join(STAGED_PROFILE_MARKER), DEAD_PID).unwrap();
+        let in_tree = profiles_root.path().join("attest");
+        mk_profile(&in_tree);
+
+        let mut profiles = vec!["attest".to_string()];
+        let _g = stage_profile_dirs(profiles_root.path(), &[], &mut profiles).unwrap();
+
+        assert!(!orphan.exists(), "orphaned staged profile must be swept");
+        assert!(in_tree.exists(), "in-tree profile must survive the sweep");
+    }
+
+    #[test]
+    fn stage_profile_dirs_spares_and_rejects_a_live_owners_copy() {
+        // Deleting a concurrent build's staged copy would break it silently;
+        // before the marker existed this collision was a hard error, and it
+        // has to stay one.
+        let src_root = TempDir::new().unwrap();
+        let profiles_root = TempDir::new().unwrap();
+        let src = src_root.path().join("c8s");
+        mk_profile(&src);
+        let live = profiles_root.path().join("c8s");
+        mk_profile(&live);
+        fs_err::write(
+            live.join(STAGED_PROFILE_MARKER),
+            format!("pid={}\n", std::process::id()),
+        )
+        .unwrap();
+
+        let mut profiles = vec![];
+        let Err(err) = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles) else {
+            panic!("collision with a live owner's copy must be an error");
+        };
+
+        assert!(live.exists(), "a live build's staged copy must survive");
+        assert!(
+            err.to_string().contains("running confos build"),
+            "error should name the live owner, got: {err}"
+        );
+    }
+
+    #[test]
+    fn stage_profile_dirs_rejects_escaping_symlink_in_profile_config() {
+        let src_root = TempDir::new().unwrap();
+        let profiles_root = TempDir::new().unwrap();
+        let src = src_root.path().join("c8s");
+        mk_profile(&src);
+        fs_err::create_dir_all(src.join("mkosi.conf.d")).unwrap();
+        std::os::unix::fs::symlink(
+            "../../common/shared.conf",
+            src.join("mkosi.conf.d/shared.conf"),
+        )
+        .unwrap();
+
+        let mut profiles = vec![];
+        assert!(
+            stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).is_err(),
+            "a config symlink escaping the profile root must not be staged"
+        );
+        assert!(
+            !profiles_root.path().join("c8s").exists(),
+            "the rejected profile must not be left half-staged"
+        );
+    }
+
+    #[test]
+    fn reject_escaping_symlinks_allows_self_contained_and_image_relative_links() {
+        let root = TempDir::new().unwrap();
+        let root = root.path();
+        fs_err::create_dir_all(root.join("mkosi.conf.d")).unwrap();
+        fs_err::write(root.join("mkosi.conf.d/base.conf"), b"").unwrap();
+        // Stays inside the profile: fine, staging moves it wholesale.
+        std::os::unix::fs::symlink("base.conf", root.join("mkosi.conf.d/alias.conf")).unwrap();
+        std::os::unix::fs::symlink("mkosi.conf.d/base.conf", root.join("top.conf")).unwrap();
+        // Resolved in the built image, not on the host — exempt even when
+        // absolute or escaping.
+        fs_err::create_dir_all(root.join("mkosi.extra/usr/bin")).unwrap();
+        std::os::unix::fs::symlink(
+            "/usr/lib/systemd/systemd",
+            root.join("mkosi.extra/usr/bin/init"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            "../../../../etc/hosts",
+            root.join("mkosi.extra/usr/bin/hosts"),
+        )
+        .unwrap();
+
+        reject_escaping_symlinks(root).unwrap();
+    }
+
+    #[test]
+    fn reject_escaping_symlinks_rejects_absolute_host_links() {
+        let root = TempDir::new().unwrap();
+        std::os::unix::fs::symlink("/etc/confos/shared.conf", root.path().join("mkosi.conf"))
+            .unwrap();
+        assert!(reject_escaping_symlinks(root.path()).is_err());
+    }
+
+    #[test]
+    fn escapes_root_counts_depth_lexically() {
+        let at_root = Path::new("");
+        let nested = Path::new("mkosi.conf.d");
+        assert!(!escapes_root(at_root, Path::new("sibling.conf")));
+        assert!(!escapes_root(at_root, Path::new("./a/b")));
+        assert!(!escapes_root(nested, Path::new("../mkosi.conf")));
+        assert!(!escapes_root(nested, Path::new("../a/../mkosi.conf")));
+        assert!(escapes_root(at_root, Path::new("../outside")));
+        assert!(escapes_root(nested, Path::new("../../outside")));
+        assert!(escapes_root(nested, Path::new("/abs/path")));
+    }
+
+    #[test]
+    fn recorded_owner_reads_the_pid_or_nothing() {
+        assert_eq!(recorded_owner("pid=1234\n"), Some(1234));
+        assert_eq!(recorded_owner("pid=7\nc8s-ref\nother\n"), Some(7));
+        // Truncated by a kill mid-write, or a marker from an older confos.
+        assert_eq!(recorded_owner(""), None);
+        assert_eq!(recorded_owner("c8s-ref\n"), None);
+        assert_eq!(recorded_owner("pid=notanumber\n"), None);
+    }
+
+    #[test]
+    fn write_sync_inputs_stages_values_and_records_names() {
+        let local = TempDir::new().unwrap();
+        write_sync_inputs(local.path(), &["c8s-ref=abc123".to_string()]).unwrap();
+
+        assert_eq!(
+            fs_err::read_to_string(local.path().join("c8s-ref")).unwrap(),
+            "abc123\n"
+        );
+        let manifest = fs_err::read_to_string(local.path().join(SYNC_INPUT_MANIFEST)).unwrap();
+        assert_eq!(recorded_owner(&manifest), Some(std::process::id()));
+        assert!(manifest.contains("c8s-ref"));
+    }
+
+    #[test]
+    fn write_sync_inputs_clears_leftovers_even_with_no_inputs_of_its_own() {
+        // The failure this guards: a killed build's ref is silently consumed
+        // by the next build, which passed no --sync-input at all.
+        let local = TempDir::new().unwrap();
+        fs_err::write(local.path().join("c8s-ref"), "stale-ref\n").unwrap();
+        fs_err::write(
+            local.path().join(SYNC_INPUT_MANIFEST),
+            format!("{DEAD_PID}c8s-ref\n"),
+        )
+        .unwrap();
+
+        write_sync_inputs(local.path(), &[]).unwrap();
+
+        assert!(!local.path().join("c8s-ref").exists());
+        assert!(!local.path().join(SYNC_INPUT_MANIFEST).exists());
+    }
+
+    #[test]
+    fn write_sync_inputs_leaves_operator_prep_alone() {
+        // bin/confos-fetch-<NAME> stages into mkosi.local before the build;
+        // only names we recorded are ours to delete.
+        let local = TempDir::new().unwrap();
+        fs_err::write(local.path().join("attest-binary"), b"prep").unwrap();
+        fs_err::write(
+            local.path().join(SYNC_INPUT_MANIFEST),
+            format!("{DEAD_PID}c8s-ref\n"),
+        )
+        .unwrap();
+
+        write_sync_inputs(local.path(), &[]).unwrap();
+
+        assert!(local.path().join("attest-binary").exists());
+    }
+
+    #[test]
+    fn write_sync_inputs_refuses_to_disturb_a_live_build() {
+        let local = TempDir::new().unwrap();
+        fs_err::write(local.path().join("c8s-ref"), "in-use\n").unwrap();
+        fs_err::write(
+            local.path().join(SYNC_INPUT_MANIFEST),
+            format!("pid={}\nc8s-ref\n", std::process::id()),
+        )
+        .unwrap();
+
+        assert!(write_sync_inputs(local.path(), &[]).is_err());
+        assert_eq!(
+            fs_err::read_to_string(local.path().join("c8s-ref")).unwrap(),
+            "in-use\n"
+        );
+    }
+
+    #[test]
+    fn write_sync_inputs_rejects_bad_spec_before_staging_anything() {
+        let local = TempDir::new().unwrap();
+        assert!(write_sync_inputs(
+            local.path(),
+            &["good=1".to_string(), "bad spec".to_string()]
+        )
+        .is_err());
+        assert!(!local.path().join("good").exists());
     }
 
     #[test]
