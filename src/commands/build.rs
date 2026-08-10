@@ -720,28 +720,34 @@ fn stage_profile_dirs(
     dirs: &[PathBuf],
     profiles: &mut Vec<String>,
 ) -> anyhow::Result<Vec<RemoveDirOnDrop>> {
-    let mut guards: Vec<RemoveDirOnDrop> = Vec::new();
+    // Validate every dir before staging any: a bad argument stages nothing.
+    let mut validated: Vec<(String, &Path)> = Vec::new();
     for dir in dirs {
         let name = external_profile_name(dir)?;
         if !dir.join("mkosi.conf").is_file() {
             anyhow::bail!("--profile-dir has no mkosi.conf: {}", dir.display());
         }
-        let target = profiles_root.join(&name);
-        if guards.iter().any(|g| g.dir == target) {
+        if validated.iter().any(|(staged, _)| *staged == name) {
             anyhow::bail!(
                 "two --profile-dir arguments share the basename {name:?}; the second ({}) would silently replace the first",
                 dir.display()
             );
         }
-        if fs_err::symlink_metadata(&target).is_ok() {
+        if fs_err::symlink_metadata(profiles_root.join(&name)).is_ok() {
             // The sweep took every staged leftover, so this is in-tree.
             anyhow::bail!(
                 "--profile-dir {} collides with in-tree profile {name:?} at {}",
                 dir.display(),
-                target.display()
+                profiles_root.join(&name).display()
             );
         }
         reject_escaping_symlinks(dir)?;
+        validated.push((name, dir));
+    }
+
+    let mut guards = Vec::new();
+    for (name, dir) in validated {
+        let target = profiles_root.join(&name);
         guards.push(RemoveDirOnDrop {
             dir: target.clone(),
         });
