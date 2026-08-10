@@ -111,10 +111,17 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // exit; what a hard-killed build left behind is recovered by name in
     // write_sync_inputs.
     let mkosi_local = PathBuf::from("mkosi/base/mkosi.local");
+    let profiles_root = PathBuf::from("mkosi/base/mkosi.profiles");
 
+    // Recover what a hard-killed build left staged in the repo, before any of
+    // this build's own staging. Both halves run unconditionally: the build
+    // that trips over a leftover is typically the one that passed neither
+    // flag, so neither may be skipped when its own argument list is empty.
+    //
     // Ahead of the guard, deliberately: write_sync_inputs is what decides
     // whether this overlay is ours to use, and its "another build owns it"
     // bail must not drop a guard that would then delete that build's overlay.
+    sweep_stale_staged_profiles(&profiles_root)?;
     write_sync_inputs(&mkosi_local, &args.sync_inputs)?;
 
     let _mkosi_local_guard = RemoveDirOnDrop {
@@ -161,11 +168,8 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // operator's responsibility — see `bin/confos-fetch-<NAME>` helpers and
     // `make build-<NAME>` targets that chain prep + build.
     let mut profiles = args.profiles.clone();
-    let _profile_dir_guards = stage_profile_dirs(
-        Path::new("mkosi/base/mkosi.profiles"),
-        &args.profile_dirs,
-        &mut profiles,
-    )?;
+    let _profile_dir_guards =
+        stage_profile_dirs(&profiles_root, &args.profile_dirs, &mut profiles)?;
     for profile in &profiles {
         tracing::debug!("profile enabled: {profile}");
     }
@@ -629,7 +633,12 @@ fn inject_cloud_init(user_data: &Path, seed_dir: &Path) -> anyhow::Result<()> {
 ///
 /// The guard cannot run on a hard kill, so both staging paths also recover
 /// their own leftovers on the next build — see `write_sync_inputs` and
-/// `sweep_stale_staged_profiles`.
+/// `sweep_stale_staged_profiles`. Note the deliberate asymmetry with those:
+/// on the way out this deletes `mkosi.local/` wholesale, because by then
+/// everything in it is spent, including what a fetch helper staged for this
+/// build. On the way in, recovery has to be name-scoped instead — nothing
+/// there distinguishes prep for the build about to run from a dead build's
+/// residue.
 struct RemoveDirOnDrop {
     dir: PathBuf,
 }
@@ -725,32 +734,28 @@ fn write_sync_inputs(mkosi_local: &Path, specs: &[String]) -> anyhow::Result<()>
 
     let manifest = mkosi_local.join(SYNC_INPUT_MANIFEST);
     if let Ok(recorded) = fs_err::read_to_string(&manifest) {
-        match recorded_owner(&recorded) {
-            // Deleting a concurrent build's inputs mid-run would corrupt it
-            // far more quietly than saying so here.
-            Some(pid) if owner_is_live(pid) => anyhow::bail!(
+        // Deleting a concurrent build's inputs mid-run would corrupt it far
+        // more quietly than saying so here.
+        if let Some(pid) = recorded_owner(&recorded).filter(|&pid| owner_is_live(pid)) {
+            anyhow::bail!(
                 "another confos build (pid {pid}) is using {}; concurrent builds \
                  share mkosi.local and would corrupt each other. Wait for it to \
                  finish, or remove {} if that pid is gone.",
                 mkosi_local.display(),
                 manifest.display()
-            ),
-            _ => {
-                // is_safe_name re-checked on the way out: the manifest is a
-                // file on disk, so it cannot be trusted to hold path
-                // components that stay inside mkosi.local.
-                for name in recorded.lines().map(str::trim).filter(|n| is_safe_name(n)) {
-                    let stale = mkosi_local.join(name);
-                    if fs_err::symlink_metadata(&stale).is_ok() {
-                        tracing::warn!(
-                            "removing stale --sync-input {name} left by an interrupted build"
-                        );
-                        fs_err::remove_file(&stale)?;
-                    }
-                }
-                fs_err::remove_file(&manifest)?;
+            );
+        }
+        // is_safe_name re-checked on the way out: the manifest is a file on
+        // disk, so it cannot be trusted to hold path components that stay
+        // inside mkosi.local.
+        for name in recorded.lines().map(str::trim).filter(|n| is_safe_name(n)) {
+            let stale = mkosi_local.join(name);
+            if fs_err::symlink_metadata(&stale).is_ok() {
+                tracing::warn!("removing stale --sync-input {name} left by an interrupted build");
+                fs_err::remove_file(&stale)?;
             }
         }
+        fs_err::remove_file(&manifest)?;
     }
 
     if inputs.is_empty() {
@@ -792,16 +797,14 @@ fn external_profile_name(dir: &Path) -> anyhow::Result<String> {
 /// config tree while profiles parse after it — only a staged copy keeps
 /// profile merge precedence identical to in-tree, which is what lets a
 /// moved-out profile build bit-identically.
+///
+/// Expects `sweep_stale_staged_profiles` to have run first, so that anything
+/// already sitting at a target path is live rather than abandoned.
 fn stage_profile_dirs(
     profiles_root: &Path,
     dirs: &[PathBuf],
     profiles: &mut Vec<String>,
 ) -> anyhow::Result<Vec<RemoveDirOnDrop>> {
-    // Unconditionally, before looking at this build's own arguments: an
-    // orphan left by a hard kill is what the *next* build trips over, and that
-    // build need not pass --profile-dir at all.
-    sweep_stale_staged_profiles(profiles_root)?;
-
     let mut guards: Vec<RemoveDirOnDrop> = Vec::new();
     for dir in dirs {
         let name = external_profile_name(dir)?;
@@ -816,7 +819,7 @@ fn stage_profile_dirs(
             );
         }
         if fs_err::symlink_metadata(&target).is_ok() {
-            // The sweep above already took anything stale, so what is still
+            // The sweep in run() already took anything stale, so what is still
             // here is either a genuine in-tree profile or a copy a concurrent
             // build is using. Both are hard errors: deleting the latter would
             // pull the config tree out from under a running mkosi.
@@ -903,15 +906,13 @@ const IMAGE_RELATIVE_SUBTREES: [&str; 2] = ["mkosi.extra", "mkosi.skeleton"];
 /// against whatever the link happens to land on.
 fn reject_escaping_symlinks(root: &Path) -> anyhow::Result<()> {
     fn walk(root: &Path, rel: &Path) -> anyhow::Result<()> {
+        // Only the profile root can hold the exempt subtrees.
+        let at_root = rel.as_os_str().is_empty();
         for entry in fs_err::read_dir(root.join(rel))? {
             let entry = entry?;
             let name = entry.file_name();
             let ft = entry.file_type()?;
-            if rel.as_os_str().is_empty()
-                && IMAGE_RELATIVE_SUBTREES
-                    .iter()
-                    .any(|s| name.as_os_str() == *s)
-            {
+            if at_root && IMAGE_RELATIVE_SUBTREES.iter().any(|s| name == *s) {
                 continue;
             }
             let rel_child = rel.join(&name);
@@ -1440,8 +1441,12 @@ mod tests {
             .is_err(),
             "unmarked (in-tree) profile must be a hard error"
         );
+        // Marked with no pid: truncated by a kill mid-write, or left by an
+        // older confos. The sweep run() performs first is what makes the
+        // basename free again.
         fs_err::write(in_tree.join(STAGED_PROFILE_MARKER), b"").unwrap();
         fs_err::write(in_tree.join("stale"), b"").unwrap();
+        sweep_stale_staged_profiles(profiles_root.path()).unwrap();
         let _g = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles).unwrap();
         assert!(
             !profiles_root.path().join("c8s/stale").exists(),
@@ -1465,9 +1470,7 @@ mod tests {
     const DEAD_PID: &str = "pid=0\n";
 
     #[test]
-    fn stage_profile_dirs_sweeps_orphans_even_without_profile_dir_args() {
-        // The build that trips over an orphan is typically the one that never
-        // asked for an out-of-tree profile at all.
+    fn sweep_stale_staged_profiles_removes_orphans_and_spares_in_tree() {
         let profiles_root = TempDir::new().unwrap();
         let orphan = profiles_root.path().join("c8s");
         mk_profile(&orphan);
@@ -1475,29 +1478,42 @@ mod tests {
         let in_tree = profiles_root.path().join("attest");
         mk_profile(&in_tree);
 
-        let mut profiles = vec!["attest".to_string()];
-        let _g = stage_profile_dirs(profiles_root.path(), &[], &mut profiles).unwrap();
+        sweep_stale_staged_profiles(profiles_root.path()).unwrap();
 
         assert!(!orphan.exists(), "orphaned staged profile must be swept");
         assert!(in_tree.exists(), "in-tree profile must survive the sweep");
     }
 
     #[test]
-    fn stage_profile_dirs_spares_and_rejects_a_live_owners_copy() {
-        // Deleting a concurrent build's staged copy would break it silently;
-        // before the marker existed this collision was a hard error, and it
-        // has to stay one.
+    fn sweep_stale_staged_profiles_spares_a_live_owners_copy() {
+        let profiles_root = TempDir::new().unwrap();
+        let live = profiles_root.path().join("c8s");
+        mk_profile(&live);
+        fs_err::write(live.join(STAGED_PROFILE_MARKER), owner_stamp()).unwrap();
+
+        sweep_stale_staged_profiles(profiles_root.path()).unwrap();
+
+        assert!(live.exists(), "a running build's staged copy must survive");
+    }
+
+    #[test]
+    fn sweep_stale_staged_profiles_tolerates_a_missing_profiles_root() {
+        let parent = TempDir::new().unwrap();
+        sweep_stale_staged_profiles(&parent.path().join("never-existed")).unwrap();
+    }
+
+    #[test]
+    fn stage_profile_dirs_rejects_a_live_owners_copy_by_name() {
+        // A copy the sweep spared belongs to a running build. Before the
+        // marker existed this collision was a hard error, and it has to stay
+        // one — deleting it would break that build silently.
         let src_root = TempDir::new().unwrap();
         let profiles_root = TempDir::new().unwrap();
         let src = src_root.path().join("c8s");
         mk_profile(&src);
         let live = profiles_root.path().join("c8s");
         mk_profile(&live);
-        fs_err::write(
-            live.join(STAGED_PROFILE_MARKER),
-            format!("pid={}\n", std::process::id()),
-        )
-        .unwrap();
+        fs_err::write(live.join(STAGED_PROFILE_MARKER), owner_stamp()).unwrap();
 
         let mut profiles = vec![];
         let Err(err) = stage_profile_dirs(profiles_root.path(), &[src], &mut profiles) else {
@@ -1647,7 +1663,7 @@ mod tests {
         fs_err::write(local.path().join("c8s-ref"), "in-use\n").unwrap();
         fs_err::write(
             local.path().join(SYNC_INPUT_MANIFEST),
-            format!("pid={}\nc8s-ref\n", std::process::id()),
+            format!("{}c8s-ref\n", owner_stamp()),
         )
         .unwrap();
 
