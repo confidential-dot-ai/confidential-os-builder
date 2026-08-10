@@ -4,19 +4,16 @@
 # writes /run/confos/role-{server,agent} plus join.env for rke2-join.
 # No disk => server, the single-node default.
 #
-# The disk is host-controlled and DoS-only: a flipped role fails to join or
-# forms an empty cluster; a redirected server fails `c8s join`'s same-image
-# verification. A malformed disk fails this unit and every role-gated unit
-# stays down.
+# joindata is host-controlled: worst case is DoS; a malformed disk fails
+# this unit and every role-gated unit stays down (docs/C8S-MULTINODE.md).
 set -euo pipefail
 
 RUN=/run/confos
 DEV=/dev/disk/by-label/joindata
-mkdir -p "$RUN"
 
-# Drain the udev queue so a late-enumerating joindata disk can't make an
-# agent boot silently default to server; a settle timeout fails the unit.
-udevadm settle --timeout=10
+# Unless the disk already enumerated, drain the udev queue so a late one
+# can't default an agent boot to server; a settle timeout fails the unit.
+[[ -e "$DEV" ]] || udevadm settle --timeout=10
 
 if [[ ! -e "$DEV" ]]; then
     : > "$RUN/role-server"

@@ -17,13 +17,11 @@ enable models-disk.service
 # to CDS. Ordered before rke2 so the file exists when containerd launches the
 # baked plugin.
 enable nri-node-ip.service
-# Role dispatch + the role-gated rke2 pair (see the header comment).
+# Role dispatch + the role-gated rke2 pair.
 enable rke2-role.service
 enable rke2-server.service
 enable rke2-agent.service
-# Attested join: rke2-join (agent role) fetches the cluster token from
-# join-release (server role) over mutual RA-TLS with the same-image policy.
-# Both are role-condition-gated like the rke2 units.
+# Attested join pair; role-condition-gated like the rke2 units.
 enable rke2-join.service
 enable join-release.service
 # NTP: sync the free-running TDX guest clock so it doesn't drift behind the
