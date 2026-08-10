@@ -218,8 +218,41 @@ pub struct BuildArgs {
     /// sudo with a stripped environment, so this is the sanctioned way to
     /// hand a value (e.g. a component ref) to a profile's mkosi.sync
     /// without writing into this repo's tree by hand. Repeatable.
-    #[arg(long = "sync-input", value_name = "NAME=VALUE")]
-    pub sync_inputs: Vec<String>,
+    #[arg(long = "sync-input", value_name = "NAME=VALUE", value_parser = parse_sync_input)]
+    pub sync_inputs: Vec<SyncInput>,
+}
+
+/// A `--sync-input NAME=VALUE` pair, split and validated by clap so a bad
+/// spec fails as a usage error before the build touches the checkout.
+#[derive(Clone, Debug)]
+pub struct SyncInput {
+    pub name: String,
+    pub value: String,
+}
+
+/// Charset shared by staged file/profile names: safe as a filesystem path
+/// component and as an mkosi `--profile=` value (no separators, no shell
+/// metacharacters).
+pub(crate) fn is_safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// NAME becomes a file under mkosi.local, so it gets the same charset
+/// restriction as profile names.
+fn parse_sync_input(spec: &str) -> Result<SyncInput, String> {
+    let Some((name, value)) = spec.split_once('=') else {
+        return Err(format!("wants NAME=VALUE, got {spec:?}"));
+    };
+    if !is_safe_name(name) {
+        return Err(format!("name {name:?} must match [A-Za-z0-9_-]+"));
+    }
+    Ok(SyncInput {
+        name: name.to_string(),
+        value: value.to_string(),
+    })
 }
 
 #[derive(clap::Args)]
@@ -277,4 +310,31 @@ pub mod commands {
     pub mod pull;
     pub mod push;
     pub mod run;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_sync_input;
+
+    #[test]
+    fn parse_sync_input_splits_on_first_eq() {
+        for (spec, name, value) in [
+            ("c8s-ref=3a2517b", "c8s-ref", "3a2517b"),
+            ("k=a=b", "k", "a=b"),
+            ("empty=", "empty", ""),
+        ] {
+            let input = parse_sync_input(spec).unwrap();
+            assert_eq!((input.name.as_str(), input.value.as_str()), (name, value));
+        }
+    }
+
+    #[test]
+    fn parse_sync_input_rejects_bad_specs() {
+        for bad in ["no-eq", "=value", "a/b=x", "a b=x"] {
+            assert!(
+                parse_sync_input(bad).is_err(),
+                "expected rejection for {bad:?}"
+            );
+        }
+    }
 }

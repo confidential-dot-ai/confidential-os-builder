@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::{igvm, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform};
+use crate::{
+    igvm, is_safe_name, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform, SyncInput,
+};
 
 pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     tracing::info!("building base image with dm-verity + UKI");
@@ -668,41 +670,12 @@ fn lock_checkout(path: &Path) -> anyhow::Result<fs_err::File> {
     }
 }
 
-/// Charset shared by staged file/profile names: safe as a filesystem path
-/// component and as an mkosi `--profile=` value (no separators, no shell
-/// metacharacters).
-fn is_safe_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// Split a `--sync-input NAME=VALUE` spec; NAME becomes a file under
-/// mkosi.local, so it gets the same charset restriction as profile names.
-fn parse_sync_input(spec: &str) -> anyhow::Result<(&str, &str)> {
-    let (name, value) = spec
-        .split_once('=')
-        .ok_or_else(|| anyhow::anyhow!("--sync-input wants NAME=VALUE, got {spec:?}"))?;
-    if !is_safe_name(name) {
-        anyhow::bail!("--sync-input name {name:?} must match [A-Za-z0-9_-]+");
-    }
-    Ok((name, value))
-}
-
 /// Clear the `--sync-input` files a dead build left in `mkosi.local` and stage
 /// this build's, recording the names so the next build can do the same.
 ///
 /// Scoped to recorded names only: mkosi.local survives across builds, and
 /// operator prep staged there must not be touched.
-fn write_sync_inputs(mkosi_local: &Path, specs: &[String]) -> anyhow::Result<()> {
-    // Parse before writing: a typo in the last spec must not leave earlier
-    // ones staged.
-    let inputs = specs
-        .iter()
-        .map(|spec| parse_sync_input(spec))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
+fn write_sync_inputs(mkosi_local: &Path, inputs: &[SyncInput]) -> anyhow::Result<()> {
     let manifest = mkosi_local.join(SYNC_INPUT_MANIFEST);
     if let Ok(recorded) = fs_err::read_to_string(&manifest) {
         // is_safe_name re-checked: the manifest is on-disk data, not trusted
@@ -723,10 +696,10 @@ fn write_sync_inputs(mkosi_local: &Path, specs: &[String]) -> anyhow::Result<()>
     fs_err::create_dir_all(mkosi_local)?;
     // Manifest before content: a kill mid-write must leave every name
     // recorded, or the next build inherits a leftover it cannot name.
-    let names: Vec<&str> = inputs.iter().map(|(name, _)| *name).collect();
+    let names: Vec<&str> = inputs.iter().map(|i| i.name.as_str()).collect();
     fs_err::write(&manifest, format!("{}\n", names.join("\n")))?;
-    for (name, value) in inputs {
-        fs_err::write(mkosi_local.join(name), format!("{value}\n"))?;
+    for input in inputs {
+        fs_err::write(mkosi_local.join(&input.name), format!("{}\n", input.value))?;
     }
     Ok(())
 }
@@ -1510,10 +1483,17 @@ mod tests {
         assert!(escapes_root(nested, Path::new("/abs/path")));
     }
 
+    fn sync_input(name: &str, value: &str) -> SyncInput {
+        SyncInput {
+            name: name.to_string(),
+            value: value.to_string(),
+        }
+    }
+
     #[test]
     fn write_sync_inputs_stages_values_and_records_names() {
         let local = TempDir::new().unwrap();
-        write_sync_inputs(local.path(), &["c8s-ref=abc123".to_string()]).unwrap();
+        write_sync_inputs(local.path(), &[sync_input("c8s-ref", "abc123")]).unwrap();
 
         assert_eq!(
             fs_err::read_to_string(local.path().join("c8s-ref")).unwrap(),
@@ -1546,37 +1526,6 @@ mod tests {
         write_sync_inputs(local.path(), &[]).unwrap();
 
         assert!(local.path().join("attest-binary").exists());
-    }
-
-    #[test]
-    fn write_sync_inputs_rejects_bad_spec_before_staging_anything() {
-        let local = TempDir::new().unwrap();
-        assert!(write_sync_inputs(
-            local.path(),
-            &["good=1".to_string(), "bad spec".to_string()]
-        )
-        .is_err());
-        assert!(!local.path().join("good").exists());
-    }
-
-    #[test]
-    fn parse_sync_input_splits_on_first_eq() {
-        assert_eq!(
-            parse_sync_input("c8s-ref=3a2517b").unwrap(),
-            ("c8s-ref", "3a2517b")
-        );
-        assert_eq!(parse_sync_input("k=a=b").unwrap(), ("k", "a=b"));
-        assert_eq!(parse_sync_input("empty=").unwrap(), ("empty", ""));
-    }
-
-    #[test]
-    fn parse_sync_input_rejects_bad_specs() {
-        for bad in ["no-eq", "=value", "a/b=x", "a b=x"] {
-            assert!(
-                parse_sync_input(bad).is_err(),
-                "expected rejection for {bad:?}"
-            );
-        }
     }
 
     #[test]
