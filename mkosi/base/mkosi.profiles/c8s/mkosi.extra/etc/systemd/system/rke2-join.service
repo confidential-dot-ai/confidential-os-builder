@@ -18,13 +18,10 @@ RemainAfterExit=yes
 EnvironmentFile=/run/confos/join.env
 ExecStart=/usr/local/bin/c8s join \
     --server ${JOIN_SERVER} \
-    --attestation-api-url http://127.0.0.1:8400 \
-    --platform tdx \
     --token-out /run/confos/join-token \
-    --fragment-out /etc/rancher/rke2/config.yaml.d/50-join.yaml \
-    --timeout 30s
+    --fragment-out /etc/rancher/rke2/config.yaml.d/50-join.yaml
 Restart=on-failure
-RestartSec=15
+RestartSec=5
 # Token stays on tmpfs; the fragment is the one write outside /run.
 ProtectSystem=strict
 ReadWritePaths=/run /etc/rancher/rke2/config.yaml.d
