@@ -109,35 +109,31 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // expects it (STAGED_SIGNING_CERT). The certificate is a consumer input,
     // like the config fragment: whoever owns the image owns the trust anchor
     // for the modules it loads, and this repo ships none.
-    match signing_cert {
-        Some(cert) => {
-            if !cert.is_file() {
-                return Err(anyhow!(
-                    "--module-signing-cert path not found: {}",
-                    cert.display()
-                ));
-            }
-            let certs_dir = kernel_src.join("certs");
-            fs_err::create_dir_all(&certs_dir)?;
-            fs_err::copy(cert, certs_dir.join(STAGED_SIGNING_CERT))?;
+    if let Some(cert) = signing_cert {
+        if !cert.is_file() {
+            return Err(anyhow!(
+                "--module-signing-cert path not found: {}",
+                cert.display()
+            ));
         }
-        // A fragment that asks for a trusted keyring with no certificate to
-        // put in it fails deep in the build, at the .incbin in
-        // certs/system_certificates.S. Catch it here with a message that
-        // names the flag.
-        None => {
-            if let Some(f) = fragment {
-                let wants_cert = fs_err::read_to_string(f)?
-                    .lines()
-                    .any(|l| l.trim_start().starts_with("CONFIG_SYSTEM_TRUSTED_KEYS="));
-                if wants_cert {
-                    return Err(anyhow!(
-                        "{} sets CONFIG_SYSTEM_TRUSTED_KEYS but no --module-signing-cert was given \
-                         (docs/module-signing.md)",
-                        f.display()
-                    ));
-                }
-            }
+        let certs_dir = kernel_src.join("certs");
+        fs_err::create_dir_all(&certs_dir)?;
+        // kernel_src is a freshly extracted tarball (wiped above), so a plain
+        // copy is enough — no staging guard as for --profile-dir.
+        fs_err::copy(cert, certs_dir.join(STAGED_SIGNING_CERT))?;
+    } else if let Some(f) = fragment {
+        // A fragment asking for a trusted keyring with no certificate to put
+        // in it fails deep in the build, at the .incbin in
+        // certs/system_certificates.S. Name the flag here instead.
+        if fs_err::read_to_string(f)?
+            .lines()
+            .any(|l| l.starts_with("CONFIG_SYSTEM_TRUSTED_KEYS="))
+        {
+            return Err(anyhow!(
+                "{} sets CONFIG_SYSTEM_TRUSTED_KEYS but no --module-signing-cert was given \
+                 (docs/module-signing.md)",
+                f.display()
+            ));
         }
     }
 
@@ -256,8 +252,6 @@ pub fn compute_fingerprint(
         required_config_sha256: fetch::sha256_file(Path::new(REQUIRED_FRAGMENT))?,
         hardening_config_sha256: fetch::sha256_file(Path::new(HARDENING_FRAGMENT))?,
         confidential_config_sha256: fetch::sha256_file(Path::new(CONFIDENTIAL_FRAGMENT))?,
-        // Empty when no certificate was passed, exactly as for the optional
-        // fragment above — keeps a no-signing build's fingerprint stable.
         module_signing_cert_sha256: match signing_cert {
             Some(c) => fetch::sha256_file(c)?,
             None => String::new(),

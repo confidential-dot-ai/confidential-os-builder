@@ -114,7 +114,36 @@ pub fn run_configure_phase(
     if let Some(ref e) = extra_abs {
         fragments.push(e);
     }
-    verify_fragment_options(&fragments, &kernel_dir_abs.join(".config"))
+    let resolved = kernel_dir_abs.join(".config");
+    verify_fragment_options(&fragments, &resolved)?;
+    verify_builder_invariants(&resolved)
+}
+
+/// Assertions confos makes about every resolved `.config`, whatever the
+/// fragments asked for. Unlike `verify_fragment_options` — which checks that
+/// each fragment got what it requested — these hold even when a fragment
+/// requested the opposite, so a consumer cannot opt out of them.
+fn verify_builder_invariants(resolved: &Path) -> Result<()> {
+    let config = fs_err::read_to_string(resolved)?;
+    // MODULE_SIG_ALL=y makes the kernel build sign in-tree modules, which
+    // requires a private key at build time: with no MODULE_SIG_KEY set the
+    // build GENKEYs one per run and embeds its certificate in vmlinux, so
+    // vmlinuz stops being reproducible (#85). mod2yesconfig leaves no in-tree
+    // modules to sign, so nothing needs it; out-of-tree modules are signed
+    // separately against --module-signing-cert.
+    if config
+        .lines()
+        .any(|l| l.trim() == "CONFIG_MODULE_SIG_ALL=y")
+    {
+        anyhow::bail!(
+            "resolved .config has CONFIG_MODULE_SIG_ALL=y: the kernel build would \
+             generate a per-build signing key and vmlinuz would stop being \
+             reproducible (#85). Unset it in the fragment that enables module \
+             signing; sign out-of-tree modules against --module-signing-cert \
+             instead (docs/module-signing.md)."
+        );
+    }
+    Ok(())
 }
 
 /// Fail if the resolved `.config` disagrees with what the fragments
@@ -443,6 +472,33 @@ mod tests {
         let b = write(&d, "b", "CONFIG_X=y\n");
         let changed = update_snapshot(&a, &b).unwrap();
         assert!(!changed);
+    }
+
+    #[test]
+    fn builder_invariants_reject_module_sig_all() {
+        let d = TempDir::new().unwrap();
+        let resolved = write(
+            &d,
+            "resolved",
+            "CONFIG_MODULES=y\nCONFIG_MODULE_SIG_ALL=y\n",
+        );
+        let err = verify_builder_invariants(&resolved)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CONFIG_MODULE_SIG_ALL=y"), "{err}");
+        assert!(err.contains("reproducible"), "{err}");
+    }
+
+    #[test]
+    fn builder_invariants_accept_module_sig_all_off() {
+        let d = TempDir::new().unwrap();
+        for body in [
+            "CONFIG_MODULE_SIG=y\n# CONFIG_MODULE_SIG_ALL is not set\n",
+            "CONFIG_MODULES=y\n",
+        ] {
+            let resolved = write(&d, "resolved", body);
+            verify_builder_invariants(&resolved).unwrap();
+        }
     }
 
     #[test]

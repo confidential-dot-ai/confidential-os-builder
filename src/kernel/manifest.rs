@@ -34,9 +34,8 @@ pub struct Fingerprint {
     #[serde(default)]
     pub kernel_extra_config_sha256: String,
     pub snapshot_config_sha256: String,
-    // Public module-signing certificate (kernel/module-signing.crt): it is
-    // built into the system keyring, so rotating it changes vmlinuz.
-    // `default` for pre-field manifests, same rebuild-on-empty logic as above.
+    // Caller's module-signing certificate: built into the system keyring,
+    // so rotating it changes vmlinuz. `default` for pre-field manifests.
     #[serde(default)]
     pub module_signing_cert_sha256: String,
     pub tools_tree_digest: String,

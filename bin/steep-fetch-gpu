@@ -79,13 +79,10 @@ grep -qx 'CONFIG_MODULES=y' "$KTREE/.config" || \
 # from the caller's --module-signing-cert), so both halves must be supplied
 # here: MODULE_SIG_CERT is that same certificate, MODULE_SIG_KEY(_PEM) its
 # private half. The caller owns both — this repo ships neither.
-: "${MODULE_SIG_CERT:=}"
-: "${MODULE_SIG_KEY:=}"
-: "${MODULE_SIG_KEY_PEM:=}"
-[[ -n "$MODULE_SIG_CERT" ]] || \
+[[ -n "${MODULE_SIG_CERT:-}" ]] || \
   die "MODULE_SIG_CERT unset — pass the same certificate given to confos as --module-signing-cert (docs/module-signing.md)."
 [[ -f "$MODULE_SIG_CERT" ]] || die "MODULE_SIG_CERT=$MODULE_SIG_CERT is not a file."
-if [[ -n "$MODULE_SIG_KEY_PEM" ]]; then
+if [[ -n "${MODULE_SIG_KEY_PEM:-}" ]]; then
   # The key only needs to exist for the sign-file calls below. Materialise it
   # 0600 and remove it on every exit path, including failures and signals —
   # output/ survives the build, so a leftover would sit on the runner disk.
@@ -93,7 +90,7 @@ if [[ -n "$MODULE_SIG_KEY_PEM" ]]; then
   mkdir -p "$WORK"
   ( umask 077; printf '%s\n' "$MODULE_SIG_KEY_PEM" > "$SIGN_KEY" )
   trap 'rm -f "$SIGN_KEY"' EXIT INT TERM
-elif [[ -n "$MODULE_SIG_KEY" ]]; then
+elif [[ -n "${MODULE_SIG_KEY:-}" ]]; then
   [[ -f "$MODULE_SIG_KEY" ]] || die "MODULE_SIG_KEY=$MODULE_SIG_KEY is not a file."
   SIGN_KEY="$MODULE_SIG_KEY"
 else
@@ -193,8 +190,6 @@ for ko in "${WANT_MODULES[@]}"; do
   src="$WORK/ogkm/kernel-open/$ko"
   [[ -f "$src" ]] || die "expected module $ko not produced at $src"
   # sha512 must match CONFIG_MODULE_SIG_SHA512 in kernel/gpu.config.
-  # sign-file takes key and cert; the PEM carries both, and the x509 is the
-  # committed certificate the kernel trusts.
   "$KTREE/scripts/sign-file" sha512 \
     "$SIGN_KEY" "$MODULE_SIG_CERT" "$src"
   cp "$src" "$MODDIR/$ko"
