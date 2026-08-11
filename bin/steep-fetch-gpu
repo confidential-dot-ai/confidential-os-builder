@@ -86,9 +86,13 @@ grep -qx 'CONFIG_MODULES=y' "$KTREE/.config" || \
   die "MODULE_SIG_CERT unset — pass the same certificate given to confos as --module-signing-cert (docs/module-signing.md)."
 [[ -f "$MODULE_SIG_CERT" ]] || die "MODULE_SIG_CERT=$MODULE_SIG_CERT is not a file."
 if [[ -n "$MODULE_SIG_KEY_PEM" ]]; then
+  # The key only needs to exist for the sign-file calls below. Materialise it
+  # 0600 and remove it on every exit path, including failures and signals —
+  # output/ survives the build, so a leftover would sit on the runner disk.
   SIGN_KEY="$WORK/module-signing-key.pem"
   mkdir -p "$WORK"
   ( umask 077; printf '%s\n' "$MODULE_SIG_KEY_PEM" > "$SIGN_KEY" )
+  trap 'rm -f "$SIGN_KEY"' EXIT INT TERM
 elif [[ -n "$MODULE_SIG_KEY" ]]; then
   [[ -f "$MODULE_SIG_KEY" ]] || die "MODULE_SIG_KEY=$MODULE_SIG_KEY is not a file."
   SIGN_KEY="$MODULE_SIG_KEY"
