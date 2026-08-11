@@ -45,8 +45,11 @@ spec:
       enabled: true
       type: wireguard
       # Fail closed while a peer key is unknown or either Cilium agent is
-      # restarting. The egress CIDR is the complete pod pool below; remote
-      # node identity lookup is required by Cilium's VXLAN tunnel mode.
+      # restarting. The egress CIDR is the complete pod pool below.
+      # allowRemoteNodeIdentities is required by Cilium's VXLAN tunnel mode
+      # and permits unencrypted pod→node-identity egress — a documented
+      # carve-out from fail-closed. Pod-to-pod stays covered. Only native
+      # routing with disjoint node/pod CIDRs would close it.
       strictMode:
         egress:
           enabled: true
