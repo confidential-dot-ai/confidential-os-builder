@@ -5,7 +5,7 @@
 # No disk => server, the single-node default.
 #
 # joindata is host-controlled: worst case is DoS; a malformed disk fails
-# this unit and every role-gated unit stays down (docs/C8S-MULTINODE.md).
+# this unit and every role-gated unit stays down.
 set -euo pipefail
 
 RUN=/run/confos

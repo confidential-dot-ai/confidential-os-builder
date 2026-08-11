@@ -1,6 +1,6 @@
 #cloud-config
 # c8s node image — node-as-CVM. Single-node server by default; a joindata
-# disk selects the role at runtime (see rke2-role.sh, docs/C8S-MULTINODE.md).
+# disk selects the role at runtime (see rke2-role.sh).
 #
 # This payload is BAKED INTO the verity root at build time (via
 # bin/build-c8s passing --cloud-init) and therefore measured into the
