@@ -7,6 +7,13 @@ use crate::tools;
 use crate::KernelArgs;
 
 const REQUIRED_FRAGMENT: &str = "kernel/required.config";
+/// Public module-signing certificate — no private key (#85). Staged into the
+/// kernel tree so `CONFIG_SYSTEM_TRUSTED_KEYS` can build it into the system
+/// keyring, which is what lets a module signed elsewhere load under
+/// lockdown-confidentiality. Committing only the certificate is what makes
+/// vmlinuz reproducible: the embedded trust anchor is a fixed repo input
+/// instead of a per-build GENKEY certificate.
+const MODULE_SIGNING_CERT: &str = "kernel/module-signing.crt";
 const HARDENING_FRAGMENT: &str = "kernel/hardening.config";
 /// Confidential VM overrides. Merged after `hardening.config` so the last
 /// fragment wins — `CONFIG_ACPI_TABLE_UPGRADE=y` here intentionally overrides
@@ -96,6 +103,21 @@ pub fn run(args: &KernelArgs) -> Result<()> {
             ));
         }
     }
+    // Stage the public signing certificate where CONFIG_SYSTEM_TRUSTED_KEYS
+    // (set in the gpu fragment) expects it. Inert for builds whose fragments
+    // leave that unset, so this runs unconditionally.
+    let cert = Path::new(MODULE_SIGNING_CERT);
+    if !cert.is_file() {
+        return Err(anyhow!(
+            "module signing certificate not found: {} — generate it with the \
+             recipe in that file's directory (docs/module-signing.md)",
+            cert.display()
+        ));
+    }
+    let certs_dir = kernel_src.join("certs");
+    fs_err::create_dir_all(&certs_dir)?;
+    fs_err::copy(cert, certs_dir.join("confos-module-signing.crt"))?;
+
     config::run_configure_phase(
         &tools_tree,
         &kernel_src,
@@ -210,6 +232,7 @@ pub fn compute_fingerprint(
         required_config_sha256: fetch::sha256_file(Path::new(REQUIRED_FRAGMENT))?,
         hardening_config_sha256: fetch::sha256_file(Path::new(HARDENING_FRAGMENT))?,
         confidential_config_sha256: fetch::sha256_file(Path::new(CONFIDENTIAL_FRAGMENT))?,
+        module_signing_cert_sha256: fetch::sha256_file(Path::new(MODULE_SIGNING_CERT))?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
         kernel_extra_config_sha256: match fragment {

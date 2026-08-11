@@ -75,8 +75,33 @@ grep -qx 'CONFIG_MODULES=y' "$KTREE/.config" || \
 # vmlinux.symvers. Accept either here.
 [[ -f "$KTREE/Module.symvers" || -f "$KTREE/vmlinux.symvers" ]] || \
   die "$KTREE/{Module,vmlinux}.symvers missing — kernel build incomplete."
-[[ -f "$KTREE/certs/signing_key.pem" && -f "$KTREE/certs/signing_key.x509" ]] || \
-  die "module signing key not found under $KTREE/certs — MODULE_SIG=y should have generated it."
+# Module signing: the kernel build embeds only the PUBLIC certificate
+# (kernel/module-signing.crt, via SYSTEM_TRUSTED_KEYS), so the private half
+# must be supplied here. MODULE_SIG_KEY names a PEM holding key+cert; point
+# it at a file, or export the PEM contents for CI (never on the command line,
+# where it would land in the process table).
+: "${MODULE_SIG_KEY:=}"
+: "${MODULE_SIG_KEY_PEM:=}"
+if [[ -n "$MODULE_SIG_KEY_PEM" ]]; then
+  SIGN_PEM="$WORK/module-signing-key.pem"
+  mkdir -p "$WORK"
+  ( umask 077; printf '%s\n' "$MODULE_SIG_KEY_PEM" > "$SIGN_PEM" )
+elif [[ -n "$MODULE_SIG_KEY" ]]; then
+  [[ -f "$MODULE_SIG_KEY" ]] || die "MODULE_SIG_KEY=$MODULE_SIG_KEY is not a file."
+  SIGN_PEM="$MODULE_SIG_KEY"
+else
+  die "no module signing key: set MODULE_SIG_KEY=<path to key+cert PEM> or MODULE_SIG_KEY_PEM=<contents>.
+The public half must already be committed as kernel/module-signing.crt — see docs/module-signing.md."
+fi
+# The signature must verify against the certificate the kernel trusts, or the
+# modules build fine and then fail to load at boot under MODULE_SIG_FORCE.
+# Compare public keys now rather than debugging a dead GPU node later.
+key_pub="$(openssl pkey -in "$SIGN_PEM" -pubout 2>/dev/null)" || \
+  die "could not read a private key from the supplied signing PEM."
+cert_pub="$(openssl x509 -in kernel/module-signing.crt -pubkey -noout 2>/dev/null)" || \
+  die "could not read kernel/module-signing.crt."
+[[ "$key_pub" == "$cert_pub" ]] || \
+  die "signing key does not match kernel/module-signing.crt — modules signed with it would be rejected at boot."
 [[ -x "$KTREE/scripts/sign-file" ]] || die "$KTREE/scripts/sign-file missing — cannot sign modules."
 [[ -d "$TOOLS_TREE" ]] || die "kernel-builder tools tree $TOOLS_TREE missing — run 'steep kernel' first."
 command -v systemd-nspawn >/dev/null || die "systemd-nspawn required (apt install systemd-container)."
@@ -155,19 +180,17 @@ sudo systemd-nspawn --quiet --register=no --keep-unit --ephemeral \
 sudo chown -R "$(id -u):$(id -g)" "$WORK/ogkm"
 
 # --- Sign + stage the modules -------------------------------------------------
-log "Signing modules with the kernel's ephemeral key and staging"
-# The signing key was generated root-owned 0600 by the in-nspawn kernel build,
-# so the unprivileged host-side sign-file can't read it. Chown it to this user
-# (it's an ephemeral throwaway key discarded with the build tree).
-sudo chown "$(id -u):$(id -g)" "$KTREE/certs/signing_key.pem" "$KTREE/certs/signing_key.x509"
+log "Signing modules with the supplied key (public half is built into the kernel)"
 MODDIR="$STAGE/usr/lib/modules/${KVER}/kernel/drivers/video"
 mkdir -p "$MODDIR"
 for ko in "${WANT_MODULES[@]}"; do
   src="$WORK/ogkm/kernel-open/$ko"
   [[ -f "$src" ]] || die "expected module $ko not produced at $src"
   # sha512 must match CONFIG_MODULE_SIG_SHA512 in kernel/gpu.config.
+  # sign-file takes key and cert; the PEM carries both, and the x509 is the
+  # committed certificate the kernel trusts.
   "$KTREE/scripts/sign-file" sha512 \
-    "$KTREE/certs/signing_key.pem" "$KTREE/certs/signing_key.x509" "$src"
+    "$SIGN_PEM" kernel/module-signing.crt "$src"
   cp "$src" "$MODDIR/$ko"
   echo "  staged (signed): $MODDIR/$ko"
 done

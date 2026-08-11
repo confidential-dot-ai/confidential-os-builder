@@ -1,0 +1,8 @@
+PLACEHOLDER — no certificate here yet.
+
+Generate the real keypair before building a GPU image: see
+docs/module-signing.md. Commit the .crt produced there over this file, and
+put the private key in the MODULE_SIG_KEY_PEM CI secret.
+
+This file is deliberately not a valid certificate so a build cannot silently
+produce an image whose modules nothing can verify.

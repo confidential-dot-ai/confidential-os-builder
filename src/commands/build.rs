@@ -499,6 +499,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                     .kernel_extra_config_sha256
                     .clone(),
                 snapshot_config_sha256: kernel.manifest.inputs.snapshot_config_sha256.clone(),
+                module_signing_cert_sha256: kernel
+                    .manifest
+                    .inputs
+                    .module_signing_cert_sha256
+                    .clone(),
             }),
             initrd: manifest::FileEntry {
                 path: manifest::basename_of(&initrd_path),
