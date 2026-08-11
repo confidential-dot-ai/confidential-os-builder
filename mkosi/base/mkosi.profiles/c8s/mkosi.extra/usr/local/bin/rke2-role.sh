@@ -10,13 +10,52 @@ set -euo pipefail
 
 RUN=/run/confos
 DEV=/dev/disk/by-label/joindata
+AGENT_TOKEN_FILE=$RUN/rke2-agent-token
+
+ensure_agent_token() {
+    local token tmp
+
+    if [[ -e "$AGENT_TOKEN_FILE" || -L "$AGENT_TOKEN_FILE" ]]; then
+        if [[ -L "$AGENT_TOKEN_FILE" || ! -f "$AGENT_TOKEN_FILE" ]]; then
+            echo "rke2-role: agent token path is not a regular file" >&2
+            return 1
+        fi
+        token=$(<"$AGENT_TOKEN_FILE")
+        if [[ ! "$token" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "rke2-role: existing agent token is malformed" >&2
+            return 1
+        fi
+        return
+    fi
+
+    tmp=$(mktemp "$RUN/.rke2-agent-token.XXXXXX")
+    if ! od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    token=$(<"$tmp")
+    if [[ ! "$token" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "rke2-role: generated agent token is malformed" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$AGENT_TOKEN_FILE"
+}
+
+set_server_role() {
+    # RKE2 otherwise aliases agent-token to its privileged server token.
+    # Generate a boot-local, agent-only secret before rke2-server starts.
+    ensure_agent_token
+    : > "$RUN/role-server"
+}
 
 # Unless the disk already enumerated, drain the udev queue so a late one
 # can't default an agent boot to server; a settle timeout fails the unit.
 [[ -e "$DEV" ]] || udevadm settle --timeout=10
 
 if [[ ! -e "$DEV" ]]; then
-    : > "$RUN/role-server"
+    set_server_role
     echo "rke2-role: no joindata disk, defaulting to server"
     exit 0
 fi
@@ -33,7 +72,7 @@ role=""
 IFS=$' \t\r\n' read -r role < "$MNT/role" || true
 case "$role" in
 server)
-    : > "$RUN/role-server"
+    set_server_role
     ;;
 agent)
     server_addr=""

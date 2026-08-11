@@ -5,7 +5,7 @@ ConditionPathExists=/run/confos/role-server
 # Retry indefinitely: a sealed image has no shell to restart a stopped
 # unit; a broken attestation stack is visible in the journal instead.
 StartLimitIntervalSec=0
-# No rke2-server ordering: the handler 503s until the node-token appears,
+# No rke2-server ordering: the handler 503s until the agent-token appears,
 # so agents can poll while the control plane initialises. No network-online
 # ordering: it only binds a wildcard socket.
 After=rke2-role.service attestation-api.service
@@ -15,10 +15,10 @@ Requires=attestation-api.service
 Type=simple
 ExecStart=/usr/local/bin/c8s join-release \
     --listen :8444 \
-    --token-path /var/lib/rancher/rke2/server/node-token
+    --token-path /var/lib/rancher/rke2/server/agent-token
 Restart=on-failure
 RestartSec=10
-# Only ever reads the node-token; a read-only FS view suffices.
+# Only ever reads the agent-token; a read-only FS view suffices.
 ProtectSystem=strict
 ProtectHome=yes
 NoNewPrivileges=yes
