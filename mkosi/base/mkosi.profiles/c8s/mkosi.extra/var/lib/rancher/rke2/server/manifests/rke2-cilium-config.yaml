@@ -44,6 +44,16 @@ spec:
     encryption:
       enabled: true
       type: wireguard
+      # Fail closed while a peer key is unknown or either Cilium agent is
+      # restarting. The egress CIDR is the complete pod pool below; remote
+      # node identity lookup is required by Cilium's VXLAN tunnel mode.
+      strictMode:
+        egress:
+          enabled: true
+          cidr: 10.52.0.0/16
+          allowRemoteNodeIdentities: true
+        ingress:
+          enabled: true
 
     # Direct apiserver address — single-node uses the host loopback.
     # RKE2's kube-apiserver binds on 0.0.0.0:6443 so 127.0.0.1 works.
