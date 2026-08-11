@@ -28,6 +28,7 @@ pub struct KernelArtifact {
 pub fn ensure_kernel(
     force: bool,
     fragment: Option<PathBuf>,
+    module_signing_cert: Option<PathBuf>,
     kernel_builder_package: Vec<String>,
 ) -> Result<KernelArtifact> {
     require_inputs_exist(fragment.as_deref())?;
@@ -36,6 +37,7 @@ pub fn ensure_kernel(
         force,
         output: PathBuf::from(KERNEL_OUT_DIR),
         kernel_config_fragment: fragment,
+        module_signing_cert,
         kernel_builder_package,
     })?;
 

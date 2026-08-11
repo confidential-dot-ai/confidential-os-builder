@@ -174,6 +174,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     let kernel = kernel_cache::ensure_kernel(
         false,
         args.kernel_config_fragment.clone(),
+        args.module_signing_cert.clone(),
         args.kernel_builder_package.clone(),
     )?;
     println!(

@@ -7,13 +7,11 @@ use crate::tools;
 use crate::KernelArgs;
 
 const REQUIRED_FRAGMENT: &str = "kernel/required.config";
-/// Public module-signing certificate — no private key (#85). Staged into the
-/// kernel tree so `CONFIG_SYSTEM_TRUSTED_KEYS` can build it into the system
-/// keyring, which is what lets a module signed elsewhere load under
-/// lockdown-confidentiality. Committing only the certificate is what makes
-/// vmlinuz reproducible: the embedded trust anchor is a fixed repo input
-/// instead of a per-build GENKEY certificate.
-const MODULE_SIGNING_CERT: &str = "kernel/module-signing.crt";
+/// Where `--module-signing-cert` is staged inside the kernel tree. Fragments
+/// that enable module signing point CONFIG_SYSTEM_TRUSTED_KEYS at this path,
+/// so it is part of the interface — changing it breaks every consumer's
+/// fragment. See docs/module-signing.md.
+const STAGED_SIGNING_CERT: &str = "confos-module-signing.crt";
 const HARDENING_FRAGMENT: &str = "kernel/hardening.config";
 /// Confidential VM overrides. Merged after `hardening.config` so the last
 /// fragment wins — `CONFIG_ACPI_TABLE_UPGRADE=y` here intentionally overrides
@@ -37,6 +35,8 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // Optional caller-supplied config fragment merged after required +
     // hardening. No flag = confos's bare required + hardening baseline.
     let fragment = args.kernel_config_fragment.as_deref();
+    // Caller-supplied module signing certificate; see STAGED_SIGNING_CERT.
+    let signing_cert = args.module_signing_cert.as_deref();
     let snapshot = Path::new(SNAPSHOT_PATH);
 
     fs_err::create_dir_all(&args.output)?;
@@ -53,7 +53,9 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     if !args.force && manifest_path.exists() && vmlinuz_path.exists() {
         if let Ok(cached) = km::read(&manifest_path) {
             let tools_tree_path = Path::new(TOOLS_TREE_IMAGE);
-            if let Ok(live) = compute_fingerprint(&version, tools_tree_path, fragment, snapshot) {
+            if let Ok(live) =
+                compute_fingerprint(&version, tools_tree_path, fragment, signing_cert, snapshot)
+            {
                 if cached.inputs == live {
                     let actual = fetch::sha256_file(&vmlinuz_path)?;
                     if actual.eq_ignore_ascii_case(&cached.outputs.vmlinuz_sha256) {
@@ -103,20 +105,41 @@ pub fn run(args: &KernelArgs) -> Result<()> {
             ));
         }
     }
-    // Stage the public signing certificate where CONFIG_SYSTEM_TRUSTED_KEYS
-    // (set in the gpu fragment) expects it. Inert for builds whose fragments
-    // leave that unset, so this runs unconditionally.
-    let cert = Path::new(MODULE_SIGNING_CERT);
-    if !cert.is_file() {
-        return Err(anyhow!(
-            "module signing certificate not found: {} — generate it with the \
-             recipe in that file's directory (docs/module-signing.md)",
-            cert.display()
-        ));
+    // Stage the caller's signing certificate where CONFIG_SYSTEM_TRUSTED_KEYS
+    // expects it (STAGED_SIGNING_CERT). The certificate is a consumer input,
+    // like the config fragment: whoever owns the image owns the trust anchor
+    // for the modules it loads, and this repo ships none.
+    match signing_cert {
+        Some(cert) => {
+            if !cert.is_file() {
+                return Err(anyhow!(
+                    "--module-signing-cert path not found: {}",
+                    cert.display()
+                ));
+            }
+            let certs_dir = kernel_src.join("certs");
+            fs_err::create_dir_all(&certs_dir)?;
+            fs_err::copy(cert, certs_dir.join(STAGED_SIGNING_CERT))?;
+        }
+        // A fragment that asks for a trusted keyring with no certificate to
+        // put in it fails deep in the build, at the .incbin in
+        // certs/system_certificates.S. Catch it here with a message that
+        // names the flag.
+        None => {
+            if let Some(f) = fragment {
+                let wants_cert = fs_err::read_to_string(f)?
+                    .lines()
+                    .any(|l| l.trim_start().starts_with("CONFIG_SYSTEM_TRUSTED_KEYS="));
+                if wants_cert {
+                    return Err(anyhow!(
+                        "{} sets CONFIG_SYSTEM_TRUSTED_KEYS but no --module-signing-cert was given \
+                         (docs/module-signing.md)",
+                        f.display()
+                    ));
+                }
+            }
+        }
     }
-    let certs_dir = kernel_src.join("certs");
-    fs_err::create_dir_all(&certs_dir)?;
-    fs_err::copy(cert, certs_dir.join("confos-module-signing.crt"))?;
 
     config::run_configure_phase(
         &tools_tree,
@@ -147,7 +170,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Phase 0e: finalize manifest
     println!("\n=== Step 0e: Writing manifest ===");
-    let inputs = compute_fingerprint(&version, &tools_tree, fragment, snapshot)?;
+    let inputs = compute_fingerprint(&version, &tools_tree, fragment, signing_cert, snapshot)?;
     let outputs = km::Outputs {
         vmlinuz_sha256: fetch::sha256_file(&vmlinuz_path)?,
     };
@@ -224,6 +247,7 @@ pub fn compute_fingerprint(
     version: &KernelVersion,
     _tools_tree: &Path,
     fragment: Option<&Path>,
+    signing_cert: Option<&Path>,
     snapshot: &Path,
 ) -> Result<km::Fingerprint> {
     Ok(km::Fingerprint {
@@ -232,7 +256,12 @@ pub fn compute_fingerprint(
         required_config_sha256: fetch::sha256_file(Path::new(REQUIRED_FRAGMENT))?,
         hardening_config_sha256: fetch::sha256_file(Path::new(HARDENING_FRAGMENT))?,
         confidential_config_sha256: fetch::sha256_file(Path::new(CONFIDENTIAL_FRAGMENT))?,
-        module_signing_cert_sha256: fetch::sha256_file(Path::new(MODULE_SIGNING_CERT))?,
+        // Empty when no certificate was passed, exactly as for the optional
+        // fragment above — keeps a no-signing build's fingerprint stable.
+        module_signing_cert_sha256: match signing_cert {
+            Some(c) => fetch::sha256_file(c)?,
+            None => String::new(),
+        },
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
         kernel_extra_config_sha256: match fragment {
