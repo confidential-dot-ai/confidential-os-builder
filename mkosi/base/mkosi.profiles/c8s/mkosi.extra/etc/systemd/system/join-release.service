@@ -9,10 +9,12 @@ StartLimitIntervalSec=0
 # so agents can poll while the control plane initialises. No network-online
 # ordering: it only binds a wildcard socket.
 After=rke2-role.service attestation-api.service
-Requires=attestation-api.service
+Requires=rke2-role.service attestation-api.service
 
 [Service]
 Type=simple
+# token-path is where rke2-server materialises the agent-only token whose
+# value 20-role.conf pins via RKE2_AGENT_TOKEN_FILE.
 ExecStart=/usr/local/bin/c8s join-release \
     --listen :8444 \
     --token-path /var/lib/rancher/rke2/server/agent-token

@@ -1,10 +1,13 @@
 [Unit]
 Description=RKE2 role dispatch from the joindata disk
-# Role-gated units order After= this unit and condition on the
-# /run/confos/role-* verdict it writes.
+# Role-gated units Requires= + After= this unit and condition on the
+# /run/confos/role-* verdict it writes. Requires= (not just After=) so a
+# failed dispatch fails them visibly instead of a silent condition-skip.
 
 [Service]
 Type=oneshot
+# Stays active (exited) so Requires= dependents bind to a live unit.
+RemainAfterExit=yes
 ExecStart=/usr/local/bin/rke2-role.sh
 
 [Install]

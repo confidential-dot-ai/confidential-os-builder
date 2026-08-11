@@ -9,7 +9,7 @@ StartLimitIntervalSec=0
 Upholds=rke2-agent.service
 After=network-online.target rke2-role.service attestation-api.service
 Wants=network-online.target
-Requires=attestation-api.service
+Requires=rke2-role.service attestation-api.service
 
 [Service]
 # oneshot so rke2-agent's After= waits for the join to complete.
