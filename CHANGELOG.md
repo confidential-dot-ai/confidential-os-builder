@@ -9,6 +9,15 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Fixed
+- **Changes measurements (once).** The guest kernel now builds bit-reproducibly:
+  `CONFIG_RANDSTRUCT_FULL` and `GCC_PLUGIN_LATENT_ENTROPY` (KSPP hardening)
+  seeded struct-layout randomization from `/dev/urandom` per build, so every
+  rebuild produced a different `vmlinuz` and rolled all downstream measurements
+  on any cache miss (#85). confos now stages a committed public seed
+  (`kernel/randstruct.seed`) into the tree, whose sha256 joins the kernel
+  fingerprint; the seed is public by design (it makes the layout predictable),
+  same posture as the module-signing certificate. The KSPP hardening is kept —
+  per-build randomization gave nothing to an image every guest runs identically
 - **Changes measurements (once).** Kernel builds are bit-reproducible: the
   module-signing trust anchor is now a committed public certificate
   (`kernel/module-signing.crt`), built into the system keyring, instead of a

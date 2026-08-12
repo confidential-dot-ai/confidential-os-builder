@@ -38,6 +38,10 @@ pub struct Fingerprint {
     // so rotating it changes vmlinuz. `default` for pre-field manifests.
     #[serde(default)]
     pub module_signing_cert_sha256: String,
+    // Committed RANDSTRUCT seed (#85): pins struct-layout randomization, so
+    // rotating it changes vmlinuz. `default` for pre-field manifests.
+    #[serde(default)]
+    pub randstruct_seed_sha256: String,
     pub tools_tree_digest: String,
 }
 
@@ -97,6 +101,7 @@ mod tests {
             kernel_extra_config_sha256: "f".repeat(64),
             snapshot_config_sha256: "d".repeat(64),
             module_signing_cert_sha256: "1".repeat(64),
+            randstruct_seed_sha256: "2".repeat(64),
             tools_tree_digest: "e".repeat(64),
         }
     }
