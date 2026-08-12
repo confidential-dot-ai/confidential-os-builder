@@ -1,0 +1,8 @@
+PLACEHOLDER — the default Confidential AI module signing certificate goes here.
+
+Generate the keypair per docs/module-signing.md, commit the resulting .crt over
+this file, and store key+cert in the org-level MODULE_SIG_KEY_PEM secret.
+
+This file is deliberately not a valid certificate: a build that reaches the
+kernel's certs/system_certificates.S with this staged would fail confusingly,
+so `confos kernel` rejects it up front instead.

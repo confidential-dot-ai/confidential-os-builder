@@ -12,6 +12,12 @@ const REQUIRED_FRAGMENT: &str = "kernel/required.config";
 /// so it is part of the interface — changing it breaks every consumer's
 /// fragment. See docs/module-signing.md.
 const STAGED_SIGNING_CERT: &str = "confos-module-signing.crt";
+/// Default module signing certificate, used when `--module-signing-cert` is
+/// omitted. Public by construction — it is built into the system keyring and
+/// therefore shipped inside every image — so committing it is what lets a
+/// fresh clone build a reproducible image with no setup. A consumer that
+/// wants its own signing key passes the flag instead.
+const DEFAULT_SIGNING_CERT: &str = "kernel/module-signing.crt";
 const HARDENING_FRAGMENT: &str = "kernel/hardening.config";
 /// Confidential VM overrides. Merged after `hardening.config` so the last
 /// fragment wins — `CONFIG_ACPI_TABLE_UPGRADE=y` here intentionally overrides
@@ -35,8 +41,12 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // Optional caller-supplied config fragment merged after required +
     // hardening. No flag = confos's bare required + hardening baseline.
     let fragment = args.kernel_config_fragment.as_deref();
-    // Caller-supplied module signing certificate; see STAGED_SIGNING_CERT.
-    let signing_cert = args.module_signing_cert.as_deref();
+    // Caller's certificate, else the committed default (see
+    // DEFAULT_SIGNING_CERT). Always resolves to something, so every build
+    // that enables module signing has a trust anchor without the caller
+    // arranging one.
+    let default_cert = PathBuf::from(DEFAULT_SIGNING_CERT);
+    let signing_cert = args.module_signing_cert.as_deref().unwrap_or(&default_cert);
     let snapshot = Path::new(SNAPSHOT_PATH);
 
     fs_err::create_dir_all(&args.output)?;
@@ -109,33 +119,29 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // expects it (STAGED_SIGNING_CERT). The certificate is a consumer input,
     // like the config fragment: whoever owns the image owns the trust anchor
     // for the modules it loads, and this repo ships none.
-    if let Some(cert) = signing_cert {
-        if !cert.is_file() {
-            return Err(anyhow!(
-                "--module-signing-cert path not found: {}",
-                cert.display()
-            ));
-        }
-        let certs_dir = kernel_src.join("certs");
-        fs_err::create_dir_all(&certs_dir)?;
-        // kernel_src is a freshly extracted tarball (wiped above), so a plain
-        // copy is enough — no staging guard as for --profile-dir.
-        fs_err::copy(cert, certs_dir.join(STAGED_SIGNING_CERT))?;
-    } else if let Some(f) = fragment {
-        // A fragment asking for a trusted keyring with no certificate to put
-        // in it fails deep in the build, at the .incbin in
-        // certs/system_certificates.S. Name the flag here instead.
-        if fs_err::read_to_string(f)?
-            .lines()
-            .any(|l| l.starts_with("CONFIG_SYSTEM_TRUSTED_KEYS="))
-        {
-            return Err(anyhow!(
-                "{} sets CONFIG_SYSTEM_TRUSTED_KEYS but no --module-signing-cert was given \
-                 (docs/module-signing.md)",
-                f.display()
-            ));
-        }
+    if !signing_cert.is_file() {
+        return Err(anyhow!(
+            "module signing certificate not found: {} — pass --module-signing-cert, \
+             or generate the default per docs/module-signing.md",
+            signing_cert.display()
+        ));
     }
+    // A placeholder (or any non-PEM) would otherwise fail deep in the build at
+    // the .incbin in certs/system_certificates.S; say so here instead.
+    if !fs_err::read_to_string(signing_cert)
+        .unwrap_or_default()
+        .contains("-----BEGIN CERTIFICATE-----")
+    {
+        return Err(anyhow!(
+            "{} is not a PEM certificate (docs/module-signing.md)",
+            signing_cert.display()
+        ));
+    }
+    let certs_dir = kernel_src.join("certs");
+    fs_err::create_dir_all(&certs_dir)?;
+    // kernel_src is a freshly extracted tarball (wiped above), so a plain copy
+    // is enough — no staging guard as for --profile-dir.
+    fs_err::copy(signing_cert, certs_dir.join(STAGED_SIGNING_CERT))?;
 
     config::run_configure_phase(
         &tools_tree,
@@ -243,7 +249,7 @@ pub fn compute_fingerprint(
     version: &KernelVersion,
     _tools_tree: &Path,
     fragment: Option<&Path>,
-    signing_cert: Option<&Path>,
+    signing_cert: &Path,
     snapshot: &Path,
 ) -> Result<km::Fingerprint> {
     Ok(km::Fingerprint {
@@ -252,10 +258,7 @@ pub fn compute_fingerprint(
         required_config_sha256: fetch::sha256_file(Path::new(REQUIRED_FRAGMENT))?,
         hardening_config_sha256: fetch::sha256_file(Path::new(HARDENING_FRAGMENT))?,
         confidential_config_sha256: fetch::sha256_file(Path::new(CONFIDENTIAL_FRAGMENT))?,
-        module_signing_cert_sha256: match signing_cert {
-            Some(c) => fetch::sha256_file(c)?,
-            None => String::new(),
-        },
+        module_signing_cert_sha256: fetch::sha256_file(signing_cert)?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
         kernel_extra_config_sha256: match fragment {
