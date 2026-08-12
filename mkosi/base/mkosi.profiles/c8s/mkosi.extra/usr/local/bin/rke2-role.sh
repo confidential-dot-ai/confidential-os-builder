@@ -7,7 +7,8 @@
 # unit and every role-gated unit stays down. Disk text is never sourced or
 # evaluated; it is validated field by field and rejected on anything unexpected.
 #
-# joindata contract (v0), all files a single <=256-byte ASCII line:
+# joindata contract (v0), all files a single <=256-byte ASCII line (edge
+# whitespace tolerated and trimmed; interior whitespace rejected):
 #   role              server|agent            (both roles)
 #   node-ip           routable IPv4           (both roles)
 #   node-external-ip  routable IPv4, optional (both roles)
@@ -27,13 +28,14 @@ fail() { echo "rke2-role: $1" >&2; exit 1; }
 # missing/symlink/non-regular file, NUL bytes, an over-long file, more than
 # one line, and any interior whitespace (edges are trimmed below).
 read_field() {
-    local path="$MNT/$1" line
+    local path="$MNT/$1" line size
     [[ -f "$path" && ! -L "$path" ]] || fail "$1: missing or not a regular file"
+    size=$(stat -c%s "$path")
     # Bound the read before slurping: a huge host file must not fill RAM.
-    (( $(stat -c%s "$path") <= 257 )) || fail "$1: larger than one 256-byte line"
+    (( size <= 257 )) || fail "$1: larger than one 256-byte line"
     # tr, not grep: a NUL can't be a grep pattern argument, and busybox grep
     # lacks -P. If stripping NULs shortens the file, one was present.
-    (( $(tr -d '\0' < "$path" | wc -c) == $(stat -c%s "$path") )) || fail "$1: contains NUL"
+    (( $(tr -d '\0' < "$path" | wc -c) == size )) || fail "$1: contains NUL"
     # A well-formed field is one line plus an optional trailing newline, so at
     # most one newline total; anything more is a multi-line file.
     (( $(tr -cd '\n' < "$path" | wc -c) <= 1 )) || fail "$1: more than one line"
@@ -96,9 +98,10 @@ set_server_role() {
 
     printf '%s' "$server_token" | write_atomic "$RUN/rke2-server-token" 0600
     printf '%s' "$agent_token" | write_atomic "$RUN/rke2-agent-token" 0600
+    # No agent-token-file here: rke2-server.service.d/20-role.conf wires it via
+    # RKE2_AGENT_TOKEN_FILE for every server boot, disk or legacy alike.
     {
         printf 'token-file: %s\n' "$RUN/rke2-server-token"
-        printf 'agent-token-file: %s\n' "$RUN/rke2-agent-token"
         emit_node_addr_lines
     } | write_atomic "$FRAG" 0600
     : > "$RUN/role-server"
@@ -124,15 +127,13 @@ set_agent_role() {
 
 # No-disk fallback: legacy single-node server. RKE2 otherwise aliases
 # agent-token to its privileged server token, so generate a boot-local
-# agent-only secret before rke2-server starts.
+# agent-only secret before rke2-server starts. rke2-server.service.d wires
+# it via RKE2_AGENT_TOKEN_FILE, same as the disk-server path.
 set_legacy_server_role() {
-    local tmp token
-    tmp=$(mktemp "$RUN/.rke2-agent-token.XXXXXX")
-    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$tmp" || { rm -f "$tmp"; fail "token generation failed"; }
-    token=$(<"$tmp")
-    is_hex_token "$token" || { rm -f "$tmp"; fail "generated agent token malformed"; }
-    chmod 0600 "$tmp"
-    mv -f "$tmp" "$RUN/rke2-agent-token"
+    local token
+    token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n') || fail "token generation failed"
+    is_hex_token "$token" || fail "generated agent token malformed"
+    printf '%s' "$token" | write_atomic "$RUN/rke2-agent-token" 0600
     : > "$RUN/role-server"
 }
 
