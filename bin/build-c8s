@@ -63,13 +63,11 @@ if [ "${C8S_DEV:-0}" = 1 ]; then
 fi
 KB_PKGS=dwarves,python3,pkg-config,zlib1g-dev
 
-# The c8s fragments enable module signing, so the kernel needs the signer's
-# certificate and steep-fetch-gpu needs the matching key. Both are caller
-# inputs; MODULE_SIG_CERT must name the same file (docs/module-signing.md).
-[[ -n "${MODULE_SIG_CERT:-}" ]] || {
-    echo "build-c8s: MODULE_SIG_CERT unset — the c8s fragments require a module signing certificate (docs/module-signing.md)" >&2
-    exit 1
-}
+# Module signing: confos's committed default certificate unless the caller
+# overrides it. steep-fetch-gpu needs the matching private key — see
+# docs/module-signing.md.
+: "${MODULE_SIG_CERT:=kernel/module-signing.crt}"
+export MODULE_SIG_CERT
 
 bin/confos kernel \
     --kernel-config-fragment "$FRAGMENT" \
