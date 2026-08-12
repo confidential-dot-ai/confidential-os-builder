@@ -13,7 +13,7 @@ StartLimitBurst=5
 # startpre below), rather than racing a half-initialised control plane.
 After=network-online.target rke2-role.service rke2-server.service attestation-api.service
 Wants=network-online.target
-Requires=attestation-api.service
+Requires=rke2-role.service attestation-api.service
 # Only run on operator boots. A VM launched without --operator-key has no
 # opkeydata disk; the condition makes systemd SKIP the unit (not fail it), so
 # there's no restart-loop on non-operator nodes. The launcher attaches the
