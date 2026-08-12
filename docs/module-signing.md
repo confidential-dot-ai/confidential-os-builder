@@ -14,13 +14,13 @@ lockdown plumbing.
 | | Where | Notes |
 |---|---|---|
 | Public certificate | `kernel/module-signing.crt`, committed | The default. Built into the system keyring and shipped inside every image, so it is public by construction. Measured — its sha256 is a kernel fingerprint input, so replacing it changes the image measurement. |
-| Private key | `MODULE_SIG_KEY_PEM` (contents) or `MODULE_SIG_KEY` (path) in `bin/steep-fetch-gpu`'s environment | Signs the out-of-tree modules via `scripts/sign-file`. Never committed; lives in the org-level Actions secret. |
+| Private key | `MODULE_SIG_KEY_PEM` (contents) or `MODULE_SIG_KEY` (path) in `bin/confos-fetch-gpu`'s environment | Signs the out-of-tree modules via `scripts/sign-file`. Never committed; lives in the org-level Actions secret. |
 
 A fresh clone builds a reproducible image with no setup: the default
 certificate is already here, and only *signing* new modules needs the key.
 
 To sign with your own key instead, pass `confos build --module-signing-cert
-<path>` and set `MODULE_SIG_CERT` to the same file for `steep-fetch-gpu`.
+<path>` and set `MODULE_SIG_CERT` to the same file for `confos-fetch-gpu`.
 Consumers that own their image's trust anchor do this — see the c8s repo's
 `node-guest-image/`.
 
@@ -29,7 +29,7 @@ in-tree modules to sign, and enabling it makes the kernel build generate its
 own key, which is what broke reproducibility in #85. `confos` enforces this
 against the resolved `.config` — it is not just a convention.
 
-`steep-fetch-gpu` refuses to sign if the key's public half does not match the
+`confos-fetch-gpu` refuses to sign if the key's public half does not match the
 certificate, since that mismatch would otherwise appear as a node booting
 without its GPU driver.
 

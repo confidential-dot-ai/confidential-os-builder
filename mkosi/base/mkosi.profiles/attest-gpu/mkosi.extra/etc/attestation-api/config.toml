@@ -1,4 +1,4 @@
-# attestation-api config baked by `steep build --profile attest-gpu`.
+# attestation-api config baked by `confos build --profile attest-gpu`.
 # Identical in shape to the `attest` profile's config — there is NO GPU flag
 # here. GPU evidence is requested per-call: POST /attest with
 # {"nvidia_gpu": true, "report_data": "<>=16-byte base64 nonce>"}. The one

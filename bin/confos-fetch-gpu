@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# steep-fetch-gpu — build + sign the NVIDIA kernel modules and stage the
+# confos-fetch-gpu — build + sign the NVIDIA kernel modules and stage the
 # GPU userspace into mkosi.local/ for the `gpu` profile.
 #
-# Runs on the HOST, AFTER `steep kernel --kernel-config-fragment kernel/gpu.config`
-# and BEFORE `steep build ... --profile gpu`. The `build-gpu` Make target
+# Runs on the HOST, AFTER `confos kernel --kernel-config-fragment kernel/gpu.config`
+# and BEFORE `confos build ... --profile gpu`. The `build-gpu` Make target
 # chains all three. See docs/GPU-IMAGE-PLAN.md ("Build sequencing").
 #
 # Why a separate host-side step and not a mkosi.sync hook (like `attest`):
 # the NVIDIA modules must be compiled against the *built* kernel tree with the
-# *same toolchain* steep used to build the kernel — that tree
+# *same toolchain* confos used to build the kernel — that tree
 # (output/kernel/build/linux-<ver>, with Module.symvers + certs/signing_key.*)
 # and that toolchain (the kernel-builder mkosi tools tree) only exist here,
 # not inside the base-image mkosi sandbox. Downloads are cached under
 # output/gpu/cache so repeat builds don't re-pull the 400 MB driver.
 #
 # Everything this stages lands in mkosi/base/mkosi.local/mkosi.extra/, which
-# steep's build.rs deliberately does NOT wipe at build start, so it survives
+# confos's build.rs deliberately does NOT wipe at build start, so it survives
 # into the mkosi run and gets copied into the dm-verity root (measured).
 
 set -euo pipefail
@@ -56,7 +56,7 @@ readonly WORK="output/gpu/work"
 readonly WANT_MODULES=(nvidia.ko nvidia-uvm.ko)
 
 log() { printf '\n=== %s ===\n' "$*"; }
-die() { printf 'steep-fetch-gpu: %s\n' "$*" >&2; exit 1; }
+die() { printf 'confos-fetch-gpu: %s\n' "$*" >&2; exit 1; }
 
 # --- Preconditions ------------------------------------------------------------
 [[ "$OGKM_SHA256" == FILL_* || "$RUN_SHA256" == FILL_* ]] && \
@@ -66,7 +66,7 @@ KVER="$(sed -n 's/^LINUX_VERSION=//p' kernel/version)"
 [[ -n "$KVER" ]] || die "could not read LINUX_VERSION from kernel/version"
 readonly KTREE="${KERNEL_OUT}/build/linux-${KVER}"
 
-[[ -d "$KTREE" ]] || die "kernel tree $KTREE missing — run 'steep kernel --kernel-config-fragment kernel/gpu.config' first."
+[[ -d "$KTREE" ]] || die "kernel tree $KTREE missing — run 'confos kernel --kernel-config-fragment kernel/gpu.config' first."
 grep -qx 'CONFIG_MODULES=y' "$KTREE/.config" || \
   die "kernel at $KTREE was built WITHOUT CONFIG_MODULES=y — rebuild with --kernel-config-fragment kernel/gpu.config."
 # `make bzImage` emits vmlinux.symvers; Module.symvers is only created by
@@ -106,7 +106,7 @@ cert_pub="$(openssl x509 -in "$MODULE_SIG_CERT" -pubkey -noout 2>/dev/null)" || 
 [[ "$key_pub" == "$cert_pub" ]] || \
   die "signing key does not match $MODULE_SIG_CERT — modules signed with it would be rejected at boot."
 [[ -x "$KTREE/scripts/sign-file" ]] || die "$KTREE/scripts/sign-file missing — cannot sign modules."
-[[ -d "$TOOLS_TREE" ]] || die "kernel-builder tools tree $TOOLS_TREE missing — run 'steep kernel' first."
+[[ -d "$TOOLS_TREE" ]] || die "kernel-builder tools tree $TOOLS_TREE missing — run 'confos kernel' first."
 command -v systemd-nspawn >/dev/null || die "systemd-nspawn required (apt install systemd-container)."
 command -v depmod >/dev/null || die "depmod required (apt install kmod)."
 
@@ -137,7 +137,7 @@ rm -rf "$WORK/ogkm" 2>/dev/null || sudo rm -rf "$WORK/ogkm"
 mkdir -p "$WORK/ogkm"
 tar -xzf "$CACHE/ogkm-${NV_VERSION}.tar.gz" -C "$WORK/ogkm" --strip-components=1
 
-# Build inside the SAME nspawn tools tree steep compiled the kernel in, so the
+# Build inside the SAME nspawn tools tree confos compiled the kernel in, so the
 # module objects are ABI-compatible (gcc/binutils versions match). Pin the
 # reproducibility env exactly as src/kernel/compile.rs does.
 KTREE_ABS="$(cd "$KTREE" && pwd)"
@@ -153,8 +153,8 @@ sudo systemd-nspawn --quiet --register=no --keep-unit --ephemeral \
   --bind "${OGKM_ABS}:/nv" \
   --setenv SOURCE_DATE_EPOCH=0 \
   --setenv KBUILD_BUILD_TIMESTAMP=@0 \
-  --setenv KBUILD_BUILD_USER=steep \
-  --setenv KBUILD_BUILD_HOST=steep \
+  --setenv KBUILD_BUILD_USER=confos \
+  --setenv KBUILD_BUILD_HOST=confos \
   /bin/bash -c "set -eux
     # OOT module builds read Module.symvers; \`make bzImage\` only left
     # vmlinux.symvers. MODVERSIONS is off, so derive the former from the latter.
@@ -201,7 +201,7 @@ done
 # (offline) using the kernel tree's own module ordering.
 log "Running depmod over the staged module tree"
 # depmod -b searches <basedir>/lib/modules, but we stage under usr/lib/modules
-# (matching where steep's build.rs puts vmlinuz). Bridge with a temporary
+# (matching where confos's build.rs puts vmlinuz). Bridge with a temporary
 # lib -> usr/lib symlink (which mirrors the image's own usrmerge), run depmod
 # so modules.dep lands in usr/lib/modules/<ver>, then drop the symlink so we
 # don't ship a /lib symlink via mkosi.extra.
@@ -293,4 +293,4 @@ for b in nvidia-ctk nvidia-cdi-hook; do
 done
 rm -rf "$WORK/tk"
 
-log "steep-fetch-gpu done — modules + userspace staged under $STAGE"
+log "confos-fetch-gpu done — modules + userspace staged under $STAGE"

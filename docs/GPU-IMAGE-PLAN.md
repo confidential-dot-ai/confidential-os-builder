@@ -1,12 +1,12 @@
 # GPU base image plan (`gpu` profile)
 
 Status: **in progress** on `feat/gpu-profile`. This document is the design of
-record for baking an attestable NVIDIA GPU confidential-VM image with steep.
+record for baking an attestable NVIDIA GPU confidential-VM image with confos.
 
 ## Goal
 
 One published, measured, attestable TDX GPU base image —
-`ghcr.io/confidential-dot-ai/steep/gpu-base` — that:
+`ghcr.io/confidential-dot-ai/confidential-os-builder/gpu-base` — that:
 
 - confai/KubeVirt imports via CDI (the same `--cdi` single-layer path the
   CPU-only `tdx-cpu-image-cdi` already uses),
@@ -15,9 +15,9 @@ One published, measured, attestable TDX GPU base image —
   (no in-guest driver install, no DKMS, no network),
 - serves nonce-bound TDX **and** per-GPU SPDM attestation evidence on `:8400`.
 
-The whole thing rides steep's existing extension points — a kernel config
+The whole thing rides confos's existing extension points — a kernel config
 fragment plus mkosi profiles — with the single genuinely new piece being an
-out-of-tree kernel-module build step (`bin/steep-fetch-gpu`).
+out-of-tree kernel-module build step (`bin/confos-fetch-gpu`).
 
 ## Why baked, not runtime-installed
 
@@ -40,10 +40,10 @@ aggregate time.
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| D1 | Ship **`kernel/gpu.config`** as a steep in-repo fragment, wired through the `build-gpu` Make target via `--kernel-config-fragment`. | GPU is a first-class steep product; one kernel lineage, one auditable fragment diff. |
+| D1 | Ship **`kernel/gpu.config`** as a confos in-repo fragment, wired through the `build-gpu` Make target via `--kernel-config-fragment`. | GPU is a first-class confos product; one kernel lineage, one auditable fragment diff. |
 | D2 | **Bump the guest kernel 6.12.94 → 6.16.12** (already validated on `feat/kernel-6.16-tdx-rtmr`, folded into this branch). | 6.16 exposes the TDX RTMR-extend sysfs (`/sys/.../tdx_guest/measurements/rtmrN`) for runtime per-workload measurement, and the working B200 CC guest runs 6.17-generic with driver 595.71.05 — so 595 builds cleanly at ≤6.17. 6.16.12 is comfortably inside that window; going to 6.18 risks NVIDIA-595 driver-build breakage for no benefit a regularly-rebuilt base image needs. |
-| D3 | `gpu.config` = **`CONFIG_MODULES=y` + `MODULE_SIG*`** and nothing more (the symbols NVIDIA needs — `MMU_NOTIFIER`, `X86_PAT`, `MTRR`, `FW_LOADER`, `DMA_SHARED_BUFFER` — already resolve `=y`). steep's `mod2yesconfig` keeps every in-tree driver built-in, so the **only** loadable modules in the system are the two signed NVIDIA ones. | Minimal, auditable hardening delta; monolithic posture preserved. |
-| D4 | **Integrity = dm-verity, not a signing PKI.** Modules are signed only because lockdown-confidentiality refuses to load unsigned modules. The kernel builds in a **public certificate** — confos's committed default, or the caller's via `--module-signing-cert` — through `SYSTEM_TRUSTED_KEYS`; the **private key never enters this repo or the kernel build** — `MODULE_SIG_ALL` is off (nothing in-tree needs signing after `mod2yesconfig`), and `steep-fetch-gpu` signs the two NVIDIA modules with a key supplied at image-build time from a CI secret. *(Amended per #85: originally a per-build auto-generated key, whose certificate landed in vmlinux and rolled every measurement on a kernel cache miss.)* | The module bytes are already measured by dm-verity; the signature is a lockdown formality, not the trust root. Splitting cert from key gets bit-reproducible kernels (the trust anchor is a fixed repo input) with no private key at rest in git; shipping a default certificate keeps public images reproducible from a fresh clone. Rotating the certificate is a measurement change; see docs/module-signing.md. |
+| D3 | `gpu.config` = **`CONFIG_MODULES=y` + `MODULE_SIG*`** and nothing more (the symbols NVIDIA needs — `MMU_NOTIFIER`, `X86_PAT`, `MTRR`, `FW_LOADER`, `DMA_SHARED_BUFFER` — already resolve `=y`). confos's `mod2yesconfig` keeps every in-tree driver built-in, so the **only** loadable modules in the system are the two signed NVIDIA ones. | Minimal, auditable hardening delta; monolithic posture preserved. |
+| D4 | **Integrity = dm-verity, not a signing PKI.** Modules are signed only because lockdown-confidentiality refuses to load unsigned modules. The kernel builds in a **public certificate** — confos's committed default, or the caller's via `--module-signing-cert` — through `SYSTEM_TRUSTED_KEYS`; the **private key never enters this repo or the kernel build** — `MODULE_SIG_ALL` is off (nothing in-tree needs signing after `mod2yesconfig`), and `confos-fetch-gpu` signs the two NVIDIA modules with a key supplied at image-build time from a CI secret. *(Amended per #85: originally a per-build auto-generated key, whose certificate landed in vmlinux and rolled every measurement on a kernel cache miss.)* | The module bytes are already measured by dm-verity; the signature is a lockdown formality, not the trust root. Splitting cert from key gets bit-reproducible kernels (the trust anchor is a fixed repo input) with no private key at rest in git; shipping a default certificate keeps public images reproducible from a fresh clone. Rotating the certificate is a measurement change; see docs/module-signing.md. |
 | D5 | After the driver loads at boot, latch **`kernel.modules_disabled=1`**. | Restores the no-further-modules posture once NVIDIA is in. |
 | D6 | Kernel modules: **open-gpu-kernel-modules `595.71.05`** (tag verified, commit `095de56d`), built out-of-tree, **only `nvidia.ko` + `nvidia-uvm.ko`**. | Open modules are mandatory for Blackwell CC; drm/modeset/peermem excluded — headless compute needs neither and it keeps `CONFIG_DRM` off. |
 | D7 | Userspace from the **`.run` installer** (`NVIDIA-Linux-x86_64-595.71.05.run`, 403 MB, verified live, pinned by sha256), extracted and cherry-picked: `libnvidia-ml`, `nvidia-smi`, `nvidia-persistenced`, `nvidia-modprobe`, and the GSP firmware blobs → `/lib/firmware/nvidia/595.71.05/`. | Exact version-lock to the modules; sidesteps the distro mismatch (base is Ubuntu resolute/26.04; NVIDIA's apt repo targets ubuntu2404). |
@@ -55,7 +55,7 @@ aggregate time.
 ```
 kernel/gpu.config                          MODULES + MODULE_SIG fragment
 kernel/version                             6.16.12 (folded in from feat/kernel-6.16-tdx-rtmr)
-bin/steep-fetch-gpu                        fetch(pinned sha)→build in kernel-builder nspawn→sign→depmod→stage
+bin/confos-fetch-gpu                        fetch(pinned sha)→build in kernel-builder nspawn→sign→depmod→stage
 mkosi/base/mkosi.profiles/gpu/
   mkosi.conf                               apt: kmod, pciutils; doc header
   mkosi.extra/etc/modprobe.d/nvidia-flr-first.conf                  (blocks udev autoprobe until FLR)
@@ -73,24 +73,24 @@ docs/GPU-IMAGE-PLAN.md                     this file
 Build sequencing (the one non-obvious bit): NVIDIA modules must compile against
 the *built* kernel tree, which persists at `output/kernel/build/linux-6.16.12/`
 (with `Module.symvers` + `certs/signing_key.*`). So `build-gpu` runs
-`steep kernel --kernel-config-fragment kernel/gpu.config` first, then
-`bin/steep-fetch-gpu` (builds/signs/stages modules + userspace into
-`mkosi.local/mkosi.extra/`), then `steep build … --kernel-config-fragment
-kernel/gpu.config --profile gpu`. That final `steep build` hits the kernel
+`confos kernel --kernel-config-fragment kernel/gpu.config` first, then
+`bin/confos-fetch-gpu` (builds/signs/stages modules + userspace into
+`mkosi.local/mkosi.extra/`), then `confos build … --kernel-config-fragment
+kernel/gpu.config --profile gpu`. That final `confos build` hits the kernel
 **cache** (same fragment fingerprint) so it does not rebuild and clobber the
 tree, and `mkosi.local/` survives into the mkosi run (build.rs deliberately
 does not wipe it).
 
 ## Stages & exit criteria
 
-- **Stage 0 — baseline.** steep builds on b200-dev-1 (needs `bin/setup`:
+- **Stage 0 — baseline.** confos builds on b200-dev-1 (needs `bin/setup`:
   mkosi/oras/iasl — the only host mutation in the plan, all benign apt/uv
-  packages). Exit: clean `steep build --platform tdx` of the plain base.
+  packages). Exit: clean `confos build --platform tdx` of the plain base.
 - **Stage 1a — kernel bump.** ✅ config folded in (6.16.12). Validation: build
   the **plain base** on 6.16.12 and boot it end-to-end *before* any GPU changes,
   so kernel-bump breakage and NVIDIA-symbol breakage never get conflated.
   Expected: all measured values (MRTD/RTMR references) change.
-- **Stage 1 — gpu.config.** Fragment resolves; snapshot diff reviewed; steep's
+- **Stage 1 — gpu.config.** Fragment resolves; snapshot diff reviewed; confos's
   fragment-verification guardrail confirms no requested symbol silently dropped.
 - **Stage 2 — modules.** `nvidia.ko` + `nvidia-uvm.ko` build + sign against the
   tree in the kernel-builder nspawn (same toolchain → no compiler mismatch).
@@ -105,7 +105,7 @@ does not wipe it).
   serve evidence.)
 - **Stage 5 — scale + publish.** 8-GPU and 4×2 partition boots; `h2d-multithread`
   sanity vs. checkpoint baselines; settle the in-guest-FM question empirically;
-  `steep push --cdi` → GHCR; CI workflow; checkpoint 030; PRs on both repos.
+  `confos push --cdi` → GHCR; CI workflow; checkpoint 030; PRs on both repos.
 
 ## Risks / open questions
 
@@ -124,10 +124,10 @@ does not wipe it).
 6. **Stretch (perf):** fold the SWIOTLB max-segment 256K→2M rebuild (HANDOVER
    open question #5) into `gpu.config` — our custom kernel is exactly where that
    fix belongs.
-7. **Snapshot lockfile churn:** steep hardcodes a single
+7. **Snapshot lockfile churn:** confos hardcodes a single
    `kernel/config-x86_64.snapshot`, but we now have two kernel lineages (base
    and modules-enabled gpu). `make build-gpu` rewrites the snapshot to the gpu
-   config — expected per steep's documented behavior (`git checkout` it if the
+   config — expected per confos's documented behavior (`git checkout` it if the
    gpu build was a one-off; CI never commits it). If this becomes annoying, a
    small Rust change to key the snapshot path on the fragment name would give
    each lineage its own lockfile. Not doing that yet.

@@ -46,7 +46,7 @@ found`. It is **silent at 1 GPU and racy at 8** (the old modules-load ordering
 recovered 5/8 and left 3 stuck) — which is why it slipped past single-GPU
 validation. Enforced in `etc/modprobe.d/nvidia-flr-first.conf` +
 `usr/local/bin/nvidia-gpu-flr` + `nvidia-persistenced.service` +
-`bin/steep-fetch-gpu` (stages libnvidia-cfg).
+`bin/confos-fetch-gpu` (stages libnvidia-cfg).
 
 The host-side FLR that vfio does at VM-open does NOT satisfy this by the time
 the guest driver attaches — the reset must happen *inside* the guest.
@@ -54,7 +54,7 @@ the guest driver attaches — the reset must happen *inside* the guest.
 ## 2. SPDM needs the kernel crypto API (LKCA)
 
 The driver's SPDM stack links the Linux Kernel Crypto API (ECC/ECDH/ECDSA/KPP).
-steep's minimal kernel lacked them, so the driver built libspdm against *stubs*
+confos's minimal kernel lacked them, so the driver built libspdm against *stubs*
 and CC init failed: `libspdm expects LKCA but found stubs!`. Fixed by
 `CONFIG_CRYPTO_ECC/ECDH/ECDSA/KPP=y` in `kernel/gpu.config`. Only visible with a
 real GPU (the GPU-less boot never reaches SPDM).
@@ -85,7 +85,7 @@ Also: guest RAM must avoid the low PCI window — `-m 32G` collides at exactly
 
 ## 4. Quote path — vsock (fast), not ConfigFS-TSM (slow)
 
-steep's kernel dropped vsock for hardening; ConfigFS-TSM
+confos's kernel dropped vsock for hardening; ConfigFS-TSM
 (`/sys/kernel/config/tsm/report`) works but is ~1 s+/quote. Re-enabled
 `CONFIG_VSOCKETS + CONFIG_VIRTIO_VSOCKETS` (`kernel/gpu.config`) and set
 `tdx_quote_method = "vsock"`: the attestation service reaches the host QGS at
@@ -144,5 +144,5 @@ teardown. Aperture is NOT the limiter at 8 — KubeVirt's virt-launcher maps 8×
 - [x] vsock — `autoattachVSOCK` (confai) + `VSOCK` gate (KubeVirt CR).
 - [x] 8-GPU FLR ordering + session retention — fixed (FLR-before-modprobe + wait-for-all-bound); all 8 attest.
 - [ ] Publish `attestation-api-gpu` (Dockerfile.gpu) + pin its digest in
-      `attest-gpu/mkosi.sync` (currently pre-staged via `steep-fetch-attest-gpu`).
+      `attest-gpu/mkosi.sync` (currently pre-staged via `confos-fetch-attest-gpu`).
 - [ ] Guest time source (NTP or host-time) so in-guest `/verify` isn't skewed.
