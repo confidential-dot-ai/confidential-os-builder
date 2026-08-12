@@ -83,7 +83,13 @@ stage_addresses() {
 
 emit_node_addr_lines() {
     printf 'node-ip: %s\n' "$NODE_IP"
-    [[ -n "$NODE_EXT" ]] && printf 'node-external-ip: %s\n' "$NODE_EXT"
+    # `if`, not `&&`: as the function's last statement a bare `[[…]] && printf`
+    # returns 1 when NODE_EXT is empty, which under `set -e`+pipefail would
+    # abort the `{…} | write_atomic` fragment write for every node without an
+    # external IP (the common case).
+    if [[ -n "$NODE_EXT" ]]; then
+        printf 'node-external-ip: %s\n' "$NODE_EXT"
+    fi
 }
 
 set_server_role() {
