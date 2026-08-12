@@ -200,7 +200,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // Phase 0d: compile
     println!("\n=== Step 0d: Compiling kernel ===");
     fs_err::write(&log_path, b"")?;
-    compile::run(&tools_tree, &kernel_src, &vmlinuz_path, &log_path)?;
+    compile::run(&tools_tree, &kernel_src, &vmlinuz_path, seed, &log_path)?;
 
     // Phase 0e: finalize manifest
     println!("\n=== Step 0e: Writing manifest ===");
