@@ -18,6 +18,12 @@
 # does not rebuild and clobber the tree the modules were built against.
 #
 # Knobs:
+#   C8S_PLATFORM=      REQUIRED. tdx or snp — the CVM TEE this image launches
+#                      on. No default: an image must never silently ship for
+#                      the wrong platform. snp adds the `snp` profile
+#                      (cred-release --platform snp, /dev/sev-guest); the guest
+#                      kernel already carries the SEV-SNP symbols via
+#                      kernel/required.config, so nothing else changes.
 #   C8S_NO_GPU=1       GPU-less validation image: `attest` + `c8s` profiles
 #                      only (attestation-api still baked; compose ssh/dev
 #                      manually via extra args). Validation-only, never
@@ -48,8 +54,9 @@
 #                      branch). Use to test an unmerged c8s build end-to-end.
 #
 # Extra args are passed through to `confos build`, e.g.:
-#   bin/build-c8s --profile ssh          # + SSH for bring-up debugging
-#   C8S_NO_GPU=1 bin/build-c8s --profile dev
+#   C8S_PLATFORM=tdx bin/build-c8s --profile ssh   # + SSH for bring-up
+#   C8S_PLATFORM=snp bin/build-c8s                 # SEV-SNP node image
+#   C8S_PLATFORM=tdx C8S_NO_GPU=1 bin/build-c8s --profile dev
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -86,12 +93,23 @@ else
     bin/steep-fetch-attest-gpu
 fi
 
+# CVM platform is explicit: no default, so no image ever silently ships for
+# the wrong TEE. snp composes the snp profile AFTER c8s (its cred-release
+# override wins) and launches as snp; the guest kernel already carries every
+# SEV-SNP symbol via kernel/required.config, so the fragment is unchanged.
+: "${C8S_PLATFORM:?set C8S_PLATFORM=tdx or C8S_PLATFORM=snp}"
+case "$C8S_PLATFORM" in
+tdx) ;;
+snp) PROFILES+=(--profile snp) ;;
+*)   echo "build-c8s: C8S_PLATFORM must be tdx or snp, got '$C8S_PLATFORM'" >&2; exit 1 ;;
+esac
+
 exec bin/confos build "${C8S_NAME:-c8s}" \
     "${PROFILES[@]}" \
     ${DEV_PROFILE[@]+"${DEV_PROFILE[@]}"} \
     --kernel-config-fragment "$FRAGMENT" \
     --kernel-builder-package "$KB_PKGS" \
     --cloud-init mkosi/base/mkosi.profiles/c8s/user-data \
-    --platform tdx \
+    --platform "$C8S_PLATFORM" \
     --memory "${C8S_MEMORY:-16G}" \
     "$@"

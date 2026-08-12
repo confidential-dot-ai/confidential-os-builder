@@ -17,13 +17,20 @@ into the dm-verity root instead, so the launch measurement covers it.
 Composition:
 
 ```
-bin/build-c8s      # = confos kernel → steep-fetch-gpu → steep-fetch-attest-gpu →
+C8S_PLATFORM=tdx bin/build-c8s   # = confos kernel → steep-fetch-gpu → steep-fetch-attest-gpu →
                    #   confos build c8s --profile gpu --profile attest-gpu --profile c8s
                    #     --kernel-config-fragment kernel/c8s.config
                    #     --kernel-builder-package dwarves,python3,pkg-config,zlib1g-dev
                    #     --cloud-init mkosi/base/mkosi.profiles/c8s/user-data
                    #     --platform tdx --memory 16G
+C8S_PLATFORM=snp bin/build-c8s   # same, + --profile snp and --platform snp
 ```
+
+`C8S_PLATFORM` is required (`tdx` or `snp`) — no default, so an image never
+silently ships for the wrong TEE. `snp` composes the `snp` profile (its
+cred-release override sets `--platform snp` and `/dev/sev-guest`); the guest
+kernel already carries the SEV-SNP symbols via `kernel/required.config`, so
+nothing else changes.
 
 Knobs: `C8S_NO_GPU=1` (attest + c8s only, GPU-less validation),
 `C8S_STOCK_ATTEST=1` (compose the stock `attest` profile instead of
@@ -229,15 +236,15 @@ Two failure modes hard-won here (both fixed; noted so they stay fixed):
   kernel/c8s.config --kernel-builder-package dwarves,python3,pkg-config,zlib1g-dev`
   passes fragment verification; snapshot diff reviewed; `/sys/kernel/btf/vmlinux`
   present in the built kernel, `DEBUG_INFO_BTF_MODULES` absent.
-- **S1 GPU-less validation (attest + c8s)**: `C8S_NO_GPU=1 bin/build-c8s
-  --profile ssh`, `confos run --scratch 64G`. Exit: rke2-server active;
+- **S1 GPU-less validation (attest + c8s)**: `C8S_PLATFORM=tdx C8S_NO_GPU=1
+  bin/build-c8s --profile ssh`, `confos run --scratch 64G`. Exit: rke2-server active;
   attestation-api unit active; node Ready;
   cilium/coredns/local-path Running **from the airgap bundles**; rendered
   containerd config has exactly one `imports` line; NRI plugin registered
   (health socket answers); a pod with an unlisted image in a non-exempt
   namespace is denied; kube-system unaffected.
-- **S2 full composition, GPU-less boot**: `bin/build-c8s`; nothing
-  degraded (FLR no-op, persistenced skipped, latch engaged); rke2 Ready;
+- **S2 full composition, GPU-less boot**: `C8S_PLATFORM=tdx bin/build-c8s`;
+  nothing degraded (FLR no-op, persistenced skipped, latch engaged); rke2 Ready;
   attestation-api unit active.
 - **S3 TDX CVM with GPUs**: launch per docs/GPU-CC-OPERATIONS.md
   + the disks above. Exit: all GPUs CC-On/Ready; `modules_disabled=1`;
