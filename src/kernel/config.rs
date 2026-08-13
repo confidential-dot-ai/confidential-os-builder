@@ -491,15 +491,19 @@ mod tests {
     #[test]
     fn builder_invariants_reject_default_module_sig_key() {
         let d = TempDir::new().unwrap();
-        let resolved = write(
-            &d,
-            "resolved",
+        // olddefconfig materializes the default as an explicit line — the
+        // shape that actually shipped six differing kernels; also cover the
+        // line being absent entirely.
+        for body in [
+            "CONFIG_MODULE_SIG=y\nCONFIG_MODULE_SIG_KEY=\"certs/signing_key.pem\"\n# CONFIG_MODULE_SIG_ALL is not set\n",
             "CONFIG_MODULE_SIG=y\n# CONFIG_MODULE_SIG_ALL is not set\n",
-        );
-        let err = verify_builder_invariants(&resolved)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("CONFIG_MODULE_SIG_KEY"), "{err}");
+        ] {
+            let resolved = write(&d, "resolved", body);
+            let err = verify_builder_invariants(&resolved)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("CONFIG_MODULE_SIG_KEY"), "{err}");
+        }
     }
 
     #[test]
