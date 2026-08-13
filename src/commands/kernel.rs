@@ -149,9 +149,9 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     fs_err::set_permissions(&gen, perms)?;
 
     // Pin BTF encoding to one thread: Makefile.btf passes pahole -j$(JOBS),
-    // and parallel BTF dedup is order-nondeterministic — with
-    // CONFIG_DEBUG_INFO_BTF=y every build got a different .BTF section, and
-    // so a different vmlinuz (#85). Serial encoding is stable.
+    // and parallel BTF dedup is order-nondeterministic — a real hazard, kept
+    // as hardening. (The #85 nondeterminism itself proved to be the
+    // MODULE_SIG_KEY GENKEY, not BTF: diffoscope showed no .BTF delta.)
     let btf_mk = kernel_src.join("scripts/Makefile.btf");
     let mk = fs_err::read_to_string(&btf_mk)?;
     let pinned = mk.replace("-j$(JOBS)", "-j1");
