@@ -8,6 +8,15 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Fixed
+- **Changes measurements of BTF-enabled kernels (once).** `pahole` ran with
+  `-j$(JOBS)`, and parallel BTF dedup is order-nondeterministic — every build
+  of a fragment with `CONFIG_DEBUG_INFO_BTF=y` (the c8s node kernel) produced
+  a different `.BTF` section and so a different vmlinuz, despite #86/#92
+  pinning every other source (#85). confos now pins BTF encoding to one
+  thread in the staged tree; bare kernels (no BTF) were already
+  bit-reproducible and are unaffected
+
 ## [0.4.0] — 2026-08-13
 
 ### Changed
