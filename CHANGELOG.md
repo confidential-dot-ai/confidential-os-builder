@@ -8,6 +8,8 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-08-13
+
 ### Fixed
 - **Changes measurements of module-signing kernels (once).** The #85 fix in
   v0.4.0 was incomplete: with `CONFIG_MODULE_SIG=y`, leaving
@@ -174,7 +176,8 @@ Initial public release.
 - `steep push` / `steep pull` (OCI via oras)
 - CI publishes base image as `ghcr.io/confidential-dot-ai/steep:base`
 
-[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.1.1...v0.2.0
