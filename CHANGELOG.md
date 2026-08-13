@@ -8,6 +8,8 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-13
+
 ### Changed
 - **Changes measurements (once, GPU images).** The steep → confos rename is
   finished (#88): `bin/steep-fetch-{gpu,attest-gpu}` are now
@@ -156,7 +158,8 @@ Initial public release.
 - `steep push` / `steep pull` (OCI via oras)
 - CI publishes base image as `ghcr.io/confidential-dot-ai/steep:base`
 
-[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.1.0...v0.1.1
