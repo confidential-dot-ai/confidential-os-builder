@@ -14,7 +14,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - uses: systemd/mkosi@84af20892b61c8e177e391f997ded8b4cb5514f2 # v26
-      - run: sudo apt-get update -y && sudo apt-get install -y systemd-container
+      - run: sudo apt-get update -y && sudo apt-get install -y systemd-container diffoscope
       - run: cargo build --release
       - name: Two BTF kernels must match
         run: |
@@ -26,4 +26,10 @@ jobs:
           b A; b B
           a=$(sha256sum output/kA/vmlinuz|awk '{print $1}'); c=$(sha256sum output/kB/vmlinuz|awk '{print $1}')
           echo "A=$a"; echo "B=$c"
+          echo "=== staged Makefile.btf pin (must show -j1):"
+          grep -n "\-j" output/kA/build/linux-*/scripts/Makefile.btf || true
           { echo "### BTF repro (#85, pahole -j1 pinned)"; echo "- A: \`$a\`"; echo "- B: \`$c\`"; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$a" != "$c" ]; then
+            echo "=== diffoscope (first 300 lines):"
+            diffoscope output/kA/vmlinuz output/kB/vmlinuz 2>&1 | head -300 || true
+          fi
