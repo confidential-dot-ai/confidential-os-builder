@@ -8,6 +8,14 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Removed
+- The `c8s` mkosi profile, `bin/build-c8s`, and the `c8s`/`c8s-dev`
+  kernel fragments: the node-image definition now lives in the c8s repo
+  (`node-guest-image/`) and is staged at build time via `--profile-dir`
+  ([c8s#264](https://github.com/confidential-dot-ai/c8s/issues/264)).
+  No measurement change for images built from the moved copy — it is
+  byte-identical and CI-enforced against this repo until this removal.
+
 ### Fixed
 - **Changes measurements (once).** The guest kernel now builds bit-reproducibly. Two KSPP hardening plugins seeded
   themselves from `/dev/urandom` per build: `CONFIG_RANDSTRUCT_FULL`, so every

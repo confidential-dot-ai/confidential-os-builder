@@ -7,60 +7,9 @@ cargo fmt --all
 cargo clippy --all-targets "$@" -- -D warnings
 set +x
 
-# kernel/c8s.config must be a superset of kernel/gpu.config: only one
-# --kernel-config-fragment is accepted per build, so the c8s fragment
-# duplicates the gpu lines verbatim. Catch drift when gpu.config changes.
-[ -f kernel/gpu.config ] && [ -f kernel/c8s.config ] || {
-    echo "bin/lint: kernel/gpu.config or kernel/c8s.config missing" >&2
-    exit 1
-}
-missing=$(grep -E '^CONFIG_|^# CONFIG_.* is not set$' kernel/gpu.config \
-          | grep -vFxf kernel/c8s.config || true)
-if [ -n "$missing" ]; then
-    echo "bin/lint: kernel/c8s.config must contain every effective line of kernel/gpu.config; missing:" >&2
-    echo "$missing" >&2
-    exit 1
-fi
-
-# kernel/c8s-dev.config (C8S_DEV=1 demo builds) is the union of c8s.config
-# and dev.config, committed verbatim for the same one-fragment reason.
-for src in kernel/c8s.config kernel/dev.config; do
-    missing=$(grep -E '^CONFIG_|^# CONFIG_.* is not set$' "$src" \
-              | grep -vFxf kernel/c8s-dev.config || true)
-    if [ -n "$missing" ]; then
-        echo "bin/lint: kernel/c8s-dev.config must contain every effective line of $src; missing:" >&2
-        echo "$missing" >&2
-        exit 1
-    fi
-done
-
-# The baked NRI floor is a template (image-policy.yaml.in) whose always_allow
-# entries are @-tokens the c8s sync fills with the ref-resolved nri + cds
-# digests. It must NOT carry a hardcoded sha256 there — a literal would bake a
-# stale digest the fail-closed floor then can't reconcile with the ref.
-c8s_profile=mkosi/base/mkosi.profiles/c8s
-policy="$c8s_profile/image-policy.yaml.in"
-[ -f "$policy" ] || { echo "bin/lint: NRI floor template $policy not found" >&2; exit 1; }
-if grep -qE '^[[:space:]]*"sha256:[a-f0-9]{64}"[[:space:]]*:' "$policy"; then
-    echo "bin/lint: $policy has a hardcoded always_allow digest; use @NRI_DIGEST@/@CDS_DIGEST@ tokens (rendered from C8S_REF by mkosi.sync)" >&2
-    exit 1
-fi
-
-# The c8s node is itself normally nested in an outer RKE2 cluster. Its pod
-# CIDR must not fall back to the outer cluster's default, and Cilium's pool
-# must exactly match the RKE2 server setting or pods receive unroutable IPs.
-rke2_config="$c8s_profile/mkosi.extra/etc/rancher/rke2/config.yaml"
-cilium_config="$c8s_profile/mkosi.extra/var/lib/rancher/rke2/server/manifests/rke2-cilium-config.yaml"
-rke2_pod_cidr=$(sed -n 's/^cluster-cidr:[[:space:]]*//p' "$rke2_config")
-cilium_pod_cidr=$(sed -n '/clusterPoolIPv4PodCIDRList:/,/^[^[:space:]]/s/^[[:space:]]*-[[:space:]]*//p' "$cilium_config" | head -n 1)
-if [ -z "$rke2_pod_cidr" ] || [ "$rke2_pod_cidr" = "10.42.0.0/16" ]; then
-    echo "bin/lint: c8s RKE2 cluster-cidr must be explicit and must not overlap the outer RKE2 default" >&2
-    exit 1
-fi
-if [ "$rke2_pod_cidr" != "$cilium_pod_cidr" ]; then
-    echo "bin/lint: c8s RKE2 cluster-cidr ($rke2_pod_cidr) must match Cilium IPAM ($cilium_pod_cidr)" >&2
-    exit 1
-fi
+# The c8s profile's lint checks (fragment supersets, NRI floor template,
+# nested pod CIDRs) moved with the profile to the c8s repo's
+# node-guest-image lint (c8s#264).
 
 # Omitting modules-load.d does not prevent udev coldplug from resolving an
 # NVIDIA PCI modalias and running `modprobe -b` before the FLR oneshot. The
