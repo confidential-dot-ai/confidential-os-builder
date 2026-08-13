@@ -116,6 +116,9 @@ pub struct KernelInputs {
     // input like the fragments. `default` for older manifests.
     #[serde(default)]
     pub module_signing_cert_sha256: String,
+    // RANDSTRUCT seed — a reproduction input (#85). `default` for older manifests.
+    #[serde(default)]
+    pub randstruct_seed_sha256: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

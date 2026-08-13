@@ -10,6 +10,7 @@ pub fn run(
     tools_tree: &Path,
     kernel_dir: &Path,
     out_vmlinuz: &Path,
+    random_seed: &str,
     log_path: &Path,
 ) -> Result<()> {
     let parallelism = std::thread::available_parallelism()
@@ -37,13 +38,18 @@ pub fn run(
     // EXTRA_CFLAGS (per-warning -Wno-error beats the blanket -Werror);
     // -g -O2 restores the defaults that setting EXTRA_CFLAGS replaces.
     let hostcflags = "-g -O2 -Wno-error=discarded-qualifiers";
+    // -frandom-seed pins GCC's randomized codegen — most importantly the
+    // latent_entropy plugin, which otherwise seeds from /dev/urandom per
+    // build (scripts/gcc-plugins/latent_entropy_plugin.c). Without it vmlinuz
+    // is not reproducible even with the RANDSTRUCT seed pinned (#85).
     let script = format!(
         "set -eux\n\
          cd /build\n\
-         make -j{parallelism} HOSTCFLAGS='{hostcflags}' bzImage 2>&1 | tee -a /build.log\n\
+         make -j{parallelism} HOSTCFLAGS='{hostcflags}' KCFLAGS='-frandom-seed={random_seed}' bzImage 2>&1 | tee -a /build.log\n\
          test -f arch/x86/boot/bzImage\n",
         parallelism = parallelism,
         hostcflags = hostcflags,
+        random_seed = random_seed,
     );
 
     let nspawn_bin = crate::tools::require("systemd-nspawn")

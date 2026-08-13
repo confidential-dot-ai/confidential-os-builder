@@ -7,6 +7,9 @@ use crate::tools;
 use crate::KernelArgs;
 
 const REQUIRED_FRAGMENT: &str = "kernel/required.config";
+/// Committed, public RANDSTRUCT/latent_entropy seed — pins per-build struct
+/// randomization so vmlinuz reproduces (#85). Its sha256 joins the fingerprint.
+const RANDSTRUCT_SEED: &str = "kernel/randstruct.seed";
 /// Where `--module-signing-cert` is staged inside the kernel tree. Fragments
 /// that enable module signing point CONFIG_SYSTEM_TRUSTED_KEYS at this path,
 /// so it is part of the interface — changing it breaks every consumer's
@@ -119,6 +122,31 @@ pub fn run(args: &KernelArgs) -> Result<()> {
             ));
         }
     }
+
+    // Pin the RANDSTRUCT seed: rewrite gen-randstruct-seed.sh to emit our
+    // committed seed instead of reading /dev/urandom. The Makefile rule is
+    // FORCE + if_changed, so staging the .seed file alone would be
+    // regenerated — the script is the deterministic point.
+    let seed = fs_err::read_to_string(Path::new(RANDSTRUCT_SEED))?;
+    let seed = seed.trim();
+    if seed.len() != 64 || !seed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(anyhow!("{RANDSTRUCT_SEED} must be 64 hex chars (32 bytes)"));
+    }
+    let gen = kernel_src.join("scripts/gen-randstruct-seed.sh");
+    fs_err::write(
+        &gen,
+        format!(
+            "#!/bin/sh\n\
+             # Replaced by confos: fixed seed for reproducible builds (#85).\n\
+             SEED={seed}\n\
+             echo \"$SEED\" > \"$1\"\n\
+             HASH=$(echo -n \"$SEED\" | sha256sum | cut -d' ' -f1)\n\
+             echo \"#define RANDSTRUCT_HASHED_SEED \\\"$HASH\\\"\" > \"$2\"\n"
+        ),
+    )?;
+    let mut perms = fs_err::metadata(&gen)?.permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    fs_err::set_permissions(&gen, perms)?;
     // Stage the caller's signing certificate where CONFIG_SYSTEM_TRUSTED_KEYS
     // expects it (STAGED_SIGNING_CERT). The certificate is a consumer input,
     // like the config fragment: whoever owns the image owns the trust anchor
@@ -172,7 +200,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // Phase 0d: compile
     println!("\n=== Step 0d: Compiling kernel ===");
     fs_err::write(&log_path, b"")?;
-    compile::run(&tools_tree, &kernel_src, &vmlinuz_path, &log_path)?;
+    compile::run(&tools_tree, &kernel_src, &vmlinuz_path, seed, &log_path)?;
 
     // Phase 0e: finalize manifest
     println!("\n=== Step 0e: Writing manifest ===");
@@ -263,6 +291,7 @@ pub fn compute_fingerprint(
         hardening_config_sha256: fetch::sha256_file(Path::new(HARDENING_FRAGMENT))?,
         confidential_config_sha256: fetch::sha256_file(Path::new(CONFIDENTIAL_FRAGMENT))?,
         module_signing_cert_sha256: fetch::sha256_file(signing_cert)?,
+        randstruct_seed_sha256: fetch::sha256_file(Path::new(RANDSTRUCT_SEED))?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
         kernel_extra_config_sha256: match fragment {

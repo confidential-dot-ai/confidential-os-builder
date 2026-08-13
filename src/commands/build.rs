@@ -500,6 +500,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                     .inputs
                     .module_signing_cert_sha256
                     .clone(),
+                randstruct_seed_sha256: kernel.manifest.inputs.randstruct_seed_sha256.clone(),
             }),
             initrd: manifest::FileEntry {
                 path: manifest::basename_of(&initrd_path),
