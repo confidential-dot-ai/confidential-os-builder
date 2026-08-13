@@ -9,20 +9,20 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Fixed
-- **Changes measurements (once).** The apt **security pocket** is now
-  time-pinned: mkosi `Snapshot=` replaces the raw `Mirror=` URLs, so apt
-  rewrites main, updates, *and* `resolute-security` to snapshot.ubuntu.com —
-  previously 74 of the kernel-builder tools tree's 478 packages (libc6,
-  openssl, tar, sed among them) came from the live security archive and
-  could drift between builds (#85). `bin/lint` now rejects `Mirror=` lines
-  and requires a pinned `Snapshot=` wherever packages install
-- **Changes measurements of BTF-enabled kernels (once).** `pahole` ran with
-  `-j$(JOBS)`, and parallel BTF dedup is order-nondeterministic — every build
-  of a fragment with `CONFIG_DEBUG_INFO_BTF=y` (the c8s node kernel) produced
-  a different `.BTF` section and so a different vmlinuz, despite #86/#92
-  pinning every other source (#85). confos now pins BTF encoding to one
-  thread in the staged tree; bare kernels (no BTF) were already
-  bit-reproducible and are unaffected
+- **Changes measurements of module-signing kernels (once).** The #85 fix in
+  v0.4.0 was incomplete: with `CONFIG_MODULE_SIG=y`, leaving
+  `CONFIG_MODULE_SIG_KEY` at its default (`certs/signing_key.pem`) makes
+  `certs/Makefile` GENKEY a fresh keypair every build and bake its
+  certificate into the system keyring — nonreproducible regardless of
+  `MODULE_SIG_ALL`. `kernel/gpu.config` now sets `CONFIG_MODULE_SIG_KEY=""`
+  and the builder rejects any resolved config that enables module signing
+  without it
+- BTF encoding pinned to one thread (`pahole -j1` in the staged tree):
+  parallel BTF dedup is order-nondeterministic; hardening alongside the fix
+  above
+- apt retries (`Acquire::Retries` via `mkosi.sandbox/` trees): a transient
+  snapshot.ubuntu.com 503 killed the v0.4.0 base-image build on the first
+  failed fetch
 
 ## [0.4.0] — 2026-08-13
 

@@ -131,6 +131,20 @@ fn verify_builder_invariants(resolved: &Path) -> Result<()> {
     // vmlinuz stops being reproducible (#85). mod2yesconfig leaves no in-tree
     // modules to sign, so nothing needs it; out-of-tree modules are signed
     // separately against --module-signing-cert.
+    // The default MODULE_SIG_KEY ("certs/signing_key.pem") makes certs/Makefile
+    // GENKEY a per-build keypair whose cert lands in the system keyring —
+    // nonreproducible regardless of MODULE_SIG_ALL (#85).
+    if config.lines().any(|l| l.trim() == "CONFIG_MODULE_SIG=y")
+        && !config
+            .lines()
+            .any(|l| l.trim() == "CONFIG_MODULE_SIG_KEY=\"\"")
+    {
+        anyhow::bail!(
+            "resolved .config enables CONFIG_MODULE_SIG without CONFIG_MODULE_SIG_KEY=\"\": \
+             the default key path makes the kernel build GENKEY a per-build signing key \
+             into the keyring, so vmlinuz would not be reproducible (#85)."
+        );
+    }
     if config
         .lines()
         .any(|l| l.trim() == "CONFIG_MODULE_SIG_ALL=y")
@@ -475,6 +489,20 @@ mod tests {
     }
 
     #[test]
+    fn builder_invariants_reject_default_module_sig_key() {
+        let d = TempDir::new().unwrap();
+        let resolved = write(
+            &d,
+            "resolved",
+            "CONFIG_MODULE_SIG=y\n# CONFIG_MODULE_SIG_ALL is not set\n",
+        );
+        let err = verify_builder_invariants(&resolved)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CONFIG_MODULE_SIG_KEY"), "{err}");
+    }
+
+    #[test]
     fn builder_invariants_reject_module_sig_all() {
         let d = TempDir::new().unwrap();
         let resolved = write(
@@ -493,7 +521,7 @@ mod tests {
     fn builder_invariants_accept_module_sig_all_off() {
         let d = TempDir::new().unwrap();
         for body in [
-            "CONFIG_MODULE_SIG=y\n# CONFIG_MODULE_SIG_ALL is not set\n",
+            "CONFIG_MODULE_SIG=y\nCONFIG_MODULE_SIG_KEY=\"\"\n# CONFIG_MODULE_SIG_ALL is not set\n",
             "CONFIG_MODULES=y\n",
         ] {
             let resolved = write(&d, "resolved", body);
