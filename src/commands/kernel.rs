@@ -147,6 +147,20 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     let mut perms = fs_err::metadata(&gen)?.permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
     fs_err::set_permissions(&gen, perms)?;
+
+    // Pin BTF encoding to one thread: Makefile.btf passes pahole -j$(JOBS),
+    // and parallel BTF dedup is order-nondeterministic — a real hazard, kept
+    // as hardening. (The #85 nondeterminism itself proved to be the
+    // MODULE_SIG_KEY GENKEY, not BTF: diffoscope showed no .BTF delta.)
+    let btf_mk = kernel_src.join("scripts/Makefile.btf");
+    let mk = fs_err::read_to_string(&btf_mk)?;
+    let pinned = mk.replace("-j$(JOBS)", "-j1");
+    if pinned == mk {
+        return Err(anyhow!(
+            "scripts/Makefile.btf has no -j$(JOBS) to pin — kernel bump changed BTF flags; re-check #85 determinism"
+        ));
+    }
+    fs_err::write(&btf_mk, pinned)?;
     // Stage the caller's signing certificate where CONFIG_SYSTEM_TRUSTED_KEYS
     // expects it (STAGED_SIGNING_CERT). The certificate is a consumer input,
     // like the config fragment: whoever owns the image owns the trust anchor

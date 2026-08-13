@@ -8,6 +8,22 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Fixed
+- **Changes measurements of module-signing kernels (once).** The #85 fix in
+  v0.4.0 was incomplete: with `CONFIG_MODULE_SIG=y`, leaving
+  `CONFIG_MODULE_SIG_KEY` at its default (`certs/signing_key.pem`) makes
+  `certs/Makefile` GENKEY a fresh keypair every build and bake its
+  certificate into the system keyring — nonreproducible regardless of
+  `MODULE_SIG_ALL`. `kernel/gpu.config` now sets `CONFIG_MODULE_SIG_KEY=""`
+  and the builder rejects any resolved config that enables module signing
+  without it
+- BTF encoding pinned to one thread (`pahole -j1` in the staged tree):
+  parallel BTF dedup is order-nondeterministic; hardening alongside the fix
+  above
+- apt retries (`Acquire::Retries` via `mkosi.sandbox/` trees): a transient
+  snapshot.ubuntu.com 503 killed the v0.4.0 base-image build on the first
+  failed fetch
+
 ## [0.4.0] — 2026-08-13
 
 ### Changed

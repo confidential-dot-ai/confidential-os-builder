@@ -1,0 +1,4 @@
+// Transient snapshot.ubuntu.com 503s killed multi-hour builds (#85 era);
+// retry instead of dying on the first blip.
+Acquire::Retries "3";
+Acquire::Retries::Delay::Maximum "30";
