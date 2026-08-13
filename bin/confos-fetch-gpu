@@ -4,7 +4,7 @@
 #
 # Runs on the HOST, AFTER `confos kernel --kernel-config-fragment kernel/gpu.config`
 # and BEFORE `confos build ... --profile gpu`. The `build-gpu` Make target
-# chains all three. See docs/GPU-IMAGE-PLAN.md ("Build sequencing").
+# chains all three.
 #
 # Why a separate host-side step and not a mkosi.sync hook (like `attest`):
 # the NVIDIA modules must be compiled against the *built* kernel tree with the
@@ -247,7 +247,7 @@ stage_lib libnvidia-ml.so
 # mode the GPU forbids re-establishing the SPDM session without a fresh FLR,
 # so if persistenced is down every transient client (nvidia-smi) tears down
 # the session on exit and the next attach fails with RmInitAdapter 0x22.
-# Found the hard way on a live B200 (see docs/GPU-IMAGE-PLAN.md).
+# Found the hard way on a live B200.
 stage_lib libnvidia-cfg.so
 stage_bin nvidia-smi
 stage_bin nvidia-persistenced

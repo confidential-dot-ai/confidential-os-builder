@@ -4,7 +4,7 @@ Images whose kernel fragment enables `CONFIG_MODULE_SIG` need a signing
 certificate built into the kernel's system keyring, or lockdown-confidentiality
 refuses to load the out-of-tree NVIDIA modules.
 
-Integrity does **not** rest on these signatures (GPU-IMAGE-PLAN.md D4): the
+Integrity does **not** rest on these signatures: the
 module bytes live in the dm-verity-measured rootfs, and the boot sequence
 latches `kernel.modules_disabled=1` once they are loaded. The signature is
 lockdown plumbing.
