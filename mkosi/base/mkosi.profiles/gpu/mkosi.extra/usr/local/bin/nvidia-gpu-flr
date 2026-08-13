@@ -2,7 +2,7 @@
 # nvidia-gpu-flr — Function-Level Reset every NVIDIA GPU, THEN load the driver.
 # Runs once at boot (nvidia-gpu-flr.service), before nvidia-persistenced.
 #
-# WHY (validated on real B200s, 1..8 GPUs — see docs/GPU-IMAGE-PLAN.md):
+# WHY (validated on real B200s, 1..8 GPUs):
 # In confidential-compute mode the GPU refuses to establish an SPDM session
 # unless the function was freshly FLR-reset, and only ONE attach is allowed per
 # FLR. The critical ordering consequence: the very FIRST driver probe of each

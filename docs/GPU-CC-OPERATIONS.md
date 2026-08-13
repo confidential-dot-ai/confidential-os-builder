@@ -4,7 +4,7 @@ Hard-won behaviours of the `gpu` / `attest-gpu` profiles running NVIDIA B200s
 under Intel TDX. Read this before debugging a GPU CVM that "won't come up" or
 attestation that "won't quote". Each item cites where it's enforced in code.
 
-Companion: `docs/GPU-IMAGE-PLAN.md` (design), the trusted DSDT
+Companion: the trusted DSDT
 (`mkosi/base/acpi-tables/dsdt.asl`), and (on the operator host)
 `tdx-checkpoints/030`, `031`.
 
