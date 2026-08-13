@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           # the exact fragment that was nondeterministic: c8s's node kernel config
-          curl -fsSL https://raw.githubusercontent.com/confidential-dot-ai/c8s/main/node-guest-image/kernel/c8s.config -o /tmp/btf.config
+          curl -fsSL https://raw.githubusercontent.com/confidential-dot-ai/c8s/feat/node-guest-image-flip/node-guest-image/kernel/c8s.config -o /tmp/btf.config
           grep -q "CONFIG_DEBUG_INFO_BTF=y" /tmp/btf.config
           b() { ./target/release/confos kernel --force --kernel-config-fragment /tmp/btf.config --kernel-builder-package dwarves,python3,pkg-config,zlib1g-dev --output "output/k$1"; }
           b A; b B
