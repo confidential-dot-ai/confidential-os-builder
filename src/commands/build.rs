@@ -171,12 +171,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Phase 1: ensure custom kernel artifact is current
     println!("\n=== Step 1/4: Ensuring custom kernel ===");
-    let kernel = kernel_cache::ensure_kernel(
-        false,
-        args.kernel_config_fragment.clone(),
-        args.module_signing_cert.clone(),
-        args.kernel_builder_package.clone(),
-    )?;
+    let kernel = kernel_cache::ensure_kernel(false, args.kernel_inputs.clone())?;
     println!(
         "kernel: {} (linux {})",
         kernel.vmlinuz_path.display(),

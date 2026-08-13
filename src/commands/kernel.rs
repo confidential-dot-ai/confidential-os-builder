@@ -40,13 +40,17 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Optional caller-supplied config fragment merged after required +
     // hardening. No flag = confos's bare required + hardening baseline.
-    let fragment = args.kernel_config_fragment.as_deref();
+    let fragment = args.kernel_inputs.kernel_config_fragment.as_deref();
     // Caller's certificate, else the committed default (see
     // DEFAULT_SIGNING_CERT). Always resolves to something, so every build
     // that enables module signing has a trust anchor without the caller
     // arranging one.
     let default_cert = PathBuf::from(DEFAULT_SIGNING_CERT);
-    let signing_cert = args.module_signing_cert.as_deref().unwrap_or(&default_cert);
+    let signing_cert = args
+        .kernel_inputs
+        .module_signing_cert
+        .as_deref()
+        .unwrap_or(&default_cert);
     let snapshot = Path::new(SNAPSHOT_PATH);
 
     fs_err::create_dir_all(&args.output)?;
@@ -85,7 +89,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Phase 0a: ensure tools tree
     println!("\n=== Step 0a: Ensuring kernel-builder tools tree (mkosi) ===");
-    let tools_tree = ensure_tools_tree(args.force, &args.kernel_builder_package)?;
+    let tools_tree = ensure_tools_tree(args.force, &args.kernel_inputs.kernel_builder_package)?;
 
     // Phase 0b: fetch tarball
     println!("\n=== Step 0b: Fetching kernel tarball ===");
