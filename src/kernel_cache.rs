@@ -28,14 +28,16 @@ pub struct KernelArtifact {
 pub fn ensure_kernel(
     force: bool,
     fragment: Option<PathBuf>,
+    module_signing_cert: Option<PathBuf>,
     kernel_builder_package: Vec<String>,
 ) -> Result<KernelArtifact> {
-    require_inputs_exist(fragment.as_deref())?;
+    require_inputs_exist(fragment.as_deref(), module_signing_cert.as_deref())?;
 
     commands::kernel::run(&KernelArgs {
         force,
         output: PathBuf::from(KERNEL_OUT_DIR),
         kernel_config_fragment: fragment,
+        module_signing_cert,
         kernel_builder_package,
     })?;
 
@@ -49,7 +51,12 @@ pub fn ensure_kernel(
     })
 }
 
-fn require_inputs_exist(fragment: Option<&Path>) -> Result<()> {
+fn require_inputs_exist(fragment: Option<&Path>, signing_cert: Option<&Path>) -> Result<()> {
+    if let Some(c) = signing_cert {
+        if !c.is_file() {
+            anyhow::bail!("--module-signing-cert path not found: {}", c.display());
+        }
+    }
     for f in [
         "kernel/version",
         "kernel/required.config",

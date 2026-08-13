@@ -46,6 +46,15 @@ pub struct KernelArgs {
     #[arg(long, value_name = "PATH")]
     pub kernel_config_fragment: Option<PathBuf>,
 
+    /// X.509 certificate (PEM) of the key that will sign out-of-tree
+    /// modules, overriding the committed default
+    /// (`kernel/module-signing.crt`). Built into the kernel's system
+    /// keyring, so modules signed with the matching private key load under
+    /// lockdown — and so changing it changes the measurement. Pass this only
+    /// to sign with your own key. See docs/module-signing.md.
+    #[arg(long, value_name = "PATH")]
+    pub module_signing_cert: Option<PathBuf>,
+
     /// Extra packages for the kernel-builder tools tree (build-time tools a
     /// fragment needs, e.g. `dwarves` for CONFIG_DEBUG_INFO_BTF). Repeatable
     /// and comma-separated.
@@ -124,6 +133,15 @@ pub struct BuildArgs {
     /// when building the custom kernel. Omitted: confos's hardened baseline.
     #[arg(long, value_name = "PATH")]
     pub kernel_config_fragment: Option<PathBuf>,
+
+    /// X.509 certificate (PEM) of the key that will sign out-of-tree
+    /// modules, overriding the committed default
+    /// (`kernel/module-signing.crt`). Built into the kernel's system
+    /// keyring, so modules signed with the matching private key load under
+    /// lockdown — and so changing it changes the measurement. Pass this only
+    /// to sign with your own key. See docs/module-signing.md.
+    #[arg(long, value_name = "PATH")]
+    pub module_signing_cert: Option<PathBuf>,
 
     /// Path to a post-install script to run during the build. Passed through
     /// to mkosi as --postinst-script, with --with-network=yes so the script

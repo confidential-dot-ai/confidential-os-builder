@@ -8,6 +8,19 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Fixed
+- **Changes measurements (once).** Kernel builds are bit-reproducible: the
+  module-signing trust anchor is now a committed public certificate
+  (`kernel/module-signing.crt`), built into the system keyring, instead of a
+  certificate the kernel build generated per run — which made vmlinuz, and
+  every measurement downstream of it, differ on each kernel cache miss (#85).
+  `CONFIG_MODULE_SIG_ALL` is off and enforced against the resolved `.config`,
+  so no private key exists at kernel-build time; `bin/steep-fetch-gpu` signs
+  the NVIDIA modules with the matching key from `MODULE_SIG_KEY_PEM` /
+  `MODULE_SIG_KEY` and refuses a key that does not match the certificate.
+  `confos build --module-signing-cert` overrides the default for consumers
+  that own their image's trust anchor (docs/module-signing.md)
+
 ### Added
 - `confos build --profile-dir <dir>`: enable an mkosi profile from an
   out-of-tree directory (copied under `mkosi.profiles/<basename>` for the

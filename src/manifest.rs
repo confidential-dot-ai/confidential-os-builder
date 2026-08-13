@@ -112,6 +112,10 @@ pub struct KernelInputs {
     #[serde(default)]
     pub kernel_extra_config_sha256: String,
     pub snapshot_config_sha256: String,
+    // Signing certificate built into the system keyring — a reproduction
+    // input like the fragments. `default` for older manifests.
+    #[serde(default)]
+    pub module_signing_cert_sha256: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
