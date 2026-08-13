@@ -15,7 +15,7 @@ set -euo pipefail
 STAGE_DIR="$SRCDIR/mkosi.local/mkosi.extra"
 
 # Pre-staged escape hatch: if a host-side step already dropped the binary +
-# libnvat into mkosi.local (e.g. `bin/steep-fetch-attest-gpu` building against a
+# libnvat into mkosi.local (e.g. `bin/confos-fetch-attest-gpu` building against a
 # local libnvat, before the GHCR image is published), trust it and skip the
 # pull. This is how the profile is validated ahead of the first publish.
 if [ -f "$STAGE_DIR/usr/local/bin/attestation-api" ] && \
@@ -31,7 +31,7 @@ IMAGE="ghcr.io/confidential-dot-ai/attestation-api-gpu@sha256:FILL_AT_STAGE_4_at
 case "$IMAGE" in
   *FILL_AT_STAGE_4*)
     echo "attest-gpu: no pre-staged binary and the image digest is still a" >&2
-    echo "  Stage-4 sentinel. Either pre-stage via bin/steep-fetch-attest-gpu," >&2
+    echo "  Stage-4 sentinel. Either pre-stage via bin/confos-fetch-attest-gpu," >&2
     echo "  or publish the attestation-rs -gpu image (Dockerfile.gpu) and pin" >&2
     echo "  its digest. The 'gpu' profile builds and runs without attest-gpu." >&2
     exit 1 ;;

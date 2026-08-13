@@ -8,6 +8,15 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Changed
+- **Changes measurements (once, GPU images).** The steep → confos rename is
+  finished (#88): `bin/steep-fetch-{gpu,attest-gpu}` are now
+  `bin/confos-fetch-{gpu,attest-gpu}`, and the NVIDIA module build stamps
+  `KBUILD_BUILD_USER`/`KBUILD_BUILD_HOST` change `steep` → `confos`, matching
+  the kernel's own stamps at last — the stamps are baked into the module
+  bytes, so the rootfs and RTMR[2] roll once alongside this release's other
+  measurement changes. Historical changelog entries keep the old name
+
 ### Removed
 - The `c8s` mkosi profile, `bin/build-c8s`, and the `c8s`/`c8s-dev`
   kernel fragments: the node-image definition now lives in the c8s repo

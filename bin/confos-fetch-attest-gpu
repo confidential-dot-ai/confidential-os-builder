@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# steep-fetch-attest-gpu — stage the GPU-capable attestation-api binary +
+# confos-fetch-attest-gpu — stage the GPU-capable attestation-api binary +
 # NVIDIA libnvat (and libnvat's versioned ICU deps) into mkosi.local for the
 # `attest-gpu` profile, WITHOUT going through GHCR.
 #
@@ -7,12 +7,12 @@
 # attestation-rs `-gpu` OCI image is published. The production path is the
 # profile's mkosi.sync pulling that pinned image by digest; this helper just
 # pre-stages the same content so mkosi.sync's pre-staged escape hatch skips the
-# pull. Run it AFTER steep-fetch-gpu and BEFORE `steep build ... --profile
+# pull. Run it AFTER confos-fetch-gpu and BEFORE `confos build ... --profile
 # gpu --profile attest-gpu` (build.rs wipes mkosi.local on exit, so all staging
 # must precede one build).
 #
 # Why we bundle libnvat's ICU: libnvat dynamically links a *versioned* libicu
-# soname (e.g. libicuuc.so.74) fixed at ITS build time. steep's guest base may
+# soname (e.g. libicuuc.so.74) fixed at ITS build time. confos's guest base may
 # ship a different ICU major (resolute → 76). Bundling the exact libicu*.so.NN
 # libnvat needs lets it load regardless of the base's ICU; the sonames differ so
 # they coexist. libxml2.so.2 / libstdc++.so.6 have stable sonames and come from
@@ -29,7 +29,7 @@ ATTEST_GPU_BIN="${ATTEST_GPU_BIN:-../attestation-rs/target/release/attestation-a
 LIBNVAT="${LIBNVAT:-/usr/lib/x86_64-linux-gnu/libnvat.so.1.2.0}"
 STAGE="mkosi/base/mkosi.local/mkosi.extra"
 
-die() { printf 'steep-fetch-attest-gpu: %s\n' "$*" >&2; exit 1; }
+die() { printf 'confos-fetch-attest-gpu: %s\n' "$*" >&2; exit 1; }
 
 [[ -f "$ATTEST_GPU_BIN" ]] || die "attestation-api-gpu binary not found at $ATTEST_GPU_BIN (set ATTEST_GPU_BIN)."
 [[ -f "$LIBNVAT" ]] || die "libnvat not found at $LIBNVAT (set LIBNVAT; build per tdx-checkpoints/026)."
@@ -48,7 +48,7 @@ install -m0755 "$LIBNVAT" "$LIBDIR/$soname"
 ln -sf "$soname" "$LIBDIR/libnvat.so.1"
 ln -sf "libnvat.so.1" "$LIBDIR/libnvat.so"
 
-# Bundle libnvat's deps that the steep base doesn't ship at a matching soname:
+# Bundle libnvat's deps that the confos base doesn't ship at a matching soname:
 # libicu*.so.NN (versioned major differs across distros) and libxml2.so.2
 # (resolute has no `libxml2` apt package, and its own build drags the same
 # versioned ICU). Everything else libnvat needs — libz, liblzma, libstdc++,
@@ -62,4 +62,4 @@ for lib in $(ldd "$LIBNVAT" 2>/dev/null | awk '/libicu|libxml2/{print $3}'); do
     echo "  bundled $b"
 done
 
-echo "steep-fetch-attest-gpu done — staged under $STAGE"
+echo "confos-fetch-attest-gpu done — staged under $STAGE"
