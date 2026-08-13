@@ -30,16 +30,11 @@ impl BuildPlatform {
     }
 }
 
-#[derive(clap::Args)]
-pub struct KernelArgs {
-    /// Force rebuild even if cache is current
-    #[arg(short, long)]
-    pub force: bool,
-
-    /// Output directory.
-    #[arg(short, long, default_value = "output/kernel")]
-    pub output: PathBuf,
-
+/// Inputs to the kernel build, shared by `confos kernel` and `confos build`
+/// (which runs the kernel step itself). One struct so a new kernel input is
+/// declared once instead of in both subcommands.
+#[derive(clap::Args, Clone, Default)]
+pub struct KernelInputs {
     /// Optional kernel config fragment, merged after required + hardening.
     /// Omitted: confos builds only its hardened required + hardening baseline.
     /// Lets a project enable extra kernel symbols without modifying confos.
@@ -64,6 +59,20 @@ pub struct KernelArgs {
         value_delimiter = ','
     )]
     pub kernel_builder_package: Vec<String>,
+}
+
+#[derive(clap::Args)]
+pub struct KernelArgs {
+    /// Force rebuild even if cache is current
+    #[arg(short, long)]
+    pub force: bool,
+
+    /// Output directory.
+    #[arg(short, long, default_value = "output/kernel")]
+    pub output: PathBuf,
+
+    #[command(flatten)]
+    pub kernel_inputs: KernelInputs,
 }
 
 #[derive(clap::Args)]
@@ -122,26 +131,8 @@ pub struct BuildArgs {
     /// comma-separated. Use for build-time tools a fragment needs — e.g.
     /// `dwarves` (pahole) when the fragment enables CONFIG_DEBUG_INFO_BTF.
     /// Twin of `--package`, routed to the kernel-builder mkosi run.
-    #[arg(
-        long = "kernel-builder-package",
-        value_name = "PKG",
-        value_delimiter = ','
-    )]
-    pub kernel_builder_package: Vec<String>,
-
-    /// Optional kernel config fragment, merged after required + hardening
-    /// when building the custom kernel. Omitted: confos's hardened baseline.
-    #[arg(long, value_name = "PATH")]
-    pub kernel_config_fragment: Option<PathBuf>,
-
-    /// X.509 certificate (PEM) of the key that will sign out-of-tree
-    /// modules, overriding the committed default
-    /// (`kernel/module-signing.crt`). Built into the kernel's system
-    /// keyring, so modules signed with the matching private key load under
-    /// lockdown — and so changing it changes the measurement. Pass this only
-    /// to sign with your own key. See docs/module-signing.md.
-    #[arg(long, value_name = "PATH")]
-    pub module_signing_cert: Option<PathBuf>,
+    #[command(flatten)]
+    pub kernel_inputs: KernelInputs,
 
     /// Path to a post-install script to run during the build. Passed through
     /// to mkosi as --postinst-script, with --with-network=yes so the script

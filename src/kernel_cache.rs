@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 
 use crate::commands;
 use crate::kernel::manifest as km;
-use crate::KernelArgs;
+use crate::{KernelArgs, KernelInputs};
 
 const KERNEL_OUT_DIR: &str = "output/kernel";
 
@@ -25,20 +25,13 @@ pub struct KernelArtifact {
 ///
 /// `fragment` is the caller-supplied `--kernel-config-fragment`, threaded
 /// from `confos build`.
-pub fn ensure_kernel(
-    force: bool,
-    fragment: Option<PathBuf>,
-    module_signing_cert: Option<PathBuf>,
-    kernel_builder_package: Vec<String>,
-) -> Result<KernelArtifact> {
-    require_inputs_exist(fragment.as_deref(), module_signing_cert.as_deref())?;
+pub fn ensure_kernel(force: bool, inputs: KernelInputs) -> Result<KernelArtifact> {
+    require_inputs_exist(&inputs)?;
 
     commands::kernel::run(&KernelArgs {
         force,
         output: PathBuf::from(KERNEL_OUT_DIR),
-        kernel_config_fragment: fragment,
-        module_signing_cert,
-        kernel_builder_package,
+        kernel_inputs: inputs,
     })?;
 
     let manifest_path = Path::new(KERNEL_OUT_DIR).join("manifest.json");
@@ -51,8 +44,9 @@ pub fn ensure_kernel(
     })
 }
 
-fn require_inputs_exist(fragment: Option<&Path>, signing_cert: Option<&Path>) -> Result<()> {
-    if let Some(c) = signing_cert {
+fn require_inputs_exist(inputs: &KernelInputs) -> Result<()> {
+    let fragment = inputs.kernel_config_fragment.as_deref();
+    if let Some(c) = inputs.module_signing_cert.as_deref() {
         if !c.is_file() {
             anyhow::bail!("--module-signing-cert path not found: {}", c.display());
         }
