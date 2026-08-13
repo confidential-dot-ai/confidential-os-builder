@@ -9,6 +9,13 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Fixed
+- **Changes measurements (once).** The apt **security pocket** is now
+  time-pinned: mkosi `Snapshot=` replaces the raw `Mirror=` URLs, so apt
+  rewrites main, updates, *and* `resolute-security` to snapshot.ubuntu.com —
+  previously 74 of the kernel-builder tools tree's 478 packages (libc6,
+  openssl, tar, sed among them) came from the live security archive and
+  could drift between builds (#85). `bin/lint` now rejects `Mirror=` lines
+  and requires a pinned `Snapshot=` wherever packages install
 - **Changes measurements of BTF-enabled kernels (once).** `pahole` ran with
   `-j$(JOBS)`, and parallel BTF dedup is order-nondeterministic — every build
   of a fragment with `CONFIG_DEBUG_INFO_BTF=y` (the c8s node kernel) produced
