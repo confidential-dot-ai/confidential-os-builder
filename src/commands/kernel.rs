@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
+use sha2::{Digest, Sha256};
 
 use crate::kernel::{compile, config, fetch, manifest as km, version::KernelVersion};
 use crate::tools;
@@ -34,8 +35,7 @@ const SNAPSHOT_PATH: &str = "kernel/config-x86_64.snapshot";
 const VERSION_PATH: &str = "kernel/version";
 const TOOLS_TREE_DIR: &str = "mkosi/kernel-builder";
 const TOOLS_TREE_CONF: &str = "mkosi/kernel-builder/mkosi.conf";
-const TOOLS_TREE_SOURCES: &str =
-    "mkosi/kernel-builder/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources";
+const TOOLS_TREE_SANDBOX: &str = "mkosi/kernel-builder/mkosi.sandbox";
 const TOOLS_TREE_IMAGE: &str = "mkosi/kernel-builder/mkosi.output/image";
 const TOOLS_TREE_STAMP: &str = "mkosi/kernel-builder/mkosi.output/.confos-tools-stamp";
 
@@ -247,15 +247,13 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> {
     let tree = Path::new(TOOLS_TREE_IMAGE);
     let stamp_path = Path::new(TOOLS_TREE_STAMP);
-    // Cache key = mkosi.conf + pinned-sources hashes + the extra-package
-    // list. The packages come via flags, not mkosi.conf, so they must be
-    // folded in here or a changed --kernel-builder-package list would
-    // silently reuse a stale tree; the sandbox sources carry the snapshot
-    // pin, so a pin bump must bust the tree too (#96).
+    // Cache key = the tools-tree inputs digest + the extra-package list.
+    // The packages come via flags, not mkosi.conf, so they must be folded in
+    // here or a changed --kernel-builder-package list would silently reuse a
+    // stale tree.
     let stamp_key = format!(
-        "{}\n{}\n{}",
-        fetch::sha256_file(Path::new(TOOLS_TREE_CONF))?,
-        fetch::sha256_file(Path::new(TOOLS_TREE_SOURCES))?,
+        "{}\n{}",
+        tools_tree_inputs_digest()?,
         extra_packages.join(",")
     );
 
@@ -272,9 +270,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
     // be picked up as a cache hit on the next call.
     let _ = fs_err::remove_file(stamp_path);
 
-    let mkosi = tools::resolve_mkosi()?;
     let mut args: Vec<String> = vec![
-        mkosi.clone(),
         "--directory".into(),
         TOOLS_TREE_DIR.into(),
         "--force".into(),
@@ -282,7 +278,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
     for pkg in extra_packages {
         args.push(format!("--package={pkg}"));
     }
-    tools::run_command_streaming_mirror_guarded("sudo", &args)?;
+    tools::run_mkosi(&args)?;
     if !tree.exists() {
         return Err(anyhow!("mkosi did not produce {}", tree.display()));
     }
@@ -322,14 +318,37 @@ pub fn compute_fingerprint(
         } else {
             String::new()
         },
-        tools_tree_digest: tools_tree_digest()?,
+        tools_tree_digest: tools_tree_inputs_digest()?,
     })
 }
 
-/// Hash the toolchain identity. We use the mkosi.conf bytes as a stable proxy:
-/// the apt mirror snapshot URL is in there, package list is in there.
-fn tools_tree_digest() -> Result<String> {
-    fetch::sha256_file(Path::new(TOOLS_TREE_CONF))
+/// Hash every input that defines the kernel-builder tools tree: mkosi.conf
+/// (package list) plus the mkosi.sandbox tree (the apt snapshot pin lives in
+/// its sources file, #96). Feeds both the rebuild stamp and the manifest's
+/// tools_tree_digest so there is exactly one inventory of "the toolchain" —
+/// CI's cache keys mirror it with hashFiles over the same paths.
+fn tools_tree_inputs_digest() -> Result<String> {
+    let mut files = vec![PathBuf::from(TOOLS_TREE_CONF)];
+    let mut stack = vec![PathBuf::from(TOOLS_TREE_SANDBOX)];
+    while let Some(dir) = stack.pop() {
+        for entry in fs_err::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    let mut hasher = Sha256::new();
+    for f in &files {
+        hasher.update(f.to_string_lossy().as_bytes());
+        hasher.update(b":");
+        hasher.update(fetch::sha256_file(f)?.as_bytes());
+        hasher.update(b"\n");
+    }
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn extract_tarball(tarball: &Path, dest: &Path) -> Result<()> {

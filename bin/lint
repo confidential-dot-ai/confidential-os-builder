@@ -48,10 +48,12 @@ if ! grep -q 'if ! echo 1 > "$dev/reset"' "$flr_helper"; then
 fi
 
 # Every apt source must point at snapshot.ubuntu.com by URI (#96): Mirror=
-# leaves the security pocket live, and the deb822 Snapshot: field keeps the
-# live repo active alongside the snapshot — both fail open. The pin is a full
-# sandbox-tree sources file; confos's mirror guard asserts the apt logs at
-# build time, this lint asserts the config shape.
+# leaves the security pocket live, and both mkosi's Snapshot= and apt's
+# deb822 Snapshot: field keep live repos reachable — all fail open. The pin
+# is a full sandbox-tree sources file per image dir, handed to the tools
+# tree via ToolsTreeSandboxTrees= (it inherits nothing from [Distribution]).
+# This lint asserts the config shape; confos's mirror guard asserts the apt
+# logs at build time — config presence alone has failed open twice.
 git rev-parse --is-inside-work-tree >/dev/null
 failopen=$(git grep -nE '^(Mirror|ToolsTreeMirror|Snapshot)=' -- 'mkosi/' || true)
 if [ -n "$failopen" ]; then
@@ -59,28 +61,27 @@ if [ -n "$failopen" ]; then
     echo "$failopen" >&2
     exit 1
 fi
+pin='^URIs: https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z$'
 for conf in mkosi/*/mkosi.conf; do
     dir=$(dirname "$conf")
     sources="$dir/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources"
     # An image that installs packages without the pinned sources file lets
-    # mkosi generate live sources in its place.
+    # mkosi generate live sources in its place. One pattern, two duties:
+    # at least one pinned URIs: line exists, and no URIs: line deviates.
     if git grep -qE '^Packages=' -- "$dir/*.conf"; then
-        if ! grep -qE '^URIs: https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z$' "$sources" 2>/dev/null; then
-            echo "bin/lint: $dir installs packages but $sources pins no snapshot.ubuntu.com URI" >&2
+        if ! grep -qE "$pin" "$sources" 2>/dev/null || grep -E '^URIs:' "$sources" | grep -vqE "$pin"; then
+            echo "bin/lint: every URIs: line in $sources must be a pinned snapshot.ubuntu.com timestamp" >&2
             exit 1
         fi
-        if grep -E '^URIs:' "$sources" | grep -vq 'snapshot\.ubuntu\.com'; then
-            echo "bin/lint: $sources has a non-snapshot URI" >&2
-            exit 1
-        fi
-        # Every pocket must ride the pinned URI, security included.
-        if ! grep -qE '^Suites: .*-updates .*-security' "$sources"; then
-            echo "bin/lint: $sources must list the release, -updates, and -security suites" >&2
+        # Every pocket of the dir's own Release= must ride the pinned URI —
+        # a release bump that forgets these files must fail here, not build
+        # the previous release from a valid-looking snapshot.
+        rel=$(git grep -hE '^Release=' -- "$dir/*.conf" | head -1 | cut -d= -f2)
+        if ! grep -qx "Suites: $rel $rel-updates $rel-security" "$sources"; then
+            echo "bin/lint: $sources must list exactly: Suites: $rel $rel-updates $rel-security" >&2
             exit 1
         fi
     fi
-    # The tools tree inherits nothing from [Distribution]; without the sandbox
-    # tree handed over explicitly it builds from live mirrors.
     if git grep -qE '^ToolsTree=' -- "$dir/*.conf" && ! git grep -qE '^ToolsTreeSandboxTrees=' -- "$dir/*.conf"; then
         echo "bin/lint: $dir builds a tools tree but sets no ToolsTreeSandboxTrees= (its apt sources would be live, #96)" >&2
         exit 1

@@ -21,8 +21,6 @@ build configs, since those invalidate published reference values.
   run's apt log and fails on any live-mirror fetch — config presence is not
   proof, the log is.
 
-
-
 ## [0.4.1] — 2026-08-13
 
 ### Fixed

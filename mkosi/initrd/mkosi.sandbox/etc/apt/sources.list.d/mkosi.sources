@@ -1,10 +1,5 @@
-# Explicit snapshot URIs for EVERY pocket — main, updates, AND security.
-# mkosi's Apt.setup only generates sources when this file is absent, so this
-# replaces its generated list, whose security pocket is hardcoded live. The
-# deb822 Snapshot: field is no strict pin either — apt keeps the live repo
-# active alongside the snapshot (#96) — so the URI itself is the pin, which
-# also needs no apt snapshot support. Keep the timestamp in lockstep across
-# this file's stanza; bump it deliberately (moves the initrd bytes).
+# Every pocket pinned to snapshot.ubuntu.com by URI; without this file mkosi
+# generates a live-security list. Canonical rationale: bin/lint (#96).
 Types: deb deb-src
 URIs: https://snapshot.ubuntu.com/ubuntu/20260430T000000Z
 Suites: resolute resolute-updates resolute-security

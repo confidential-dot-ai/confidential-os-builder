@@ -27,12 +27,10 @@ pub enum ToolError {
     },
 
     #[error(
-        "{tool} fetched from live (unpinned) Ubuntu mirrors — the build is not \
-         reproducible and the measurement drifts with the archive (#96):\n{lines}\n\
-         Every apt source must point at snapshot.ubuntu.com by URI: provide the \
-         full deb822 list in mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources \
-         and hand the same tree to the tools tree via ToolsTreeSandboxTrees= \
-         (mkosi's own Mirror=/Snapshot= both leave live pockets reachable)."
+        "{tool} fetched from live (unpinned) Ubuntu mirrors — the measurement \
+         would drift with the archive (#96):\n{lines}\n\
+         Pin every pocket to snapshot.ubuntu.com by URI via the mkosi.sandbox \
+         apt sources; see mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/."
     )]
     LiveMirror { tool: String, lines: String },
 }
@@ -42,6 +40,32 @@ pub fn require(tool: &str) -> Result<PathBuf, ToolError> {
     which::which(tool).map_err(|_| ToolError::NotFound {
         tool: tool.to_string(),
     })
+}
+
+/// Map a child's exit status to the shared Failed/Signal errors.
+fn check_status(
+    tool: &str,
+    status: std::process::ExitStatus,
+    stderr: String,
+) -> Result<(), ToolError> {
+    if status.success() {
+        return Ok(());
+    }
+    let code = status.code().ok_or(ToolError::Signal {
+        tool: tool.to_string(),
+    })?;
+    Err(ToolError::Failed {
+        tool: tool.to_string(),
+        code,
+        stderr,
+    })
+}
+
+fn log_exec(tool: &str, args: &[impl AsRef<OsStr>], label: &str) {
+    tracing::debug!(
+        cmd = %format!("{} {}", tool, args.iter().map(|i| i.as_ref().to_string_lossy()).collect::<Vec<_>>().join(" ")),
+        "{label}"
+    );
 }
 
 /// Run a command and return its stdout as a string.
@@ -55,17 +79,11 @@ pub fn run_command(tool: &str, args: &[&str]) -> Result<String, ToolError> {
             source: e,
         })?;
 
-    if !output.status.success() {
-        let code = output.status.code().ok_or(ToolError::Signal {
-            tool: tool.to_string(),
-        })?;
-        return Err(ToolError::Failed {
-            tool: tool.to_string(),
-            code,
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
-    }
-
+    check_status(
+        tool,
+        output.status,
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -84,10 +102,7 @@ pub fn run_command_streaming_in(
     args: &[impl AsRef<OsStr>],
     cwd: PathBuf,
 ) -> Result<(), ToolError> {
-    tracing::debug!(
-        cmd = %format!("{} {}", tool, args.iter().map(|i| i.as_ref().to_string_lossy()).collect::<Vec<_>>().join(" ")),
-        "exec"
-    );
+    log_exec(tool, args, "exec");
     let status = Command::new(tool)
         .args(args)
         .current_dir(cwd)
@@ -97,85 +112,79 @@ pub fn run_command_streaming_in(
             tool: tool.to_string(),
             source: e,
         })?;
-
-    if !status.success() {
-        let code = status.code().ok_or(ToolError::Signal {
-            tool: tool.to_string(),
-        })?;
-        return Err(ToolError::Failed {
-            tool: tool.to_string(),
-            code,
-            stderr: String::new(),
-        });
-    }
-
-    Ok(())
+    check_status(tool, status, String::new())
 }
 
-/// An apt progress line fetching from a live (unpinned) Ubuntu mirror, or None.
+/// True when `line` is an apt fetch-progress line (`Get:12 http://host/...`,
+/// also Hit/Ign/Err) hitting a live Ubuntu host.
 ///
-/// apt prints one line per index/package fetch: `Get:12 http://host/path suite ...`
-/// (also Hit/Ign/Err). When every pocket is pinned, apt rewrites all of them to
-/// snapshot.ubuntu.com — so any other *.ubuntu.com archive host in a fetch line
-/// means a pocket escaped the pin (#96). Matching only real fetch-progress lines
-/// keeps config echoes (a deb822 URIs: line names the live host by design) from
-/// tripping the guard.
-fn live_mirror_fetch(line: &str) -> Option<&str> {
+/// The invariant is an allowlist: with every pocket pinned, the only
+/// ubuntu.com host apt may touch is snapshot.ubuntu.com — any other host
+/// under ubuntu.com is a live, drifting mirror, including ones that do not
+/// exist yet (#96). Non-Ubuntu hosts (third-party repos) are out of scope.
+/// Matching only fetch-progress lines keeps config echoes (a deb822 URIs:
+/// line names a host by design) from tripping the guard.
+fn is_live_mirror_fetch(line: &str) -> bool {
     let mut parts = line.split_whitespace();
-    let tag = parts.next()?;
-    let (kind, seq) = tag.split_once(':')?;
+    let Some((kind, seq)) = parts.next().and_then(|tag| tag.split_once(':')) else {
+        return false;
+    };
     if !matches!(kind, "Get" | "Hit" | "Ign" | "Err") {
-        return None;
+        return false;
     }
     if seq.is_empty() || !seq.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+        return false;
     }
-    let url = parts.next()?;
-    let host = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))?
-        .split('/')
-        .next()?;
-    let live = matches!(
-        host,
-        "archive.ubuntu.com" | "security.ubuntu.com" | "ports.ubuntu.com" | "esm.ubuntu.com"
-    ) || host.ends_with(".archive.ubuntu.com");
-    live.then_some(host)
+    let Some(host) = parts
+        .next()
+        .and_then(|url| {
+            url.strip_prefix("http://")
+                .or_else(|| url.strip_prefix("https://"))
+        })
+        .and_then(|rest| rest.split('/').next())
+    else {
+        return false;
+    };
+    (host == "ubuntu.com" || host.ends_with(".ubuntu.com")) && host != "snapshot.ubuntu.com"
 }
 
-/// Run a command with output streamed to the terminal AND scanned for apt
-/// fetches from live Ubuntu mirrors; fail if any occurred, even on exit 0.
+/// Run mkosi (via sudo) with output streamed to the terminal AND scanned for
+/// apt fetches from live Ubuntu mirrors; fail if any occurred, even on exit 0.
 ///
-/// This is the fail-closed half of the snapshot pinning: config presence is
-/// not proof (mkosi's Snapshot= silently never reached the tools tree, and an
-/// apt without deb822 Snapshot support silently ignores the field — both
-/// fail open, #96). The apt log is the ground truth, so assert on it.
-pub fn run_command_streaming_mirror_guarded(
-    tool: &str,
-    args: &[impl AsRef<OsStr>],
-) -> Result<(), ToolError> {
+/// This is the fail-closed half of the snapshot pinning, and it rides the
+/// only road to mkosi — a new call site cannot silently skip it. Config
+/// presence is not proof (mkosi's Snapshot= never reached the tools tree,
+/// and apt's deb822 Snapshot: field keeps the live repo active — both fail
+/// open, #96). The apt log is the ground truth, so assert on it.
+pub fn run_mkosi(args: &[impl AsRef<OsStr>]) -> Result<(), ToolError> {
+    let mkosi = resolve_mkosi()?;
+    let mut full: Vec<std::ffi::OsString> = vec!["sudo".into(), mkosi.into()];
+    full.extend(args.iter().map(|a| a.as_ref().to_os_string()));
+    let tool = "sudo";
     let io_err = |e: std::io::Error| ToolError::Io {
         tool: tool.to_string(),
         source: e,
     };
-    tracing::debug!(
-        cmd = %format!("{} {}", tool, args.iter().map(|i| i.as_ref().to_string_lossy()).collect::<Vec<_>>().join(" ")),
-        "exec (mirror-guarded)"
+    log_exec(
+        &full[0].to_string_lossy(),
+        &full[1..],
+        "exec (mirror-guarded)",
     );
-    let mut child = Command::new(tool)
-        .args(args)
+    let mut child = Command::new(&full[0])
+        .args(&full[1..])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(io_err)?;
 
-    // Tee both streams line-wise; collect offending lines. read_until (not
-    // lines()) so a non-UTF-8 byte cannot end the scan early — that would
-    // fail open for everything after it.
-    fn tee_scan(reader: impl Read, mut sink: impl Write, hits: &mut Vec<String>) {
+    // Tee a stream line-wise, returning the offending lines in log order.
+    // read_until (not lines()) so a non-UTF-8 byte cannot end the scan
+    // early — that would fail open for everything after it.
+    fn tee_scan(reader: impl Read, mut sink: impl Write) -> Vec<String> {
         let mut buf = BufReader::new(reader);
         let mut line = Vec::new();
+        let mut hits = Vec::new();
         loop {
             line.clear();
             match buf.read_until(b'\n', &mut line) {
@@ -184,38 +193,33 @@ pub fn run_command_streaming_mirror_guarded(
             }
             let _ = sink.write_all(&line);
             let text = String::from_utf8_lossy(&line);
-            if live_mirror_fetch(text.trim_start_matches(['\r', ' '])).is_some() {
+            if is_live_mirror_fetch(text.trim_start_matches(['\r', ' '])) {
                 hits.push(text.trim_end().to_string());
             }
         }
+        hits
     }
 
     let stdout = child.stdout.take().expect("stdout was piped");
     let stderr = child.stderr.take().expect("stderr was piped");
-    let (mut out_hits, mut err_hits) = (Vec::new(), Vec::new());
-    std::thread::scope(|s| {
-        s.spawn(|| tee_scan(stdout, std::io::stdout(), &mut out_hits));
-        s.spawn(|| tee_scan(stderr, std::io::stderr(), &mut err_hits));
+    let (out_hits, err_hits) = std::thread::scope(|s| {
+        let o = s.spawn(|| tee_scan(stdout, std::io::stdout()));
+        let e = s.spawn(|| tee_scan(stderr, std::io::stderr()));
+        // A join error means the tee thread panicked; swallowing it would
+        // drop collected hits and fail open, so propagate the panic.
+        (
+            o.join().expect("tee thread panicked"),
+            e.join().expect("tee thread panicked"),
+        )
     });
     let status = child.wait().map_err(io_err)?;
+    check_status(tool, status, String::new())?;
 
-    if !status.success() {
-        let code = status.code().ok_or(ToolError::Signal {
-            tool: tool.to_string(),
-        })?;
-        return Err(ToolError::Failed {
-            tool: tool.to_string(),
-            code,
-            stderr: String::new(),
-        });
-    }
-    out_hits.append(&mut err_hits);
-    if !out_hits.is_empty() {
-        out_hits.sort();
-        out_hits.dedup();
+    let hits = [out_hits, err_hits].concat();
+    if !hits.is_empty() {
         return Err(ToolError::LiveMirror {
             tool: tool.to_string(),
-            lines: out_hits.join("\n"),
+            lines: hits.join("\n"),
         });
     }
     Ok(())
@@ -332,20 +336,22 @@ mod tests {
     }
 
     #[test]
-    fn live_mirror_fetch_flags_live_hosts_in_fetch_lines() {
+    fn is_live_mirror_fetch_flags_any_nonsnapshot_ubuntu_host() {
         for line in [
             "Get:1 http://archive.ubuntu.com/ubuntu resolute InRelease [136 kB]",
             "Hit:3 http://security.ubuntu.com/ubuntu resolute-security InRelease",
             "Err:12 https://ports.ubuntu.com resolute/main arm64 Packages",
             "Get:7 http://azure.archive.ubuntu.com/ubuntu resolute/main amd64 tar 1.35 [258 kB]",
             "Ign:2 https://esm.ubuntu.com/apps/ubuntu resolute-apps-security InRelease",
+            // Allowlist, not blocklist: hosts we never enumerated still flag.
+            "Get:4 http://old-releases.ubuntu.com/ubuntu resolute InRelease",
         ] {
-            assert!(live_mirror_fetch(line).is_some(), "{line}");
+            assert!(is_live_mirror_fetch(line), "{line}");
         }
     }
 
     #[test]
-    fn live_mirror_fetch_ignores_pinned_and_non_fetch_lines() {
+    fn is_live_mirror_fetch_ignores_pinned_and_non_fetch_lines() {
         for line in [
             // The pin working as intended.
             "Get:1 https://snapshot.ubuntu.com/ubuntu/20260405T000000Z/dists/resolute/InRelease [136 kB]",
@@ -355,9 +361,10 @@ mod tests {
             "mkosi: falling back to archive.ubuntu.com",
             // Malformed sequence number — not an apt progress line.
             "Get:x http://archive.ubuntu.com/ubuntu resolute InRelease",
+            // Non-Ubuntu third-party hosts are out of scope.
             "Get:1 http://packages.microsoft.com/repos/azure-cli resolute InRelease",
         ] {
-            assert!(live_mirror_fetch(line).is_none(), "{line}");
+            assert!(!is_live_mirror_fetch(line), "{line}");
         }
     }
 }

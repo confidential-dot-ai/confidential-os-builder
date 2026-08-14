@@ -129,10 +129,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         copy_extra(extra, &mkosi_local_extra)?;
     }
 
-    // Check required tools — resolve mkosi's full canonical path so sudo can invoke it
-    // directly (uv-installed mkosi has a symlink chain that breaks under sudo + env + PATH).
-    let mkosi_bin = tools::resolve_mkosi()?;
-    tracing::info!("mkosi resolved to {mkosi_bin}");
+    // Check mkosi is available up front, before any expensive work; the
+    // actual invocations resolve it again inside tools::run_mkosi.
+    tools::resolve_mkosi()?;
 
     // Prepare output directory — check for symlinks before deletion to prevent
     // remove_dir_all from following a symlink and deleting an unrelated directory.
@@ -190,15 +189,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     if !initrd_dir.exists() {
         anyhow::bail!("mkosi initrd config not found: {}", initrd_dir.display());
     }
-    tools::run_command_streaming_mirror_guarded(
-        "sudo",
-        &[
-            mkosi_bin.as_str(),
-            "--directory",
-            &*initrd_dir.to_string_lossy(),
-            "--force",
-        ],
-    )?;
+    tools::run_mkosi(&["--directory", &*initrd_dir.to_string_lossy(), "--force"])?;
     let mkosi_initrd = initrd_dir
         .join("mkosi.output/image.cpio.gz")
         .canonicalize()?;
@@ -238,7 +229,6 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     fs_err::create_dir_all(mkosi_dir.join("mkosi.output"))?;
 
     let mut mkosi_args: Vec<String> = vec![
-        mkosi_bin.clone(),
         "--directory".to_string(),
         mkosi_dir.to_string_lossy().into_owned(),
         "--force".to_string(),
@@ -259,7 +249,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     for profile in &profiles {
         mkosi_args.push(format!("--profile={profile}"));
     }
-    tools::run_command_streaming_mirror_guarded("sudo", &mkosi_args)?;
+    tools::run_mkosi(&mkosi_args)?;
 
     let mkosi_output = mkosi_dir.join("mkosi.output");
     // Find the split artifacts mkosi produced
