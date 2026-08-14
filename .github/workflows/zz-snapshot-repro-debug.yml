@@ -1,0 +1,35 @@
+# TEMP #96 — verify the Snapshot= pocket pin: the mirror guard must pass
+# (no live-mirror apt fetches anywhere in the mkosi runs) and two --force
+# builds of the BTF kernel must still match. Delete once confirmed.
+name: snapshot repro debug (TEMP #96)
+on:
+  push:
+    branches: [fix/tools-tree-snapshot]
+permissions:
+  contents: read
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: systemd/mkosi@84af20892b61c8e177e391f997ded8b4cb5514f2 # v26
+      - run: sudo apt-get update -y && sudo apt-get install -y systemd-container
+      - run: cargo build --release
+      - name: Guarded double build, all pockets pinned
+        run: |
+          set -euo pipefail
+          apt --version
+          curl -fsSL https://raw.githubusercontent.com/confidential-dot-ai/c8s/main/node-guest-image/kernel/c8s.config -o /tmp/btf.config
+          grep -q "CONFIG_DEBUG_INFO_BTF=y" /tmp/btf.config
+          b() { ./target/release/confos kernel --force --kernel-config-fragment /tmp/btf.config --kernel-builder-package dwarves,python3,pkg-config,zlib1g-dev --output "output/k$1" 2>&1 | tee "/tmp/build$1.log"; }
+          b A; b B
+          a=$(sha256sum output/kA/vmlinuz|awk '{print $1}'); c=$(sha256sum output/kB/vmlinuz|awk '{print $1}')
+          echo "A=$a"; echo "B=$c"
+          echo "=== live-mirror fetches in build logs (must be zero):"
+          grep -cE "^(Get|Hit|Ign|Err):[0-9]+ https?://(archive|security|ports|esm|[a-z0-9.-]+\.archive)\.ubuntu\.com" /tmp/buildA.log /tmp/buildB.log || true
+          echo "=== snapshot fetches (must be plenty):"
+          grep -cE "^(Get|Hit):[0-9]+ https?://snapshot\.ubuntu\.com" /tmp/buildA.log /tmp/buildB.log
+          { echo "### Snapshot repro (#96)"; echo "- A: \`$a\`"; echo "- B: \`$c\`"; } >> "$GITHUB_STEP_SUMMARY"
+          test "$a" = "$c"
