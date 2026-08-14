@@ -142,9 +142,13 @@ fn is_live_mirror_fetch(line: &str) -> bool {
                 .or_else(|| url.strip_prefix("https://"))
         })
         .and_then(|rest| rest.split('/').next())
+        .and_then(|hostport| hostport.split(':').next())
     else {
         return false;
     };
+    // Hostnames are case-insensitive; normalize so a spelling variant cannot
+    // slip past the allowlist.
+    let host = host.to_ascii_lowercase();
     (host == "ubuntu.com" || host.ends_with(".ubuntu.com")) && host != "snapshot.ubuntu.com"
 }
 
@@ -202,16 +206,22 @@ pub fn run_mkosi(args: &[impl AsRef<OsStr>]) -> Result<(), ToolError> {
 
     let stdout = child.stdout.take().expect("stdout was piped");
     let stderr = child.stderr.take().expect("stderr was piped");
-    let (out_hits, err_hits) = std::thread::scope(|s| {
+    let (out_res, err_res) = std::thread::scope(|s| {
         let o = s.spawn(|| tee_scan(stdout, std::io::stdout()));
         let e = s.spawn(|| tee_scan(stderr, std::io::stderr()));
-        // A join error means the tee thread panicked; swallowing it would
-        // drop collected hits and fail open, so propagate the panic.
-        (
-            o.join().expect("tee thread panicked"),
-            e.join().expect("tee thread panicked"),
-        )
+        (o.join(), e.join())
     });
+    let (out_hits, err_hits) = match (out_res, err_res) {
+        (Ok(o), Ok(e)) => (o, e),
+        (o, e) => {
+            // A tee thread panicked: its pipe is undrained, so the child
+            // could block forever on write — reap it before propagating.
+            // Swallowing the panic would drop collected hits and fail open.
+            let _ = child.kill();
+            let _ = child.wait();
+            std::panic::resume_unwind(o.err().or_else(|| e.err()).expect("one tee side panicked"));
+        }
+    };
     let status = child.wait().map_err(io_err)?;
     check_status(tool, status, String::new())?;
 
@@ -345,6 +355,9 @@ mod tests {
             "Ign:2 https://esm.ubuntu.com/apps/ubuntu resolute-apps-security InRelease",
             // Allowlist, not blocklist: hosts we never enumerated still flag.
             "Get:4 http://old-releases.ubuntu.com/ubuntu resolute InRelease",
+            // Spelling variants cannot slip past normalization.
+            "Get:5 http://Archive.Ubuntu.com/ubuntu resolute InRelease",
+            "Get:6 http://archive.ubuntu.com:80/ubuntu resolute InRelease",
         ] {
             assert!(is_live_mirror_fetch(line), "{line}");
         }

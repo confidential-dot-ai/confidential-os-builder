@@ -76,7 +76,7 @@ for conf in mkosi/*/mkosi.conf; do
         # Every pocket of the dir's own Release= must ride the pinned URI —
         # a release bump that forgets these files must fail here, not build
         # the previous release from a valid-looking snapshot.
-        rel=$(git grep -hE '^Release=' -- "$dir/*.conf" | head -1 | cut -d= -f2)
+        rel=$(git grep -hE '^Release=' -- "$dir/mkosi.conf" | head -1 | cut -d= -f2)
         if ! grep -qx "Suites: $rel $rel-updates $rel-security" "$sources"; then
             echo "bin/lint: $sources must list exactly: Suites: $rel $rel-updates $rel-security" >&2
             exit 1

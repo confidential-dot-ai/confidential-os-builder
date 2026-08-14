@@ -328,8 +328,14 @@ pub fn compute_fingerprint(
 /// tools_tree_digest so there is exactly one inventory of "the toolchain" —
 /// CI's cache keys mirror it with hashFiles over the same paths.
 fn tools_tree_inputs_digest() -> Result<String> {
-    let mut files = vec![PathBuf::from(TOOLS_TREE_CONF)];
-    let mut stack = vec![PathBuf::from(TOOLS_TREE_SANDBOX)];
+    hash_tree_inputs(Path::new(TOOLS_TREE_CONF), Path::new(TOOLS_TREE_SANDBOX))
+}
+
+/// sha256 over sorted "path:sha256(content)\n" lines for `conf` plus every
+/// file under `sandbox` — sensitive to adds, removals, renames, and edits.
+fn hash_tree_inputs(conf: &Path, sandbox: &Path) -> Result<String> {
+    let mut files = vec![conf.to_path_buf()];
+    let mut stack = vec![sandbox.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in fs_err::read_dir(&dir)? {
             let path = entry?.path();
@@ -343,7 +349,7 @@ fn tools_tree_inputs_digest() -> Result<String> {
     files.sort();
     let mut hasher = Sha256::new();
     for f in &files {
-        hasher.update(f.to_string_lossy().as_bytes());
+        hasher.update(f.as_os_str().as_encoded_bytes());
         hasher.update(b":");
         hasher.update(fetch::sha256_file(f)?.as_bytes());
         hasher.update(b"\n");
@@ -364,4 +370,37 @@ fn extract_tarball(tarball: &Path, dest: &Path) -> Result<()> {
         ],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn hash_tree_inputs_covers_conf_and_every_sandbox_file() {
+        let d = TempDir::new().unwrap();
+        let conf = d.path().join("mkosi.conf");
+        fs_err::write(&conf, "Packages=x\n").unwrap();
+        let sandbox = d.path().join("mkosi.sandbox");
+        let nested = sandbox.join("etc/apt/sources.list.d");
+        fs_err::create_dir_all(&nested).unwrap();
+        let sources = nested.join("mkosi.sources");
+        fs_err::write(&sources, "URIs: a\n").unwrap();
+
+        let base = hash_tree_inputs(&conf, &sandbox).unwrap();
+        // Deterministic across calls.
+        assert_eq!(base, hash_tree_inputs(&conf, &sandbox).unwrap());
+        // A nested content change moves the digest — the pin lives here (#96).
+        fs_err::write(&sources, "URIs: b\n").unwrap();
+        let edited = hash_tree_inputs(&conf, &sandbox).unwrap();
+        assert_ne!(base, edited);
+        // A new file anywhere in the tree moves it again.
+        fs_err::write(sandbox.join("etc/apt/80-retries"), "x").unwrap();
+        assert_ne!(edited, hash_tree_inputs(&conf, &sandbox).unwrap());
+        // The conf file is covered too.
+        let with_new_file = hash_tree_inputs(&conf, &sandbox).unwrap();
+        fs_err::write(&conf, "Packages=y\n").unwrap();
+        assert_ne!(with_new_file, hash_tree_inputs(&conf, &sandbox).unwrap());
+    }
 }
