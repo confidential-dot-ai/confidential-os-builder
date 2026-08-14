@@ -34,6 +34,8 @@ const SNAPSHOT_PATH: &str = "kernel/config-x86_64.snapshot";
 const VERSION_PATH: &str = "kernel/version";
 const TOOLS_TREE_DIR: &str = "mkosi/kernel-builder";
 const TOOLS_TREE_CONF: &str = "mkosi/kernel-builder/mkosi.conf";
+const TOOLS_TREE_SOURCES: &str =
+    "mkosi/kernel-builder/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources";
 const TOOLS_TREE_IMAGE: &str = "mkosi/kernel-builder/mkosi.output/image";
 const TOOLS_TREE_STAMP: &str = "mkosi/kernel-builder/mkosi.output/.confos-tools-stamp";
 
@@ -245,12 +247,15 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> {
     let tree = Path::new(TOOLS_TREE_IMAGE);
     let stamp_path = Path::new(TOOLS_TREE_STAMP);
-    // Cache key = mkosi.conf hash + the extra-package list. The packages come
-    // via flags, not mkosi.conf, so they must be folded in here or a changed
-    // --kernel-builder-package list would silently reuse a stale tree.
+    // Cache key = mkosi.conf + pinned-sources hashes + the extra-package
+    // list. The packages come via flags, not mkosi.conf, so they must be
+    // folded in here or a changed --kernel-builder-package list would
+    // silently reuse a stale tree; the sandbox sources carry the snapshot
+    // pin, so a pin bump must bust the tree too (#96).
     let stamp_key = format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
         fetch::sha256_file(Path::new(TOOLS_TREE_CONF))?,
+        fetch::sha256_file(Path::new(TOOLS_TREE_SOURCES))?,
         extra_packages.join(",")
     );
 
@@ -277,7 +282,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
     for pkg in extra_packages {
         args.push(format!("--package={pkg}"));
     }
-    tools::run_command_streaming("sudo", &args)?;
+    tools::run_command_streaming_mirror_guarded("sudo", &args)?;
     if !tree.exists() {
         return Err(anyhow!("mkosi did not produce {}", tree.display()));
     }

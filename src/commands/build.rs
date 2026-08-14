@@ -190,7 +190,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     if !initrd_dir.exists() {
         anyhow::bail!("mkosi initrd config not found: {}", initrd_dir.display());
     }
-    tools::run_command_streaming(
+    tools::run_command_streaming_mirror_guarded(
         "sudo",
         &[
             mkosi_bin.as_str(),
@@ -259,7 +259,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     for profile in &profiles {
         mkosi_args.push(format!("--profile={profile}"));
     }
-    tools::run_command_streaming("sudo", &mkosi_args)?;
+    tools::run_command_streaming_mirror_guarded("sudo", &mkosi_args)?;
 
     let mkosi_output = mkosi_dir.join("mkosi.output");
     // Find the split artifacts mkosi produced

@@ -8,6 +8,21 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Fixed
+- **Changes measurements (once).** The apt security pocket was live and
+  unpinned (#96): `Mirror=` snapshot URLs pin only main/updates — mkosi
+  hardcodes `security.ubuntu.com` — so 74/478 kernel-builder tools-tree
+  packages could drift between builds. mkosi's `Snapshot=` is no fix either:
+  it never reaches the tools tree, and apt's deb822 `Snapshot:` field keeps
+  the live repo active alongside the snapshot. Build-time apt sources now
+  ship whole as `mkosi.sandbox` deb822 files pinning every pocket to
+  snapshot.ubuntu.com by URI (no apt snapshot support needed), handed to the
+  tools tree via `ToolsTreeSandboxTrees=`. confos also scans every mkosi
+  run's apt log and fails on any live-mirror fetch — config presence is not
+  proof, the log is.
+
+
+
 ## [0.4.1] — 2026-08-13
 
 ### Fixed
