@@ -117,7 +117,13 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // Both run unconditionally: the build that trips over a leftover is
     // typically the one that passed neither flag.
     sweep_stale_staged_profiles(&profiles_root)?;
-    write_sync_inputs(&mkosi_local, &args.sync_inputs)?;
+    // The platform crosses into the build twice — measurement artifacts via
+    // --platform, image content via sync hooks. Staging it as a built-in
+    // sync-input makes the two carriers one: hooks always see the value, and
+    // a caller-supplied `platform=` that disagrees with --platform is
+    // rejected instead of silently producing a mismatched image.
+    let sync_inputs = with_platform_sync_input(&args.sync_inputs, platform)?;
+    write_sync_inputs(&mkosi_local, &sync_inputs)?;
 
     let _mkosi_local_guard = RemoveDirOnDrop {
         dir: mkosi_local.clone(),
@@ -676,6 +682,33 @@ fn lock_checkout(path: &Path) -> anyhow::Result<fs_err::File> {
 
 /// Clear the `--sync-input` files a dead build left behind and stage this
 /// build's under `mkosi.local/.confos-sync-inputs/`.
+/// `platform` staged as a built-in sync-input, so hooks always see the value
+/// that also drives the measurement artifacts. A caller-supplied `platform=`
+/// that disagrees is rejected — one value, two consumers, no seam.
+fn with_platform_sync_input(
+    inputs: &[SyncInput],
+    platform: BuildPlatform,
+) -> anyhow::Result<Vec<SyncInput>> {
+    let value = match platform {
+        BuildPlatform::Snp => "snp",
+        BuildPlatform::Tdx => "tdx",
+        BuildPlatform::Both => "both",
+    };
+    let mut out = inputs.to_vec();
+    match out.iter().find(|i| i.name == "platform") {
+        Some(user) if user.value != value => anyhow::bail!(
+            "--sync-input platform={} contradicts --platform {value} — drop the sync-input; it is staged automatically",
+            user.value
+        ),
+        Some(_) => {}
+        None => out.push(SyncInput {
+            name: "platform".to_string(),
+            value: value.to_string(),
+        }),
+    }
+    Ok(out)
+}
+
 fn write_sync_inputs(mkosi_local: &Path, inputs: &[SyncInput]) -> anyhow::Result<()> {
     let dir = mkosi_local.join(SYNC_INPUT_DIR);
     if fs_err::symlink_metadata(&dir).is_ok() {
@@ -1253,6 +1286,36 @@ fn concat_files(parts: &[&Path], out: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn platform_sync_input_added_when_absent() {
+        let out = with_platform_sync_input(&[], BuildPlatform::Snp).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].name, "platform");
+        assert_eq!(out[0].value, "snp");
+    }
+
+    #[test]
+    fn platform_sync_input_accepts_matching_caller_value() {
+        let user = vec![SyncInput {
+            name: "platform".into(),
+            value: "tdx".into(),
+        }];
+        let out = with_platform_sync_input(&user, BuildPlatform::Tdx).unwrap();
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn platform_sync_input_rejects_mismatch() {
+        let user = vec![SyncInput {
+            name: "platform".into(),
+            value: "tdx".into(),
+        }];
+        let err = with_platform_sync_input(&user, BuildPlatform::Snp)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("contradicts"), "{err}");
+    }
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;

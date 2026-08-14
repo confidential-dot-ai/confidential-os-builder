@@ -8,6 +8,15 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Added
+- `--platform` is staged as a built-in `platform` sync-input, so profile sync
+  hooks always see the same value that drives the measurement artifacts. A
+  caller-supplied `--sync-input platform=` that disagrees with `--platform`
+  is rejected — previously the two could silently diverge (e.g. an
+  snp-measured image with tdx-typed contents). A matching caller value is
+  accepted, so existing wrappers keep working until they drop the explicit
+  flag
+
 ## [0.4.1] — 2026-08-13
 
 ### Fixed
