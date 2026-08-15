@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
+use sha2::{Digest, Sha256};
 
 use crate::kernel::{compile, config, fetch, manifest as km, version::KernelVersion};
 use crate::tools;
@@ -34,6 +35,7 @@ const SNAPSHOT_PATH: &str = "kernel/config-x86_64.snapshot";
 const VERSION_PATH: &str = "kernel/version";
 const TOOLS_TREE_DIR: &str = "mkosi/kernel-builder";
 const TOOLS_TREE_CONF: &str = "mkosi/kernel-builder/mkosi.conf";
+const TOOLS_TREE_SANDBOX: &str = "mkosi/kernel-builder/mkosi.sandbox";
 const TOOLS_TREE_IMAGE: &str = "mkosi/kernel-builder/mkosi.output/image";
 const TOOLS_TREE_STAMP: &str = "mkosi/kernel-builder/mkosi.output/.confos-tools-stamp";
 
@@ -245,12 +247,13 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> {
     let tree = Path::new(TOOLS_TREE_IMAGE);
     let stamp_path = Path::new(TOOLS_TREE_STAMP);
-    // Cache key = mkosi.conf hash + the extra-package list. The packages come
-    // via flags, not mkosi.conf, so they must be folded in here or a changed
-    // --kernel-builder-package list would silently reuse a stale tree.
+    // Cache key = the tools-tree inputs digest + the extra-package list.
+    // The packages come via flags, not mkosi.conf, so they must be folded in
+    // here or a changed --kernel-builder-package list would silently reuse a
+    // stale tree.
     let stamp_key = format!(
         "{}\n{}",
-        fetch::sha256_file(Path::new(TOOLS_TREE_CONF))?,
+        tools_tree_inputs_digest()?,
         extra_packages.join(",")
     );
 
@@ -267,9 +270,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
     // be picked up as a cache hit on the next call.
     let _ = fs_err::remove_file(stamp_path);
 
-    let mkosi = tools::resolve_mkosi()?;
     let mut args: Vec<String> = vec![
-        mkosi.clone(),
         "--directory".into(),
         TOOLS_TREE_DIR.into(),
         "--force".into(),
@@ -277,7 +278,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
     for pkg in extra_packages {
         args.push(format!("--package={pkg}"));
     }
-    tools::run_command_streaming("sudo", &args)?;
+    tools::run_mkosi(&args)?;
     if !tree.exists() {
         return Err(anyhow!("mkosi did not produce {}", tree.display()));
     }
@@ -317,14 +318,43 @@ pub fn compute_fingerprint(
         } else {
             String::new()
         },
-        tools_tree_digest: tools_tree_digest()?,
+        tools_tree_digest: tools_tree_inputs_digest()?,
     })
 }
 
-/// Hash the toolchain identity. We use the mkosi.conf bytes as a stable proxy:
-/// the apt mirror snapshot URL is in there, package list is in there.
-fn tools_tree_digest() -> Result<String> {
-    fetch::sha256_file(Path::new(TOOLS_TREE_CONF))
+/// Hash every input that defines the kernel-builder tools tree: mkosi.conf
+/// (package list) plus the mkosi.sandbox tree (the apt snapshot pin lives in
+/// its sources file, #96). Feeds both the rebuild stamp and the manifest's
+/// tools_tree_digest so there is exactly one inventory of "the toolchain" —
+/// CI's cache keys mirror it with hashFiles over the same paths.
+fn tools_tree_inputs_digest() -> Result<String> {
+    hash_tree_inputs(Path::new(TOOLS_TREE_CONF), Path::new(TOOLS_TREE_SANDBOX))
+}
+
+/// sha256 over sorted "path:sha256(content)\n" lines for `conf` plus every
+/// file under `sandbox` — sensitive to adds, removals, renames, and edits.
+fn hash_tree_inputs(conf: &Path, sandbox: &Path) -> Result<String> {
+    let mut files = vec![conf.to_path_buf()];
+    let mut stack = vec![sandbox.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs_err::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    let mut hasher = Sha256::new();
+    for f in &files {
+        hasher.update(f.as_os_str().as_encoded_bytes());
+        hasher.update(b":");
+        hasher.update(fetch::sha256_file(f)?.as_bytes());
+        hasher.update(b"\n");
+    }
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn extract_tarball(tarball: &Path, dest: &Path) -> Result<()> {
@@ -340,4 +370,37 @@ fn extract_tarball(tarball: &Path, dest: &Path) -> Result<()> {
         ],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn hash_tree_inputs_covers_conf_and_every_sandbox_file() {
+        let d = TempDir::new().unwrap();
+        let conf = d.path().join("mkosi.conf");
+        fs_err::write(&conf, "Packages=x\n").unwrap();
+        let sandbox = d.path().join("mkosi.sandbox");
+        let nested = sandbox.join("etc/apt/sources.list.d");
+        fs_err::create_dir_all(&nested).unwrap();
+        let sources = nested.join("mkosi.sources");
+        fs_err::write(&sources, "URIs: a\n").unwrap();
+
+        let base = hash_tree_inputs(&conf, &sandbox).unwrap();
+        // Deterministic across calls.
+        assert_eq!(base, hash_tree_inputs(&conf, &sandbox).unwrap());
+        // A nested content change moves the digest — the pin lives here (#96).
+        fs_err::write(&sources, "URIs: b\n").unwrap();
+        let edited = hash_tree_inputs(&conf, &sandbox).unwrap();
+        assert_ne!(base, edited);
+        // A new file anywhere in the tree moves it again.
+        fs_err::write(sandbox.join("etc/apt/80-retries"), "x").unwrap();
+        assert_ne!(edited, hash_tree_inputs(&conf, &sandbox).unwrap());
+        // The conf file is covered too.
+        let with_new_file = hash_tree_inputs(&conf, &sandbox).unwrap();
+        fs_err::write(&conf, "Packages=y\n").unwrap();
+        assert_ne!(with_new_file, hash_tree_inputs(&conf, &sandbox).unwrap());
+    }
 }

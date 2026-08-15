@@ -1,0 +1,7 @@
+# Every pocket pinned to snapshot.ubuntu.com by URI; without this file mkosi
+# generates a live-security list. Canonical rationale: bin/lint (#96).
+Types: deb deb-src
+URIs: https://snapshot.ubuntu.com/ubuntu/20260430T000000Z
+Suites: resolute resolute-updates resolute-security
+Components: main
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg

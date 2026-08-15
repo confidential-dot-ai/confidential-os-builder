@@ -47,23 +47,43 @@ if ! grep -q 'if ! echo 1 > "$dev/reset"' "$flr_helper"; then
     exit 1
 fi
 
-# Apt mirrors must stay time-pinned to snapshot.ubuntu.com; archive.ubuntu.com drifts daily, making the measurement a function of build date.
+# Every apt source must point at snapshot.ubuntu.com by URI (#96): Mirror=
+# leaves the security pocket live, and both mkosi's Snapshot= and apt's
+# deb822 Snapshot: field keep live repos reachable — all fail open. The pin
+# is a full sandbox-tree sources file per image dir, handed to the tools
+# tree via ToolsTreeSandboxTrees= (it inherits nothing from [Distribution]).
+# This lint asserts the config shape; confos's mirror guard asserts the apt
+# logs at build time — config presence alone has failed open twice.
 git rev-parse --is-inside-work-tree >/dev/null
-unpinned=$(git grep -nE '^(Mirror|ToolsTreeMirror)=' -- 'mkosi/*.conf' | grep -v 'snapshot\.ubuntu\.com' || true)
-if [ -n "$unpinned" ]; then
-    echo "bin/lint: apt mirrors must point at a snapshot.ubuntu.com timestamp:" >&2
-    echo "$unpinned" >&2
+failopen=$(git grep -nE '^(Mirror|ToolsTreeMirror|Snapshot)=' -- 'mkosi/' || true)
+if [ -n "$failopen" ]; then
+    echo "bin/lint: Mirror=/ToolsTreeMirror=/Snapshot= all leave live pockets reachable (#96) — pin via mkosi.sandbox sources instead:" >&2
+    echo "$failopen" >&2
     exit 1
 fi
-# Presence, not just value: an image that installs packages with no Mirror= (or builds a tools tree with no ToolsTreeMirror=) uses the default drifting archive.ubuntu.com.
+pin='^URIs: https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z$'
 for conf in mkosi/*/mkosi.conf; do
     dir=$(dirname "$conf")
-    if git grep -qE '^Packages=' -- "$dir/*.conf" && ! git grep -qE '^Mirror=https://snapshot\.ubuntu\.com/' -- "$dir/*.conf"; then
-        echo "bin/lint: $dir installs packages but declares no snapshot.ubuntu.com Mirror= pin" >&2
-        exit 1
+    sources="$dir/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources"
+    # An image that installs packages without the pinned sources file lets
+    # mkosi generate live sources in its place. One pattern, two duties:
+    # at least one pinned URIs: line exists, and no URIs: line deviates.
+    if git grep -qE '^Packages=' -- "$dir/*.conf"; then
+        if ! grep -qE "$pin" "$sources" 2>/dev/null || grep -E '^URIs:' "$sources" 2>/dev/null | grep -vqE "$pin"; then
+            echo "bin/lint: every URIs: line in $sources must be a pinned snapshot.ubuntu.com timestamp" >&2
+            exit 1
+        fi
+        # Every pocket of the dir's own Release= must ride the pinned URI —
+        # a release bump that forgets these files must fail here, not build
+        # the previous release from a valid-looking snapshot.
+        rel=$(git grep -hE '^Release=' -- "$dir/mkosi.conf" | head -1 | cut -d= -f2)
+        if ! grep -qx "Suites: $rel $rel-updates $rel-security" "$sources"; then
+            echo "bin/lint: $sources must list exactly: Suites: $rel $rel-updates $rel-security" >&2
+            exit 1
+        fi
     fi
-    if git grep -qE '^ToolsTree=' -- "$dir/*.conf" && ! git grep -qE '^ToolsTreeMirror=https://snapshot\.ubuntu\.com/' -- "$dir/*.conf"; then
-        echo "bin/lint: $dir builds a tools tree but declares no snapshot.ubuntu.com ToolsTreeMirror= pin" >&2
+    if git grep -qE '^ToolsTree=' -- "$dir/*.conf" && ! git grep -qE '^ToolsTreeSandboxTrees=' -- "$dir/*.conf"; then
+        echo "bin/lint: $dir builds a tools tree but sets no ToolsTreeSandboxTrees= (its apt sources would be live, #96)" >&2
         exit 1
     fi
 done
