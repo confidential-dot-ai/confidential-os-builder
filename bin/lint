@@ -69,7 +69,7 @@ for conf in mkosi/*/mkosi.conf; do
     # mkosi generate live sources in its place. One pattern, two duties:
     # at least one pinned URIs: line exists, and no URIs: line deviates.
     if git grep -qE '^Packages=' -- "$dir/*.conf"; then
-        if ! grep -qE "$pin" "$sources" 2>/dev/null || grep -E '^URIs:' "$sources" | grep -vqE "$pin"; then
+        if ! grep -qE "$pin" "$sources" 2>/dev/null || grep -E '^URIs:' "$sources" 2>/dev/null | grep -vqE "$pin"; then
             echo "bin/lint: every URIs: line in $sources must be a pinned snapshot.ubuntu.com timestamp" >&2
             exit 1
         fi

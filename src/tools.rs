@@ -160,6 +160,9 @@ fn is_live_mirror_fetch(line: &str) -> bool {
 /// presence is not proof (mkosi's Snapshot= never reached the tools tree,
 /// and apt's deb822 Snapshot: field keeps the live repo active — both fail
 /// open, #96). The apt log is the ground truth, so assert on it.
+///
+/// PREMISE: apt progress lines are visible in mkosi output (v26: no quiet
+/// flags) — re-verify on mkosi bumps; zero lines is legal (warm caches).
 pub fn run_mkosi(args: &[impl AsRef<OsStr>]) -> Result<(), ToolError> {
     let mkosi = resolve_mkosi()?;
     let mut full: Vec<std::ffi::OsString> = vec!["sudo".into(), mkosi.into()];
@@ -192,7 +195,12 @@ pub fn run_mkosi(args: &[impl AsRef<OsStr>]) -> Result<(), ToolError> {
         loop {
             line.clear();
             match buf.read_until(b'\n', &mut line) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break,
+                Err(e) => {
+                    // Don't go silently blind mid-stream.
+                    tracing::warn!(error = %e, "mirror-guard tee: read error, scan truncated");
+                    break;
+                }
                 Ok(_) => {}
             }
             let _ = sink.write_all(&line);
