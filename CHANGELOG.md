@@ -8,6 +8,8 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-08-15
+
 ### Fixed
 - **Changes measurements (once).** The apt security pocket was live and
   unpinned (#96): `Mirror=` snapshot URLs pin only main/updates — mkosi
@@ -189,7 +191,8 @@ Initial public release.
 - `steep push` / `steep pull` (OCI via oras)
 - CI publishes base image as `ghcr.io/confidential-dot-ai/steep:base`
 
-[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.2.0...v0.3.0
