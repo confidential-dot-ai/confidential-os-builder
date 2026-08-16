@@ -178,8 +178,16 @@ pub(crate) fn build_cdi_tarball(
         } else {
             name.into_owned()
         };
+        // Explicit headers, not append_file: real mtime/uid/gid would make
+        // the layer digest differ per build for identical bytes (#85).
         let mut file = fs_err::File::open(&src)?;
-        tar.append_file(&arcname, file.file_mut())?;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(file.metadata()?.len());
+        header.set_mode(0o644);
+        header.set_mtime(0);
+        header.set_uid(0);
+        header.set_gid(0);
+        tar.append_data(&mut header, &arcname, file.file_mut())?;
     }
 
     let gz = tar.into_inner()?;
@@ -246,6 +254,32 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("--tag"), "got: {err}");
+    }
+
+    #[test]
+    fn cdi_tarball_is_byte_identical_for_identical_content() {
+        let out = TempDir::new().unwrap();
+        let mut tarballs = Vec::new();
+        for i in 0..2 {
+            let src = TempDir::new().unwrap();
+            write(src.path(), "disk.raw", b"RAWDISK-CONTENT");
+            write(src.path(), "manifest.json", b"{}");
+            // Source metadata must not leak into the layer (#85): age one copy.
+            let old = std::time::SystemTime::now() - std::time::Duration::from_secs(86400 * i);
+            fs_err::File::open(src.path().join("disk.raw"))
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+            let path = out.path().join(format!("cdi-{i}.tar.gz"));
+            build_cdi_tarball(
+                src.path(),
+                &["disk.raw".into(), "manifest.json".into()],
+                &path,
+            )
+            .unwrap();
+            tarballs.push(fs_err::read(&path).unwrap());
+        }
+        assert_eq!(tarballs[0], tarballs[1]);
     }
 
     #[test]

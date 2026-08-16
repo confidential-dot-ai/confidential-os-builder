@@ -8,6 +8,12 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Fixed
+- CDI tarballs are byte-reproducible: tar headers no longer carry the source
+  files' mtime/uid/gid, so identical artifacts produce an identical layer and
+  image digest. Changes the CDI image digest once (measurements unaffected —
+  the digest wraps the measured bytes, it is not itself measured)
+
 ## [0.4.2] — 2026-08-15
 
 ### Fixed
