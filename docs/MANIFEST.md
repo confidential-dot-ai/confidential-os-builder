@@ -105,7 +105,7 @@ intermediate files).
 | `kernel.vmlinuz_sha256` | Hash of the compiled kernel binary embedded in the UKI |
 | `kernel.required_config_sha256` / `hardening_config_sha256` | Hashes of two of confos's three always-applied config fragments. The third, `confidential.config`, has no field of its own — its effect is pinned transitively via `snapshot_config_sha256` (the fully-resolved config) |
 | `kernel.kernel_extra_config_sha256` | Hash of the caller's `--kernel-config-fragment`; empty string when none was passed |
-| `kernel.snapshot_config_sha256` | Hash of the fully-resolved `.config` lockfile (`kernel/config-x86_64.snapshot`) |
+| `kernel.snapshot_config_sha256` | Hash of the lineage's fully-resolved `.config` lockfile (`kernel/config-x86_64[-<fragment stem>].snapshot`) |
 | `initrd` | The mkosi-built initrd **including** the prepended trusted-DSDT early cpio — i.e. exactly the initrd bytes inside the UKI |
 | `firmware` | The SNP-side, IGVM-aware OVMF (`--firmware`). Absent for `--platform tdx` builds. Note this is *not* the TDX firmware — that lives at `tdx.firmware` |
 | `base_image` | The mkosi-produced base filesystem image before disk assembly |

@@ -94,7 +94,7 @@ confos build [OPTIONS] [NAME]
 | `-c, --cloud-init <PATH>` | (none) | NoCloud `user-data` file baked into the verity root at `/var/lib/cloud/seed/nocloud/user-data`. Measured into the image. Standard cloud-init `#cloud-config` YAML — see [`examples/caddy.yaml`](examples/caddy.yaml) for a working example that serves a web page from the VM. |
 | `-e, --extra <DIR>` | (none) | Directory whose contents are recursively copied **on top of** mkosi's base image filesystem. File modes and symlinks are preserved. Use this to bake binaries, systemd units, configuration files, etc. into the verity root. Measured. |
 | `-p, --package <PKG>` | (none) | Extra apt package to install in the base image. Repeatable, also accepts comma-separated lists (`-p curl,jq,iproute2` or `-p curl -p jq`). Passed through to mkosi as `--package=`. |
-| `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after confos's three always-applied fragments (`required.config` + `hardening.config` + `confidential.config`). Omitted → confos's hardened baseline kernel. Lets a project enable extra kernel symbols without modifying confos. The build rewrites `kernel/config-x86_64.snapshot` with the resolved config (see [Snapshots](#snapshots)). |
+| `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after confos's three always-applied fragments (`required.config` + `hardening.config` + `confidential.config`). Omitted → confos's hardened baseline kernel. Lets a project enable extra kernel symbols without modifying confos. The build rewrites its lineage's snapshot, `kernel/config-x86_64-<fragment stem>.snapshot` (see [Snapshots](#snapshots)). |
 | `--kernel-builder-package <PKG>` | (none) | Extra package installed into the kernel-builder tools tree (where the custom kernel is compiled), not the guest image. Repeatable and comma-separated. Use for build-time tools a fragment needs — e.g. `dwarves` (pahole) when the fragment enables `CONFIG_DEBUG_INFO_BTF`. |
 | `-s, --script <FILE>` | (none) | mkosi post-install script (`--postinst-script`) run inside the image build with network enabled, so it can download resources. Measured — the script's effects land in the verity root. |
 | `--profile <NAME>` | (none) | Enable an mkosi profile — either one shipped in `mkosi/base/mkosi.profiles/<NAME>/` or one staged there by `--profile-dir` (see below). Repeatable and composable (`--profile attest --profile ssh`). Shipped profiles: `dev` — passwordless root autologin on the serial gettys plus `console=ttyS0` on the measured cmdline; pair with `--kernel-config-fragment kernel/dev.config` to actually get ttyS0 output; **don't ship with this on** — under the SNP threat model the host controls the serial port. `attest` — bakes the attestation-api HTTP service (pulled from GHCR, pinned by digest) into the verity root. `ssh` — bakes `openssh-server`; host keys are stripped for reproducibility and regenerated on first boot onto the unattested overlay. `gpu` / `attest-gpu` — NVIDIA driver stack and GPU-capable attestation-api. The `c8s` node-image profile moved to the c8s repo and is staged via `--profile-dir` (see [docs/C8S-IMAGE.md](docs/C8S-IMAGE.md)). Every profile changes the image measurement. |
@@ -201,7 +201,7 @@ confos kernel [OPTIONS]
 | `--kernel-builder-package <PKG>` | (none) | Extra package installed into the kernel-builder tools tree (where the custom kernel is compiled), not the guest image. Repeatable and comma-separated. Use for build-time tools a fragment needs — e.g. `dwarves` (pahole) when the fragment enables `CONFIG_DEBUG_INFO_BTF`. |
 | `-f, --force` | off | Bypass the kernel cache. Forces a full rebuild even if the manifest fingerprint matches. |
 
-Every build rewrites `kernel/config-x86_64.snapshot` with the resolved `.config` (see [Snapshots](#snapshots)). Typical lifecycle when editing a fragment:
+Every build rewrites its lineage's snapshot with the resolved `.config` (see [Snapshots](#snapshots)). Typical lifecycle when editing a fragment:
  
  ```bash
 # 1. Edit a fragment — confos's own kernel/hardening.config, or a caller's.
@@ -299,13 +299,13 @@ the trusted-DSDT design makes unnecessary.
 
 ### Snapshots
 
-Each fragment combination resolves (via `make olddefconfig`) to a complete `.config`. Confidential OS Builder writes that resolved config to `kernel/config-x86_64.snapshot`, a **lockfile** committed to git: every kernel build rewrites it automatically, and `git diff` is how you see what changed. A build never fails on snapshot drift.
+Each fragment combination resolves (via `make olddefconfig`) to a complete `.config`. Confidential OS Builder writes that resolved config to a per-lineage **lockfile**: every kernel build rewrites its lineage's snapshot automatically, and `git diff` is how you see what changed. A build never fails on snapshot drift.
 
 After a build, review the snapshot:
 - An **expected** change — you edited a fragment or bumped the kernel version — gets committed alongside that edit.
 - An **unexpected** change is worth investigating: a kernel version bump can silently enable/disable cascading dependencies, and build-environment differences (mkosi version, toolchain version) between developers can shift the resolved config.
 
-The snapshot reflects the most recent build's inputs. Building with `--kernel-config-fragment` resolves a different `.config` than confos's bare baseline, so the snapshot will show that fragment's effect; revert it with `git checkout kernel/config-x86_64.snapshot` if that build was a one-off.
+Each lineage has its own lockfile: the bare baseline writes the committed `kernel/config-x86_64.snapshot`, and a `--kernel-config-fragment` build writes `kernel/config-x86_64-<fragment stem>.snapshot` (e.g. `-c8s`), so fragment builds never clobber the committed baseline.
 
 ## Measurement Chain
 
