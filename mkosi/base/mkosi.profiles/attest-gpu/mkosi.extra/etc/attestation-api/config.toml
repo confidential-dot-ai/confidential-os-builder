@@ -35,4 +35,7 @@ enabled = true
 # KubeVirt: autoattachVSOCK) and run QGS on the host.
 tdx_quote_method = "vsock"
 # GPU is NOT a platform here — it is a per-request add-on (see header).
-platforms = ["tdx"]
+# Both CPU TEEs, matching the attest profile: this rootfs also backs SNP
+# node-CVMs, whose CDS self-attests via /dev/sev-guest against this API.
+# tdx_quote_method above only applies to tdx requests.
+platforms = ["snp", "tdx"]
