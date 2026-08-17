@@ -31,17 +31,25 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y systemd-container ovmf cpio acpica-tools
 
-      - name: Cache kernel tools
+      - name: Cache kernel-builder tools tree
+        # mkosi.output (image + stamp) is what ensure_tools_tree consumes;
+        # mkosi.tools is only an intermediate for building it.
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
-          path: mkosi/kernel-builder/mkosi.tools
-          key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
+          path: mkosi/kernel-builder/mkosi.output
+          key: ${{ runner.os }}-tools-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
 
       - name: Cache kernel
+        # The snapshot lockfile rides the cache: the build rewrites it with
+        # the resolved config and fingerprints THAT, so restoring
+        # output/kernel without it never matches and the kernel rebuilds
+        # every run. hashFiles has no brace expansion, so files are listed.
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
-          path: output/kernel
-          key: ${{ runner.os }}-kernel-${{ hashFiles('mkosi/kernel-builder/{mkosi.conf,mkosi.tools.manifest}', 'mkosi/kernel-builder/mkosi.sandbox/**', 'kernel/*') }}
+          path: |
+            output/kernel
+            kernel/config-x86_64.snapshot
+          key: ${{ runner.os }}-kernel-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**', 'kernel/*') }}
 
       - name: Build kernel
         run: bin/confos kernel
@@ -50,10 +58,30 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: mkosi/base/mkosi.tools
-          key: ${{ runner.os }}-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf', 'mkosi/base/mkosi.sandbox/**') }}
+          key: ${{ runner.os }}-base-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf', 'mkosi/base/mkosi.sandbox/**') }}
+
+      - name: Cache apt package cache
+        # Keeps the image assembly off snapshot.ubuntu.com. conf-only globs:
+        # profile mkosi.extra trees carry dangling systemd enablement
+        # symlinks, which hashFiles refuses to hash.
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: mkosi/base/mkosi.pkgcache
+          key: ${{ runner.os }}-pkgcache-${{ hashFiles('mkosi/base/mkosi.conf', 'mkosi/base/mkosi.conf.d/*.conf', 'mkosi/base/mkosi.profiles/*/mkosi.conf', 'mkosi/base/mkosi.sandbox/**') }}
+          restore-keys: |
+            ${{ runner.os }}-pkgcache-
 
       - name: Build base image
         run: bin/confos build
+
+      - name: Make root-owned trees cache-safe
+        # The post-job cache tar runs unprivileged; mkosi builds these as
+        # root, so their saves fail without this. Runs after all use.
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            mkosi/kernel-builder/mkosi.output \
+            mkosi/base/mkosi.tools \
+            mkosi/base/mkosi.pkgcache || true
 
       - name: Setup ORAS
         uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
