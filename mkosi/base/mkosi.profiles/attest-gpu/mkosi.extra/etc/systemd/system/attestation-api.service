@@ -12,6 +12,7 @@ ExecStart=/usr/local/bin/attestation-api -c /etc/attestation-api/config.toml
 Restart=on-failure
 RestartSec=3
 # TDX quote device.
+DeviceAllow=/dev/sev-guest rwm
 DeviceAllow=/dev/tdx_guest rwm
 # NVIDIA nodes the libnvat/NVML collector opens for SPDM evidence. The
 # per-GPU /dev/nvidiaN nodes register major 195 as "nvidia" in /proc/devices,
