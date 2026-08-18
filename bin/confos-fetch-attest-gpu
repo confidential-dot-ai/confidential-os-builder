@@ -28,13 +28,18 @@ cd "$DIR"
 ATTEST_GPU_BIN="${ATTEST_GPU_BIN:-../attestation-rs/target/release/attestation-api}"
 LIBNVAT="${LIBNVAT:-/usr/lib/x86_64-linux-gnu/libnvat.so.1.2.0}"
 STAGE="mkosi/base/mkosi.local/mkosi.extra"
+CONFIG="mkosi/base/mkosi.profiles/attest-gpu/mkosi.extra/etc/attestation-api/config.toml"
 
 die() { printf 'confos-fetch-attest-gpu: %s\n' "$*" >&2; exit 1; }
 
 [[ -f "$ATTEST_GPU_BIN" ]] || die "attestation-api-gpu binary not found at $ATTEST_GPU_BIN (set ATTEST_GPU_BIN)."
 [[ -f "$LIBNVAT" ]] || die "libnvat not found at $LIBNVAT (set LIBNVAT; build per tdx-checkpoints/026)."
-# Sanity: the binary must actually be the GPU-collector build.
-ldd "$ATTEST_GPU_BIN" 2>/dev/null | grep -q libnvat || die "$ATTEST_GPU_BIN does not link libnvat — is it the --features nvidia-gpu-attest build?"
+# The binary must declare libnvat as a direct runtime dependency.
+readelf -d "$ATTEST_GPU_BIN" 2>/dev/null | \
+    grep 'Shared library: \[libnvat\.so' >/dev/null || \
+    die "$ATTEST_GPU_BIN does not require libnvat — use --features nvidia-gpu-attest."
+[[ "$(grep -Ec '^gpu_attestation_evidence_enabled = true$' "$CONFIG")" = 1 ]] || \
+    die "$CONFIG must enable GPU evidence collection exactly once."
 
 LIBDIR="$STAGE/usr/lib/x86_64-linux-gnu"
 mkdir -p "$STAGE/usr/local/bin" "$LIBDIR"

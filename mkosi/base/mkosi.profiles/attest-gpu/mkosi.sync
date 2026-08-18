@@ -13,6 +13,20 @@
 set -euo pipefail
 
 STAGE_DIR="$SRCDIR/mkosi.local/mkosi.extra"
+PROFILE_CONFIG="$SRCDIR/mkosi.profiles/attest-gpu/mkosi.extra/etc/attestation-api/config.toml"
+
+require_gpu_binary() {
+    readelf -d "$1" 2>/dev/null | \
+        grep 'Shared library: \[libnvat\.so' >/dev/null || {
+        echo "attest-gpu: $1 does not require libnvat; use --features nvidia-gpu-attest" >&2
+        exit 1
+    }
+}
+
+[ "$(grep -Ec '^gpu_attestation_evidence_enabled = true$' "$PROFILE_CONFIG")" = 1 ] || {
+    echo "attest-gpu: $PROFILE_CONFIG must enable GPU evidence collection exactly once" >&2
+    exit 1
+}
 
 # Pre-staged escape hatch: if a host-side step already dropped the binary +
 # libnvat into mkosi.local (e.g. `bin/confos-fetch-attest-gpu` building against a
@@ -20,6 +34,7 @@ STAGE_DIR="$SRCDIR/mkosi.local/mkosi.extra"
 # pull. This is how the profile is validated ahead of the first publish.
 if [ -f "$STAGE_DIR/usr/local/bin/attestation-api" ] && \
    ls "$STAGE_DIR"/usr/lib/x86_64-linux-gnu/libnvat.so* >/dev/null 2>&1; then
+    require_gpu_binary "$STAGE_DIR/usr/local/bin/attestation-api"
     echo "attest-gpu: binary + libnvat already staged in mkosi.local — skipping pull."
     exit 0
 fi
@@ -56,6 +71,7 @@ for c in "$EXTRACT/attestation-api" "$EXTRACT/usr/local/bin/attestation-api"; do
     [ -f "$c" ] && { BIN="$c"; break; }
 done
 [ -n "$BIN" ] || { echo "attest-gpu: attestation-api not found in image" >&2; exit 1; }
+require_gpu_binary "$BIN"
 install -D -m0755 "$BIN" "$STAGE_DIR/usr/local/bin/attestation-api"
 
 # libnvat.so — NVIDIA's evidence collector the -gpu build links.

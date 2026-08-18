@@ -1,10 +1,6 @@
-# attestation-api config baked by `confos build --profile attest-gpu`.
-# Identical in shape to the `attest` profile's config — there is NO GPU flag
-# here. GPU evidence is requested per-call: POST /attest with
-# {"nvidia_gpu": true, "report_data": "<>=16-byte base64 nonce>"}. The one
-# caller nonce binds the TDX quote AND every GPU. Override at runtime by
-# writing /etc/attestation-api/config.toml (persists on the overlay, does not
-# change the measurement).
+# The measured attest-gpu profile installs this configuration.
+# The flag permits evidence collection when a request sets `nvidia_gpu: true`.
+# The attestation-rs verifier verifies the returned CPU and GPU evidence bundle.
 
 [server]
 bind = "0.0.0.0:8400"
@@ -27,6 +23,7 @@ enabled = false
 
 [attestation]
 enabled = true
+gpu_attestation_evidence_enabled = true
 # vsock: fetch quotes from the host's QGS over AF_VSOCK (CID 2, port 4050) —
 # the GPU-image kernel enables vsock for exactly this (kernel/gpu.config).
 # The ConfigFS-TSM path also works but is far too slow for a serving endpoint
