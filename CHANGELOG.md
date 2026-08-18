@@ -8,11 +8,30 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-08-18
+
+### Added
+- **Changes measurements (once).** SNP arm of the initrd operator-key
+  binding (#106, c8s#331): with no runtime-extend register on SEV-SNP, the
+  initrd reads its own report via ConfigFS-TSM and fails closed unless
+  HOSTDATA equals sha256 of the staged operator pubkey. A keyless launch
+  carries all-zero HOSTDATA and is caught. The initrd change rolls both
+  platforms' measurements once
+- Per-lineage kernel config snapshots (#105, #66): fragment builds write
+  `config-x86_64-<stem>.snapshot` beside their fragment, in the caller's own
+  tree; the committed bare-baseline lockfile was regenerated from the exact
+  CI-resolved bytes (kernel bit-identical, verified `0cf18191…` before and
+  after)
+
 ### Fixed
 - CDI tarballs are byte-reproducible: tar headers no longer carry the source
   files' mtime/uid/gid, so identical artifacts produce an identical layer and
   image digest. Changes the CDI image digest once (measurements unaffected —
   the digest wraps the measured bytes, it is not itself measured)
+- attest-gpu profile serves SNP requests and can open `/dev/sev-guest`,
+  matching the attest profile (#102, #103)
+- CI base builds reuse the kernel cache instead of rebuilding every push
+  (#104; build time 13-16m to ~3m, no artifact change)
 
 ## [0.4.2] — 2026-08-15
 
