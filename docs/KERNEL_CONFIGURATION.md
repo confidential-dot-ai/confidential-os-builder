@@ -17,7 +17,7 @@ page](https://kspp.github.io/Recommended_Settings) (as of 2026-07-12) that we do
 **not** apply, as well as what each setting controls, the security risks
 involved in that setting, and an explanation of why we don't apply it.
 
-For this analysis, we used the config `kernel/config-x86_64.snapshot`, used to
+For this analysis, we used the config `kernel/config-x86_64.snapshot` (the committed bare-baseline lockfile), used to
 compile Linux 6.16.12, on x86_64, with GCC 15, by `mkosi/kernel-builder`. The
 kernel command line used in the CVM image is located in `mkosi/base/mkosi.conf`,
 and the sysctls applied inside our CVMs are located at

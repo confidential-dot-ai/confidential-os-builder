@@ -44,6 +44,6 @@ If you're using Confidential OS Builder to build your images:
   new manifest, add the new digests to verifier allowlists, and retire the
   old digests on your own schedule (old images remain launchable forever —
   see [THREAT_MODEL.md](THREAT_MODEL.md) on rollback).
-- **Diff the kernel snapshot on upgrade** (`kernel/config-x86_64.snapshot`)
+- **Diff the kernel snapshot on upgrade** (`kernel/config-x86_64.snapshot`; fragment lineages diff their own lockfile beside the fragment)
   — it shows exactly what changed in the resolved kernel config, which is
   usually the interesting part of a measurement change.
