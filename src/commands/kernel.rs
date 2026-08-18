@@ -28,9 +28,9 @@ const HARDENING_FRAGMENT: &str = "kernel/hardening.config";
 /// the `# is not set` line in `hardening.config`. See the file header for the
 /// threat-model justification.
 const CONFIDENTIAL_FRAGMENT: &str = "kernel/confidential.config";
-/// Resolved-config snapshot lockfile. Every kernel build rewrites this with
-/// the freshly-resolved `.config`; it's committed to git so `git diff` shows
-/// when a fragment edit or kernel bump changed the merged config.
+/// Bare-baseline snapshot lockfile (committed). Fragment builds write
+/// `config-x86_64-<stem>.snapshot` beside their fragment, so lineages don't
+/// clobber it and consumers can commit theirs in their own repo (#66).
 const SNAPSHOT_PATH: &str = "kernel/config-x86_64.snapshot";
 const VERSION_PATH: &str = "kernel/version";
 const TOOLS_TREE_DIR: &str = "mkosi/kernel-builder";
@@ -56,7 +56,8 @@ pub fn run(args: &KernelArgs) -> Result<()> {
         .module_signing_cert
         .as_deref()
         .unwrap_or(&default_cert);
-    let snapshot = Path::new(SNAPSHOT_PATH);
+    let snapshot = snapshot_path(fragment)?;
+    let snapshot = snapshot.as_path();
 
     fs_err::create_dir_all(&args.output)?;
     let out_dir = args.output.canonicalize()?;
@@ -286,6 +287,26 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
     Ok(tree.canonicalize()?)
 }
 
+/// Snapshot lockfile path for this lineage: the committed bare one without a
+/// fragment, `config-x86_64-<stem>.snapshot` beside the fragment with one.
+fn snapshot_path(fragment: Option<&Path>) -> Result<PathBuf> {
+    let Some(f) = fragment else {
+        return Ok(PathBuf::from(SNAPSHOT_PATH));
+    };
+    let stem = f
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty() && !s.starts_with('.'))
+        .ok_or_else(|| {
+            anyhow!(
+                "--kernel-config-fragment has no usable file stem: {}",
+                f.display()
+            )
+        })?;
+    let dir = f.parent().unwrap_or_else(|| Path::new(""));
+    Ok(dir.join(format!("config-x86_64-{stem}.snapshot")))
+}
+
 /// Compute the fingerprint over all inputs that determine kernel build output.
 ///
 /// `fragment` is the caller-supplied `--kernel-config-fragment` (None when
@@ -402,5 +423,35 @@ mod tests {
         let with_new_file = hash_tree_inputs(&conf, &sandbox).unwrap();
         fs_err::write(&conf, "Packages=y\n").unwrap();
         assert_ne!(with_new_file, hash_tree_inputs(&conf, &sandbox).unwrap());
+    }
+
+    #[test]
+    fn snapshot_path_is_per_lineage() {
+        assert_eq!(
+            snapshot_path(None).unwrap(),
+            PathBuf::from("kernel/config-x86_64.snapshot")
+        );
+        // Beside the fragment: a consumer's lineage lockfile lands in the
+        // consumer's tree, committable there.
+        assert_eq!(
+            snapshot_path(Some(Path::new("/repo/kernel/c8s.config"))).unwrap(),
+            PathBuf::from("/repo/kernel/config-x86_64-c8s.snapshot")
+        );
+        assert_eq!(
+            snapshot_path(Some(Path::new("c8s-dev.config"))).unwrap(),
+            PathBuf::from("config-x86_64-c8s-dev.snapshot")
+        );
+        // Lineages must never share a lockfile: fragment vs bare, and
+        // same-stem fragments in different directories.
+        assert_ne!(
+            snapshot_path(Some(Path::new("kernel/gpu.config"))).unwrap(),
+            snapshot_path(None).unwrap()
+        );
+        assert_ne!(
+            snapshot_path(Some(Path::new("/a/gpu.config"))).unwrap(),
+            snapshot_path(Some(Path::new("/b/gpu.config"))).unwrap()
+        );
+        assert!(snapshot_path(Some(Path::new("/"))).is_err());
+        assert!(snapshot_path(Some(Path::new("/repo/.config"))).is_err());
     }
 }
