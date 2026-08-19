@@ -27,9 +27,12 @@ jobs:
 
       - name: Install build deps (nspawn, TDVF firmware, iasl, cpio)
         # Host deps for `confos build` — keep in lockstep with bin/setup.
+        # Bounded: a dead mirror connection otherwise hangs until the job limit.
+        timeout-minutes: 5
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y systemd-container ovmf cpio acpica-tools
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3 update -y
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3 install -y \
+            systemd-container ovmf cpio acpica-tools
 
       - name: Cache kernel-builder tools tree
         # mkosi.output (image + stamp) is what ensure_tools_tree consumes;
