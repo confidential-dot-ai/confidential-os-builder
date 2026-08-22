@@ -66,12 +66,15 @@ open before.
 The build host's own toolchain shapes measured bytes too (#36): `iasl`
 (acpica-tools) compiles the trusted DSDT prepended to the initrd, and
 `ovmf` is the published SNP firmware. `bin/host-deps` installs all host
-build deps from `snapshot.ubuntu.com` at its own committed timestamp,
-confining apt to a snapshot-only source list (pinned above priority
-1000, so the dep closure moves to the snapshot's versions even when the
-runner image is ahead) and scanning the apt transcript for live-mirror
-fetches. CI and `bin/setup` install host deps only through it, and
-`bin/lint` rejects raw apt installs there.
+build deps from `snapshot.ubuntu.com` at the base image's committed
+pin (read from its `mkosi.sources`, so one bump moves image and host
+toolchain together), confining apt to a snapshot-only source list
+(pinned above priority 1000, so the dep closure moves to the snapshot's
+versions even when the runner image is ahead) and scanning the apt
+transcript for live-mirror fetches, with the scanner's parity to
+`is_live_mirror_fetch` enforced by a vector self-test in `bin/lint`.
+CI and `bin/setup` install host deps only through it, and `bin/lint`
+rejects raw apt installs elsewhere in `bin/` and `.github/`.
 
 mkosi itself is pinned to v26 — `bin/setup` and CI install exactly
 `mkosi.git@v26`, and `mkosi.conf` enforces `MinimumVersion=26` as a

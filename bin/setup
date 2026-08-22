@@ -13,8 +13,7 @@ echo "==> Installing system packages..."
 # firmware (OVMF.inteltdx.fd, -bios-bootable) is vendored at firmware/ — see
 # firmware/README, #82 — not apt-installed. Keep host deps in lockstep with
 # .github/workflows/base.yml.
-# host-deps pins every deb to a committed snapshot (#36): iasl and ovmf shape
-# measured bytes, so a live-archive install can miss published measurements.
+# host-deps pins every deb to the base image's committed snapshot (#36).
 "$DIR/host-deps" build-essential systemd-repart systemd-container qemu-utils genisoimage swtpm cpio acpica-tools ovmf
 
 echo "==> Installing uv..."

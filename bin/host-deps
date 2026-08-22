@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install host build deps from snapshot.ubuntu.com at a committed timestamp.
+# Install host build deps from snapshot.ubuntu.com at the committed base pin.
 #
 # The host toolchain shapes measured bytes (#36): iasl (acpica-tools) compiles
 # the trusted DSDT prepended to the initrd, and ovmf is the published SNP
@@ -11,70 +11,147 @@
 # mirrors are unconfigured, not merely unpreferred), and the apt transcript
 # is still scanned for live ubuntu.com fetches — config presence alone has
 # failed open before.
+#
+# Usage: host-deps [--cache-dir DIR] <package>...
+#   --cache-dir DIR  Reinstall DIR's debs fully offline when present (warm),
+#                    else fill DIR with the transaction's debs (cold). CI
+#                    keys DIR's cache on this script + the base mkosi.sources.
+#   --self-test      Run the transcript scanner against the vector set of
+#                    src/tools.rs's is_live_mirror_fetch tests and exit.
 set -euo pipefail
 
-# INVARIANT: every deb this script installs resolves from this snapshot.
-# Bump deliberately: a new timestamp changes the host toolchain and can move
-# the measurement — refresh downstream pinned digests with it.
-SNAPSHOT=20260430T000000Z
+# Transcript scanner, kept in parity with confos's is_live_mirror_fetch by
+# --self-test (bin/lint runs it): an apt fetch-progress line hitting any
+# ubuntu.com host other than snapshot is a live, drifting mirror. Non-Ubuntu
+# (third-party) hosts are out of scope.
+LIVE_RE='^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+ https?://([a-z0-9.-]*\.)?ubuntu\.com([:/ ]|$)'
+ALLOW_RE='^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+ https?://snapshot\.ubuntu\.com([:/ ]|$)'
+scan_live() {
+    grep -iE "$LIVE_RE" | grep -ivE "$ALLOW_RE"
+}
 
-[ "$#" -gt 0 ] || { echo "usage: host-deps <package>..." >&2; exit 1; }
+if [ "${1:-}" = --self-test ]; then
+    # INVARIANT: same verdicts as src/tools.rs's is_live_mirror_fetch tests.
+    flagged=(
+        'Get:1 http://archive.ubuntu.com/ubuntu resolute InRelease [136 kB]'
+        'Hit:3 http://security.ubuntu.com/ubuntu resolute-security InRelease'
+        'Err:12 https://ports.ubuntu.com resolute/main arm64 Packages'
+        'Get:7 http://azure.archive.ubuntu.com/ubuntu resolute/main amd64 tar 1.35 [258 kB]'
+        'Ign:2 https://esm.ubuntu.com/apps/ubuntu resolute-apps-security InRelease'
+        'Get:4 http://old-releases.ubuntu.com/ubuntu resolute InRelease'
+        'Get:5 http://Archive.Ubuntu.com/ubuntu resolute InRelease'
+        'Get:6 http://archive.ubuntu.com:80/ubuntu resolute InRelease'
+    )
+    clean=(
+        'Get:1 https://snapshot.ubuntu.com/ubuntu/20260405T000000Z/dists/resolute/InRelease [136 kB]'
+        'URIs: http://archive.ubuntu.com/ubuntu'
+        'mkosi: falling back to archive.ubuntu.com'
+        'Get:x http://archive.ubuntu.com/ubuntu resolute InRelease'
+        'Get:1 http://packages.microsoft.com/repos/azure-cli resolute InRelease'
+    )
+    for line in "${flagged[@]}"; do
+        [ -n "$(printf '%s\n' "$line" | scan_live || true)" ] \
+            || { echo "host-deps --self-test: live-mirror line not flagged: $line" >&2; exit 1; }
+    done
+    for line in "${clean[@]}"; do
+        [ -z "$(printf '%s\n' "$line" | scan_live || true)" ] \
+            || { echo "host-deps --self-test: benign line flagged: $line" >&2; exit 1; }
+    done
+    echo "host-deps --self-test: ok"
+    exit 0
+fi
 
-codename=$(. /etc/os-release && echo "${VERSION_CODENAME:?}")
+cachedir=""
+if [ "${1:-}" = --cache-dir ]; then
+    # ./-prefix a relative dir: apt reads a bare foo/x.deb as pkg/release.
+    case "$2" in
+        /*) cachedir=$2 ;;
+        *) cachedir="./$2" ;;
+    esac
+    shift 2
+fi
+[ "$#" -gt 0 ] || { echo "usage: host-deps [--cache-dir DIR] <package>..." >&2; exit 1; }
 
-sources=$(mktemp --suffix=.list)
-prefs=$(mktemp)
+# The pin is the base image's committed snapshot — one bump moves the image
+# and the host toolchain together, and can move measurements (#36).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BASE_SOURCES="$ROOT/mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources"
+SNAPSHOT=$(sed -n 's#^URIs: https://snapshot\.ubuntu\.com/ubuntu/##p' "$BASE_SOURCES")
+if ! [[ "$SNAPSHOT" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+    echo "host-deps: no snapshot pin readable from $BASE_SOURCES" >&2
+    exit 1
+fi
+
 log=$(mktemp)
-trap 'rm -f "$sources" "$prefs" "$log"' EXIT
-# One-line format: apt only parses deb822 from Dir::Etc::sourceparts.
-for pocket in "$codename" "$codename-updates" "$codename-security"; do
-    echo "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://snapshot.ubuntu.com/ubuntu/${SNAPSHOT} ${pocket} main universe" >> "$sources"
-done
-# Priority > 1000: the host image tracks the live archive, so its installed
-# debs run ahead of any fixed snapshot; without this, apt keeps the newer
-# installed version as candidate and a strict = dependency (systemd-container
-# on libsystemd-shared) is unsatisfiable. Above 1000, the snapshot version
-# wins even when that is a downgrade — the dep closure moves to the snapshot.
-cat > "$prefs" <<EOF
+trap 'rm -f "$log"' EXIT
+
+if [ -n "$cachedir" ] && compgen -G "$cachedir/*.deb" >/dev/null; then
+    # Warm: reinstall the cached transaction with apt sources nulled — fully
+    # offline, so a deb set that no longer resolves fails instead of drifting.
+    sudo DEBIAN_FRONTEND=noninteractive apt-get \
+        -o Dir::Etc::sourcelist=/dev/null \
+        -o Dir::Etc::sourceparts=/dev/null \
+        -o Dpkg::Options::=--force-confdef \
+        -o Dpkg::Options::=--force-confold \
+        install -y --allow-downgrades "$cachedir"/*.deb 2>&1 | tee -a "$log"
+else
+    # Suites must match the running host (not the image's Release=): these
+    # debs execute here, and only the runner knows its own release.
+    codename=$(. /etc/os-release && echo "${VERSION_CODENAME:?}")
+    sources=$(mktemp --suffix=.list)
+    prefs=$(mktemp)
+    trap 'rm -f "$sources" "$prefs" "$log"' EXIT
+    # One-line format: apt only parses deb822 from Dir::Etc::sourceparts.
+    for pocket in "$codename" "$codename-updates" "$codename-security"; do
+        echo "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://snapshot.ubuntu.com/ubuntu/${SNAPSHOT} ${pocket} main universe" >> "$sources"
+    done
+    # Priority > 1000: the host image tracks the live archive, so its
+    # installed debs run ahead of any fixed snapshot; without this, apt keeps
+    # the newer installed version as candidate and a strict = dependency
+    # (systemd-container on libsystemd-shared) is unsatisfiable. Above 1000,
+    # the snapshot version wins even when that is a downgrade — the dep
+    # closure moves to the snapshot.
+    cat > "$prefs" <<EOF
 Package: *
 Pin: origin "snapshot.ubuntu.com"
 Pin-Priority: 1001
 EOF
 
-# Bounded fetches: a dead mirror otherwise hangs until the caller's job limit.
-# Non-interactive dpkg: downgrades would otherwise stop on conffile prompts.
-# Keep downloaded archives: CI callers cache the resolved debs for offline
-# warm reinstalls (c8s's apt-debs cache).
-apt_snapshot() {
-    sudo DEBIAN_FRONTEND=noninteractive apt-get \
-        -o Dir::Etc::sourcelist="$sources" \
-        -o Dir::Etc::sourceparts=/dev/null \
-        -o Dir::Etc::preferences="$prefs" \
-        -o Dir::Etc::preferencesparts=/dev/null \
-        -o Acquire::http::Timeout=30 \
-        -o Acquire::https::Timeout=30 \
-        -o Acquire::Retries=3 \
-        -o Dpkg::Options::=--force-confdef \
-        -o Dpkg::Options::=--force-confold \
-        -o APT::Keep-Downloaded-Packages=true \
-        "$@" 2>&1 | tee -a "$log"
-}
+    # Bounded fetches: a dead mirror otherwise hangs until the caller's job
+    # limit. Non-interactive dpkg: downgrades would otherwise stop on
+    # conffile prompts. Kept archives feed the --cache-dir copy below.
+    apt_snapshot() {
+        sudo DEBIAN_FRONTEND=noninteractive apt-get \
+            -o Dir::Etc::sourcelist="$sources" \
+            -o Dir::Etc::sourceparts=/dev/null \
+            -o Dir::Etc::preferences="$prefs" \
+            -o Dir::Etc::preferencesparts=/dev/null \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o Acquire::Retries=3 \
+            -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold \
+            -o APT::Keep-Downloaded-Packages=true \
+            "$@" 2>&1 | tee -a "$log"
+    }
 
-apt_snapshot update
-apt_snapshot install -y --allow-downgrades "$@"
+    apt_snapshot update
+    apt_snapshot install -y --allow-downgrades "$@"
 
-# Backstop, kept in parity with confos's is_live_mirror_fetch: an apt
-# fetch-progress line hitting any ubuntu.com host other than snapshot is a
-# live, drifting mirror. Non-Ubuntu (third-party) hosts are out of scope.
-allow='^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+ https?://snapshot\.ubuntu\.com([:/ ]|$)'
-live=$(grep -iE '^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+ https?://([a-z0-9.-]*\.)?ubuntu\.com([:/ ]|$)' "$log" \
-    | grep -ivE "$allow" || true)
+    if [ -n "$cachedir" ]; then
+        mkdir -p "$cachedir"
+        cp /var/cache/apt/archives/*.deb "$cachedir"/
+    fi
+fi
+
+live=$(scan_live < "$log" || true)
 if [ -n "$live" ]; then
     echo "host-deps: fetched from live (unpinned) Ubuntu mirrors — the measurement would drift with the archive (#36):" >&2
     echo "$live" >&2
     exit 1
 fi
 
-# The resolved deb set, for auditing a published measurement's toolchain.
+# The requested packages' resolved versions, for auditing a published
+# measurement's toolchain; --cache-dir callers hold the full deb closure.
 echo "host-deps: installed from snapshot ${SNAPSHOT}:"
 dpkg-query -W "$@"
