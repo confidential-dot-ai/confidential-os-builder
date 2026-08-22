@@ -43,6 +43,8 @@ EOF
 
 # Bounded fetches: a dead mirror otherwise hangs until the caller's job limit.
 # Non-interactive dpkg: downgrades would otherwise stop on conffile prompts.
+# Keep downloaded archives: CI callers cache the resolved debs for offline
+# warm reinstalls (c8s's apt-debs cache).
 apt_snapshot() {
     sudo DEBIAN_FRONTEND=noninteractive apt-get \
         -o Dir::Etc::sourcelist="$sources" \
@@ -54,6 +56,7 @@ apt_snapshot() {
         -o Acquire::Retries=3 \
         -o Dpkg::Options::=--force-confdef \
         -o Dpkg::Options::=--force-confold \
+        -o APT::Keep-Downloaded-Packages=true \
         "$@" 2>&1 | tee -a "$log"
 }
 
