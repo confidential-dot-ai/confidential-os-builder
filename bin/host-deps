@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Install host build deps from snapshot.ubuntu.com at a committed timestamp.
+#
+# The host toolchain shapes measured bytes (#36): iasl (acpica-tools) compiles
+# the trusted DSDT prepended to the initrd, and ovmf is the published SNP
+# firmware. Installing them from the live archive lets a rebuild weeks later
+# miss a published measurement even with every image input pinned.
+#
+# Fail-closed in two layers, like confos's run_mkosi mirror guard (#96):
+# apt is confined to a snapshot-only source list for this transaction (live
+# mirrors are unconfigured, not merely unpreferred), and the apt transcript
+# is still scanned for live ubuntu.com fetches — config presence alone has
+# failed open before.
+set -euo pipefail
+
+# INVARIANT: every deb this script installs resolves from this snapshot.
+# Bump deliberately: a new timestamp changes the host toolchain and can move
+# the measurement — refresh downstream pinned digests with it.
+SNAPSHOT=20260430T000000Z
+
+[ "$#" -gt 0 ] || { echo "usage: host-deps <package>..." >&2; exit 1; }
+
+codename=$(. /etc/os-release && echo "${VERSION_CODENAME:?}")
+
+sources=$(mktemp --suffix=.list)
+prefs=$(mktemp)
+log=$(mktemp)
+trap 'rm -f "$sources" "$prefs" "$log"' EXIT
+# One-line format: apt only parses deb822 from Dir::Etc::sourceparts.
+for pocket in "$codename" "$codename-updates" "$codename-security"; do
+    echo "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://snapshot.ubuntu.com/ubuntu/${SNAPSHOT} ${pocket} main universe" >> "$sources"
+done
+# Priority > 1000: the host image tracks the live archive, so its installed
+# debs run ahead of any fixed snapshot; without this, apt keeps the newer
+# installed version as candidate and a strict = dependency (systemd-container
+# on libsystemd-shared) is unsatisfiable. Above 1000, the snapshot version
+# wins even when that is a downgrade — the dep closure moves to the snapshot.
+cat > "$prefs" <<EOF
+Package: *
+Pin: origin "snapshot.ubuntu.com"
+Pin-Priority: 1001
+EOF
+
+# Bounded fetches: a dead mirror otherwise hangs until the caller's job limit.
+# Non-interactive dpkg: downgrades would otherwise stop on conffile prompts.
+apt_snapshot() {
+    sudo DEBIAN_FRONTEND=noninteractive apt-get \
+        -o Dir::Etc::sourcelist="$sources" \
+        -o Dir::Etc::sourceparts=/dev/null \
+        -o Dir::Etc::preferences="$prefs" \
+        -o Dir::Etc::preferencesparts=/dev/null \
+        -o Acquire::http::Timeout=30 \
+        -o Acquire::https::Timeout=30 \
+        -o Acquire::Retries=3 \
+        -o Dpkg::Options::=--force-confdef \
+        -o Dpkg::Options::=--force-confold \
+        "$@" 2>&1 | tee -a "$log"
+}
+
+apt_snapshot update
+apt_snapshot install -y --allow-downgrades "$@"
+
+# Backstop, kept in parity with confos's is_live_mirror_fetch: an apt
+# fetch-progress line hitting any ubuntu.com host other than snapshot is a
+# live, drifting mirror. Non-Ubuntu (third-party) hosts are out of scope.
+allow='^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+ https?://snapshot\.ubuntu\.com([:/ ]|$)'
+live=$(grep -iE '^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+ https?://([a-z0-9.-]*\.)?ubuntu\.com([:/ ]|$)' "$log" \
+    | grep -ivE "$allow" || true)
+if [ -n "$live" ]; then
+    echo "host-deps: fetched from live (unpinned) Ubuntu mirrors — the measurement would drift with the archive (#36):" >&2
+    echo "$live" >&2
+    exit 1
+fi
+
+# The resolved deb set, for auditing a published measurement's toolchain.
+echo "host-deps: installed from snapshot ${SNAPSHOT}:"
+dpkg-query -W "$@"

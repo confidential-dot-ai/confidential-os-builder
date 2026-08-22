@@ -61,6 +61,20 @@ if [ -n "$failopen" ]; then
     echo "$failopen" >&2
     exit 1
 fi
+# Host toolchain debs shape measured bytes too (iasl compiles the trusted
+# DSDT; ovmf is the published SNP firmware), so host installs must ride
+# bin/host-deps' committed snapshot, not the live archive (#36).
+if ! grep -qE '^SNAPSHOT=[0-9]{8}T[0-9]{6}Z$' bin/host-deps; then
+    echo "bin/lint: bin/host-deps must pin SNAPSHOT to a snapshot.ubuntu.com timestamp (#36)" >&2
+    exit 1
+fi
+rawinstall=$(git grep -nE '\bapt(-get)?\b.*\binstall\b' -- '.github/workflows/' bin/setup || true)
+if [ -n "$rawinstall" ]; then
+    echo "bin/lint: host debs must install via bin/host-deps (snapshot-pinned, fail-closed, #36), not raw apt:" >&2
+    echo "$rawinstall" >&2
+    exit 1
+fi
+
 pin='^URIs: https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z$'
 for conf in mkosi/*/mkosi.conf; do
     dir=$(dirname "$conf")

@@ -5,7 +5,6 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -x
 
 echo "==> Installing system packages..."
-sudo apt-get update
 # acpica-tools provides iasl, used at build time to compile the trusted
 # DSDT (mkosi/base/acpi-tables/dsdt.asl) that gets injected into the
 # initrd so the kernel's CONFIG_ACPI_TABLE_UPGRADE replaces the
@@ -14,7 +13,9 @@ sudo apt-get update
 # firmware (OVMF.inteltdx.fd, -bios-bootable) is vendored at firmware/ — see
 # firmware/README, #82 — not apt-installed. Keep host deps in lockstep with
 # .github/workflows/base.yml.
-sudo apt install -y build-essential systemd-repart systemd-container qemu-utils genisoimage swtpm cpio acpica-tools ovmf
+# host-deps pins every deb to a committed snapshot (#36): iasl and ovmf shape
+# measured bytes, so a live-archive install can miss published measurements.
+"$DIR/host-deps" build-essential systemd-repart systemd-container qemu-utils genisoimage swtpm cpio acpica-tools ovmf
 
 echo "==> Installing uv..."
 which uv || curl -LsSf https://astral.sh/uv/install.sh | sh

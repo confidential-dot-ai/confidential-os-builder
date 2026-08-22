@@ -48,16 +48,30 @@ We use several techniques to ensure the results of our builds are reproducible, 
 
 ### apt mirror pinning
 
-Identical package *versions* across builds are enforced by pinning
-`Mirror=` (and `ToolsTreeMirror=`) in `mkosi/base/mkosi.conf`,
-`mkosi/base/mkosi.conf.d/tools.conf`, and
-`mkosi/kernel-builder/mkosi.conf` to a point-in-time
-`snapshot.ubuntu.com` URL. Bumping that timestamp is the deliberate act
-that picks up security updates — and changes the roothash.
+Identical package *versions* across builds are enforced by pinning every
+apt pocket to a point-in-time `snapshot.ubuntu.com` URL via each image
+dir's `mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources` (#96 — the
+older `Mirror=`/`ToolsTreeMirror=` mechanism left the security pocket
+live and is rejected by `bin/lint`). Bumping that timestamp is the
+deliberate act that picks up security updates — and changes the roothash.
 
-`bin/lint` fails on any `Mirror=`/`ToolsTreeMirror=` that does not point
-at `snapshot.ubuntu.com`, so an outage workaround cannot outlive the
-outage.
+Two guards keep this fail-closed: `bin/lint` asserts the config shape
+(pinned `URIs:` lines, no `Mirror=`/`Snapshot=`), and confos's
+`run_mkosi` scans the apt transcript of every build and fails on any
+fetch from a live ubuntu.com mirror — config presence alone has failed
+open before.
+
+### Host toolchain pinning
+
+The build host's own toolchain shapes measured bytes too (#36): `iasl`
+(acpica-tools) compiles the trusted DSDT prepended to the initrd, and
+`ovmf` is the published SNP firmware. `bin/host-deps` installs all host
+build deps from `snapshot.ubuntu.com` at its own committed timestamp,
+confining apt to a snapshot-only source list (pinned above priority
+1000, so the dep closure moves to the snapshot's versions even when the
+runner image is ahead) and scanning the apt transcript for live-mirror
+fetches. CI and `bin/setup` install host deps only through it, and
+`bin/lint` rejects raw apt installs there.
 
 mkosi itself is pinned to v26 — `bin/setup` and CI install exactly
 `mkosi.git@v26`, and `mkosi.conf` enforces `MinimumVersion=26` as a
