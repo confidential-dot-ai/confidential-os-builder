@@ -25,6 +25,12 @@ jobs:
       - name: Setup mkosi
         uses: systemd/mkosi@84af20892b61c8e177e391f997ded8b4cb5514f2 # v26
 
+      - name: Compute runner-image cache term
+        # ImageOS/ImageVersion are runner-process env vars, not workflow env
+        # context — ${{ env.ImageOS }} silently renders empty in a key.
+        id: image
+        run: echo "key=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
       - name: Cache host build deps
         # The snapshot pin moves the whole dep closure to snapshot versions,
         # which would re-download it from snapshot.ubuntu.com every run; warm
@@ -36,7 +42,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: apt-debs
-          key: ${{ runner.os }}-host-debs-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('bin/host-deps', 'mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources') }}
+          key: ${{ runner.os }}-host-debs-${{ steps.image.outputs.key }}-${{ hashFiles('bin/host-deps', 'mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources') }}
 
       - name: Install build deps (nspawn, TDVF firmware, iasl, cpio)
         # Host deps for `confos build`, snapshot-pinned and fail-closed via
