@@ -353,39 +353,26 @@ mod tests {
         force_remove_dir_all(&missing).unwrap();
     }
 
+    // The vectors are shared with bin/host-deps --self-test (run by
+    // bin/lint), so the Rust and shell scanners cannot drift apart silently:
+    // a new case added here fails the shell side until its pattern learns it.
     #[test]
-    fn is_live_mirror_fetch_flags_any_nonsnapshot_ubuntu_host() {
-        for line in [
-            "Get:1 http://archive.ubuntu.com/ubuntu resolute InRelease [136 kB]",
-            "Hit:3 http://security.ubuntu.com/ubuntu resolute-security InRelease",
-            "Err:12 https://ports.ubuntu.com resolute/main arm64 Packages",
-            "Get:7 http://azure.archive.ubuntu.com/ubuntu resolute/main amd64 tar 1.35 [258 kB]",
-            "Ign:2 https://esm.ubuntu.com/apps/ubuntu resolute-apps-security InRelease",
-            // Allowlist, not blocklist: hosts we never enumerated still flag.
-            "Get:4 http://old-releases.ubuntu.com/ubuntu resolute InRelease",
-            // Spelling variants cannot slip past normalization.
-            "Get:5 http://Archive.Ubuntu.com/ubuntu resolute InRelease",
-            "Get:6 http://archive.ubuntu.com:80/ubuntu resolute InRelease",
-        ] {
-            assert!(is_live_mirror_fetch(line), "{line}");
+    fn is_live_mirror_fetch_matches_shared_vectors() {
+        let vectors = include_str!("../tests/fixtures/live-mirror-vectors.txt");
+        let mut checked = 0;
+        for line in vectors.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (expect, vector) = line.split_once('\t').expect("expect<TAB>line");
+            let want = match expect {
+                "flag" => true,
+                "pass" => false,
+                other => panic!("bad vector expectation: {other}"),
+            };
+            assert_eq!(is_live_mirror_fetch(vector), want, "{vector}");
+            checked += 1;
         }
-    }
-
-    #[test]
-    fn is_live_mirror_fetch_ignores_pinned_and_non_fetch_lines() {
-        for line in [
-            // The pin working as intended.
-            "Get:1 https://snapshot.ubuntu.com/ubuntu/20260405T000000Z/dists/resolute/InRelease [136 kB]",
-            // deb822 config echo names the live host by design; not a fetch.
-            "URIs: http://archive.ubuntu.com/ubuntu",
-            // Prose mentioning a live host.
-            "mkosi: falling back to archive.ubuntu.com",
-            // Malformed sequence number — not an apt progress line.
-            "Get:x http://archive.ubuntu.com/ubuntu resolute InRelease",
-            // Non-Ubuntu third-party hosts are out of scope.
-            "Get:1 http://packages.microsoft.com/repos/azure-cli resolute InRelease",
-        ] {
-            assert!(!is_live_mirror_fetch(line), "{line}");
-        }
+        assert!(checked >= 15, "vector fixture went missing or empty");
     }
 }

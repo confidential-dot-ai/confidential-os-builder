@@ -13,50 +13,46 @@
 # failed open before.
 #
 # Usage: host-deps [--cache-dir DIR] <package>...
-#   --cache-dir DIR  Reinstall DIR's debs fully offline when present (warm),
-#                    else fill DIR with the transaction's debs (cold). CI
-#                    keys DIR's cache on this script + the base mkosi.sources.
-#   --self-test      Run the transcript scanner against the vector set of
-#                    src/tools.rs's is_live_mirror_fetch tests and exit.
+#   --cache-dir DIR  Reinstall DIR's debs fully offline when DIR's manifest
+#                    still matches this pin, host release, package list, and
+#                    deb hashes AND the reinstall lands every requested
+#                    package on its manifest version — any mismatch falls
+#                    back to a fresh snapshot install that rewrites DIR.
+#   --self-test      Run the transcript scanner over the shared vector file
+#                    (tests/fixtures/live-mirror-vectors.txt, also consumed
+#                    by src/tools.rs's is_live_mirror_fetch test) and exit.
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 # Transcript scanner, kept in parity with confos's is_live_mirror_fetch by
-# --self-test (bin/lint runs it): an apt fetch-progress line hitting any
-# ubuntu.com host other than snapshot is a live, drifting mirror. Non-Ubuntu
-# (third-party) hosts are out of scope.
-LIVE_RE='^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+ https?://([a-z0-9.-]*\.)?ubuntu\.com([:/ ]|$)'
-ALLOW_RE='^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+ https?://snapshot\.ubuntu\.com([:/ ]|$)'
+# the shared vector fixture (--self-test, run by bin/lint): an apt
+# fetch-progress line hitting any ubuntu.com host other than snapshot is a
+# live, drifting mirror. Non-Ubuntu (third-party) hosts are out of scope.
+LIVE_RE='^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+[[:space:]]+https?://([^/[:space:]]*\.)?ubuntu\.com(:[0-9]+)?([/[:space:]]|$)'
+ALLOW_RE='^[[:space:]]*(Get|Hit|Ign|Err):[0-9]+[[:space:]]+https?://snapshot\.ubuntu\.com(:[0-9]+)?([/[:space:]]|$)'
 scan_live() {
     grep -iE "$LIVE_RE" | grep -ivE "$ALLOW_RE"
 }
 
 if [ "${1:-}" = --self-test ]; then
-    # INVARIANT: same verdicts as src/tools.rs's is_live_mirror_fetch tests.
-    flagged=(
-        'Get:1 http://archive.ubuntu.com/ubuntu resolute InRelease [136 kB]'
-        'Hit:3 http://security.ubuntu.com/ubuntu resolute-security InRelease'
-        'Err:12 https://ports.ubuntu.com resolute/main arm64 Packages'
-        'Get:7 http://azure.archive.ubuntu.com/ubuntu resolute/main amd64 tar 1.35 [258 kB]'
-        'Ign:2 https://esm.ubuntu.com/apps/ubuntu resolute-apps-security InRelease'
-        'Get:4 http://old-releases.ubuntu.com/ubuntu resolute InRelease'
-        'Get:5 http://Archive.Ubuntu.com/ubuntu resolute InRelease'
-        'Get:6 http://archive.ubuntu.com:80/ubuntu resolute InRelease'
-    )
-    clean=(
-        'Get:1 https://snapshot.ubuntu.com/ubuntu/20260405T000000Z/dists/resolute/InRelease [136 kB]'
-        'URIs: http://archive.ubuntu.com/ubuntu'
-        'mkosi: falling back to archive.ubuntu.com'
-        'Get:x http://archive.ubuntu.com/ubuntu resolute InRelease'
-        'Get:1 http://packages.microsoft.com/repos/azure-cli resolute InRelease'
-    )
-    for line in "${flagged[@]}"; do
-        [ -n "$(printf '%s\n' "$line" | scan_live || true)" ] \
-            || { echo "host-deps --self-test: live-mirror line not flagged: $line" >&2; exit 1; }
-    done
-    for line in "${clean[@]}"; do
-        [ -z "$(printf '%s\n' "$line" | scan_live || true)" ] \
-            || { echo "host-deps --self-test: benign line flagged: $line" >&2; exit 1; }
-    done
+    while IFS=$'\t' read -r expect vector; do
+        case "$expect" in
+            '' | '#'*) continue ;;
+            flag)
+                [ -n "$(printf '%s\n' "$vector" | scan_live || true)" ] \
+                    || { echo "host-deps --self-test: live-mirror line not flagged: $vector" >&2; exit 1; }
+                ;;
+            pass)
+                [ -z "$(printf '%s\n' "$vector" | scan_live || true)" ] \
+                    || { echo "host-deps --self-test: benign line flagged: $vector" >&2; exit 1; }
+                ;;
+            *)
+                echo "host-deps --self-test: bad vector line: $expect" >&2
+                exit 1
+                ;;
+        esac
+    done < "$ROOT/tests/fixtures/live-mirror-vectors.txt"
     echo "host-deps --self-test: ok"
     exit 0
 fi
@@ -74,7 +70,6 @@ fi
 
 # The pin is the base image's committed snapshot — one bump moves the image
 # and the host toolchain together, and can move measurements (#36).
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE_SOURCES="$ROOT/mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources"
 SNAPSHOT=$(sed -n 's#^URIs: https://snapshot\.ubuntu\.com/ubuntu/##p' "$BASE_SOURCES")
 if ! [[ "$SNAPSHOT" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
@@ -82,50 +77,84 @@ if ! [[ "$SNAPSHOT" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
     exit 1
 fi
 
-log=$(mktemp)
-trap 'rm -f "$log"' EXIT
+# Suites must match the running host (not the image's Release=): these debs
+# execute here, and only the runner knows its own release.
+codename=$(. /etc/os-release && echo "${VERSION_CODENAME:?}")
 
-if [ -n "$cachedir" ] && compgen -G "$cachedir/*.deb" >/dev/null; then
-    # Warm: reinstall the cached transaction with apt sources nulled — fully
-    # offline, so a deb set that no longer resolves fails instead of drifting.
+log=$(mktemp)
+scratch=$(mktemp -d)
+trap 'rm -rf "$log" "$scratch"' EXIT
+
+apt_offline() {
     sudo DEBIAN_FRONTEND=noninteractive apt-get \
         -o Dir::Etc::sourcelist=/dev/null \
         -o Dir::Etc::sourceparts=/dev/null \
         -o Dpkg::Options::=--force-confdef \
         -o Dpkg::Options::=--force-confold \
-        install -y --allow-downgrades "$cachedir"/*.deb 2>&1 | tee -a "$log"
-else
-    # Suites must match the running host (not the image's Release=): these
-    # debs execute here, and only the runner knows its own release.
-    codename=$(. /etc/os-release && echo "${VERSION_CODENAME:?}")
-    sources=$(mktemp --suffix=.list)
-    prefs=$(mktemp)
-    trap 'rm -f "$sources" "$prefs" "$log"' EXIT
+        "$@" 2>&1 | tee -a "$log"
+}
+
+# INVARIANT: the cache is an optimization, never an authority — it is trusted
+# only while its manifest matches this pin, host release, package list, and
+# deb hashes, and only until the post-install version check agrees.
+manifest_ok() {
+    local sums
+    [ -n "$cachedir" ] && [ -f "$cachedir/manifest" ] || return 1
+    grep -qxF "snapshot $SNAPSHOT" "$cachedir/manifest" || return 1
+    grep -qxF "codename $codename" "$cachedir/manifest" || return 1
+    grep -qxF "packages $*" "$cachedir/manifest" || return 1
+    sums=$(sed -n 's/^sha256 //p' "$cachedir/manifest")
+    # A zero-deb manifest (everything was already at snapshot versions) is
+    # legal; sha256sum -c rejects an empty list.
+    [ -z "$sums" ] \
+        || printf '%s\n' "$sums" | (cd "$cachedir" && sha256sum -c --quiet -) >/dev/null 2>&1
+}
+
+# Every requested package sits at the version the manifest's cold run
+# resolved from the snapshot. Catches what the deb set alone cannot: a
+# package the cold run never downloaded (already at the snapshot version
+# then) that a newer runner image has since moved (#36).
+versions_match() {
+    local pkg want have
+    for pkg in "$@"; do
+        want=$(awk -v p="$pkg" '$1 == "resolved" && $2 == p { print $3 }' "$cachedir/manifest")
+        have=$(dpkg-query -W -f '${Version}' "$pkg" 2>/dev/null) || return 1
+        [ "$want" = "$have" ] || return 1
+    done
+}
+
+install_cold() {
+    local sources="$scratch/snapshot.list" prefs="$scratch/prefs" archives="$scratch/archives"
     # One-line format: apt only parses deb822 from Dir::Etc::sourceparts.
     for pocket in "$codename" "$codename-updates" "$codename-security"; do
-        echo "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://snapshot.ubuntu.com/ubuntu/${SNAPSHOT} ${pocket} main universe" >> "$sources"
-    done
+        echo "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://snapshot.ubuntu.com/ubuntu/${SNAPSHOT} ${pocket} main universe"
+    done > "$sources"
     # Priority > 1000: the host image tracks the live archive, so its
-    # installed debs run ahead of any fixed snapshot; without this, apt keeps
-    # the newer installed version as candidate and a strict = dependency
-    # (systemd-container on libsystemd-shared) is unsatisfiable. Above 1000,
-    # the snapshot version wins even when that is a downgrade — the dep
-    # closure moves to the snapshot.
-    cat > "$prefs" <<EOF
-Package: *
-Pin: origin "snapshot.ubuntu.com"
-Pin-Priority: 1001
-EOF
+    # installed debs run ahead of any fixed snapshot; without this, apt
+    # keeps the newer installed version as candidate and a strict =
+    # dependency (systemd-container on libsystemd-shared) is unsatisfiable.
+    # Above 1000, the snapshot version wins even when that is a downgrade —
+    # the dep closure moves to the snapshot.
+    printf 'Package: *\nPin: origin "snapshot.ubuntu.com"\nPin-Priority: 1001\n' > "$prefs"
+    # A private archives dir so the cache below holds exactly this
+    # transaction's debs — the shared /var/cache/apt/archives carries debs
+    # from whatever else ran on the host (live-mirror ones included).
+    mkdir -p "$archives"
+    chmod 755 "$scratch" "$archives"
 
     # Bounded fetches: a dead mirror otherwise hangs until the caller's job
     # limit. Non-interactive dpkg: downgrades would otherwise stop on
-    # conffile prompts. Kept archives feed the --cache-dir copy below.
+    # conffile prompts. List-Cleanup off: the confined update must not
+    # delete the host's own live package lists (#36 pins our debs, not the
+    # dev machine's apt).
     apt_snapshot() {
         sudo DEBIAN_FRONTEND=noninteractive apt-get \
             -o Dir::Etc::sourcelist="$sources" \
             -o Dir::Etc::sourceparts=/dev/null \
             -o Dir::Etc::preferences="$prefs" \
             -o Dir::Etc::preferencesparts=/dev/null \
+            -o Dir::Cache::archives="$archives" \
+            -o APT::Get::List-Cleanup=0 \
             -o Acquire::http::Timeout=30 \
             -o Acquire::https::Timeout=30 \
             -o Acquire::Retries=3 \
@@ -140,8 +169,33 @@ EOF
 
     if [ -n "$cachedir" ]; then
         mkdir -p "$cachedir"
-        cp /var/cache/apt/archives/*.deb "$cachedir"/
+        rm -f "$cachedir"/*.deb "$cachedir/manifest"
+        if compgen -G "$archives/*.deb" >/dev/null; then
+            cp "$archives"/*.deb "$cachedir"/
+        fi
+        {
+            echo "snapshot $SNAPSHOT"
+            echo "codename $codename"
+            echo "packages $*"
+            dpkg-query -W -f 'resolved ${Package} ${Version}\n' "$@"
+            if compgen -G "$cachedir/*.deb" >/dev/null; then
+                (cd "$cachedir" && sha256sum -- *.deb | sed 's/^/sha256 /')
+            fi
+        } > "$cachedir/manifest"
     fi
+}
+
+warm=false
+if manifest_ok "$@"; then
+    # Warm: reinstall the cached transaction with apt sources nulled — fully
+    # offline, so nothing can drift; any failure falls back to a cold run.
+    if ! compgen -G "$cachedir/*.deb" >/dev/null \
+        || apt_offline install -y --allow-downgrades "$cachedir"/*.deb; then
+        versions_match "$@" && warm=true
+    fi
+fi
+if [ "$warm" != true ]; then
+    install_cold "$@"
 fi
 
 live=$(scan_live < "$log" || true)

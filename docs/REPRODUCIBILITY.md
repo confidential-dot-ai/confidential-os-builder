@@ -71,8 +71,12 @@ pin (read from its `mkosi.sources`, so one bump moves image and host
 toolchain together), confining apt to a snapshot-only source list
 (pinned above priority 1000, so the dep closure moves to the snapshot's
 versions even when the runner image is ahead) and scanning the apt
-transcript for live-mirror fetches, with the scanner's parity to
-`is_live_mirror_fetch` enforced by a vector self-test in `bin/lint`.
+transcript for live-mirror fetches, with the shell scanner and
+`is_live_mirror_fetch` tested against one shared vector fixture
+(`tests/fixtures/live-mirror-vectors.txt`) so they cannot drift apart.
+Its CI deb cache is an optimization, never an authority: a manifest
+records the pin, host release, package list, resolved versions, and
+deb hashes, and any mismatch falls back to a fresh snapshot install.
 CI and `bin/setup` install host deps only through it, and `bin/lint`
 rejects raw apt installs elsewhere in `bin/` and `.github/`.
 

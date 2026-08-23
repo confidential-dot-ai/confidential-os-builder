@@ -64,9 +64,12 @@ fi
 # Host toolchain debs shape measured bytes too (iasl compiles the trusted
 # DSDT; ovmf is the published SNP firmware), so bin/host-deps is the only
 # permitted apt caller in bin/ and .github/ (#36), and its transcript
-# scanner must keep parity with src/tools.rs's is_live_mirror_fetch vectors.
+# scanner must keep parity with the shared is_live_mirror_fetch vectors.
+# The apt pattern is deliberately broad (no sudo/\b anchors: sudo-less
+# container jobs count, and \b is a no-op in macOS git grep) — reword prose
+# that trips it rather than narrowing it.
 bin/host-deps --self-test >/dev/null
-rawinstall=$(git grep -nE 'sudo +(DEBIAN_FRONTEND=[^ ]+ +)?apt(-get)?\b.*\binstall\b' -- '.github/' 'bin/' ':!bin/host-deps' || true)
+rawinstall=$(git grep -nE 'apt(-get)?[[:space:]].*install' -- '.github/' 'bin/' ':!bin/host-deps' || true)
 if [ -n "$rawinstall" ]; then
     echo "bin/lint: host debs must install via bin/host-deps (snapshot-pinned, fail-closed, #36), not raw apt:" >&2
     echo "$rawinstall" >&2
