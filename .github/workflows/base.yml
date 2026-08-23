@@ -25,14 +25,24 @@ jobs:
       - name: Setup mkosi
         uses: systemd/mkosi@84af20892b61c8e177e391f997ded8b4cb5514f2 # v26
 
+      - name: Cache host build deps
+        # The snapshot pin moves the whole dep closure to snapshot versions,
+        # which would re-download it from snapshot.ubuntu.com every run; warm
+        # runs reinstall these debs fully offline. The key rotates with the
+        # runner image (the closure was resolved against its preinstalled
+        # state), the script, and the pin it reads (base mkosi.sources);
+        # host-deps validates the cached manifest and falls back to a cold
+        # snapshot install on any mismatch, so a stale entry costs time only.
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: apt-debs
+          key: ${{ runner.os }}-host-debs-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('bin/host-deps', 'mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources') }}
+
       - name: Install build deps (nspawn, TDVF firmware, iasl, cpio)
-        # Host deps for `confos build` — keep in lockstep with bin/setup.
-        # Bounded: a dead mirror connection otherwise hangs until the job limit.
-        timeout-minutes: 5
-        run: |
-          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3 update -y
-          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3 install -y \
-            systemd-container ovmf cpio acpica-tools
+        # Host deps for `confos build`, snapshot-pinned and fail-closed via
+        # bin/host-deps (#36) — keep the list in lockstep with bin/setup.
+        timeout-minutes: 10
+        run: bin/host-deps --cache-dir apt-debs systemd-container ovmf cpio acpica-tools
 
       - name: Cache kernel-builder tools tree
         # mkosi.output (image + stamp) is what ensure_tools_tree consumes;

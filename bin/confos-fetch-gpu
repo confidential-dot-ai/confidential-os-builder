@@ -107,8 +107,8 @@ cert_pub="$(openssl x509 -in "$MODULE_SIG_CERT" -pubkey -noout 2>/dev/null)" || 
   die "signing key does not match $MODULE_SIG_CERT — modules signed with it would be rejected at boot."
 [[ -x "$KTREE/scripts/sign-file" ]] || die "$KTREE/scripts/sign-file missing — cannot sign modules."
 [[ -d "$TOOLS_TREE" ]] || die "kernel-builder tools tree $TOOLS_TREE missing — run 'confos kernel' first."
-command -v systemd-nspawn >/dev/null || die "systemd-nspawn required (apt install systemd-container)."
-command -v depmod >/dev/null || die "depmod required (apt install kmod)."
+command -v systemd-nspawn >/dev/null || die "systemd-nspawn required (systemd-container package; bin/host-deps installs it)."
+command -v depmod >/dev/null || die "depmod required (kmod package; bin/host-deps installs it)."
 
 mkdir -p "$CACHE" "$WORK"
 

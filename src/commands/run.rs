@@ -45,18 +45,14 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Resolve artifacts based on tier
-    let igvm_path;
-    let uki_path;
-    let firmware_path;
-
     // Default to the first variant (smallest SMP after sort, or the build-time
     // default if `confos igvm` was never run). A future change can add a `--smp`
     // selector to `confos run`; for now this matches v1 behaviour of "one IGVM
     // per output dir."
     let variant = manifest.snp_variants.first();
 
-    match tier {
+    // Resolve artifacts based on tier
+    let (igvm_path, uki_path, firmware_path) = match tier {
         QemuTier::SevSnp => {
             let v = variant.ok_or_else(|| {
                 anyhow::anyhow!(
@@ -73,9 +69,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
                     v.smp,
                 );
             }
-            igvm_path = Some(path);
-            uki_path = None;
-            firmware_path = None;
+            (Some(path), None, None)
         }
         QemuTier::Kvm | QemuTier::Emulated => {
             let uki = args.dir.join("uki.efi");
@@ -101,11 +95,9 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
                     "no firmware available — image was built with --skip-igvm. Pass --firmware <path> to run on KVM."
                 );
             };
-            igvm_path = None;
-            uki_path = Some(uki);
-            firmware_path = Some(fw);
+            (None, Some(uki), Some(fw))
         }
-    }
+    };
 
     // Find disk image
     let disk_path = args.dir.join(format!("disk.{}", manifest.build.format));

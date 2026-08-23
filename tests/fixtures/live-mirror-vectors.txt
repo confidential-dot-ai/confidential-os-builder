@@ -1,0 +1,28 @@
+# Shared vectors for the live-mirror fetch predicate: src/tools.rs's
+# is_live_mirror_fetch test and bin/host-deps --self-test both consume this
+# file, so the Rust and shell scanners cannot drift apart silently (#36).
+# Format: flag|pass<TAB>line. flag = live-mirror fetch, must be caught.
+flag	Get:1 http://archive.ubuntu.com/ubuntu resolute InRelease [136 kB]
+flag	Hit:3 http://security.ubuntu.com/ubuntu resolute-security InRelease
+flag	Err:12 https://ports.ubuntu.com resolute/main arm64 Packages
+flag	Get:7 http://azure.archive.ubuntu.com/ubuntu resolute/main amd64 tar 1.35 [258 kB]
+flag	Ign:2 https://esm.ubuntu.com/apps/ubuntu resolute-apps-security InRelease
+# Allowlist, not blocklist: hosts we never enumerated still flag.
+flag	Get:4 http://old-releases.ubuntu.com/ubuntu resolute InRelease
+# Spelling variants cannot slip past normalization.
+flag	Get:5 http://Archive.Ubuntu.com/ubuntu resolute InRelease
+flag	Get:6 http://archive.ubuntu.com:80/ubuntu resolute InRelease
+# Whitespace runs between the tag and the URL still parse as a fetch line.
+flag	Get:8  http://archive.ubuntu.com/ubuntu resolute InRelease
+# Userinfo does not hide the host.
+flag	Get:9 http://user@archive.ubuntu.com/ubuntu resolute InRelease
+# The pin working as intended.
+pass	Get:1 https://snapshot.ubuntu.com/ubuntu/20260405T000000Z/dists/resolute/InRelease [136 kB]
+# deb822 config echo names the live host by design; not a fetch.
+pass	URIs: http://archive.ubuntu.com/ubuntu
+# Prose mentioning a live host.
+pass	mkosi: falling back to archive.ubuntu.com
+# Malformed sequence number — not an apt progress line.
+pass	Get:x http://archive.ubuntu.com/ubuntu resolute InRelease
+# Non-Ubuntu third-party hosts are out of scope.
+pass	Get:1 http://packages.microsoft.com/repos/azure-cli resolute InRelease

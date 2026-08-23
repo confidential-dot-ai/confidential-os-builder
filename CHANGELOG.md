@@ -8,6 +8,19 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Fixed
+- **Changes measurements (once).** Host build deps are snapshot-pinned
+  (#36): `bin/host-deps` installs them from snapshot.ubuntu.com at a
+  committed timestamp with a fail-closed live-mirror guard, closing the
+  last unpinned measured input (iasl compiles the trusted DSDT; ovmf is
+  the published SNP firmware). Pinning moves the published OVMF.fd from
+  the live archive's ovmf (2024.02-2ubuntu0.9 today) to the snapshot's
+  (2024.02-2ubuntu0.8), rolling the SNP launch measurement once; the
+  DSDT toolchain (acpica-tools 20230628-1) is unchanged. The host pin
+  is the base image's `mkosi.sources` timestamp, so bumping that one
+  committed value is the deliberate act that picks up image and
+  host-toolchain updates — and can move measurements
+
 ## [0.4.3] — 2026-08-18
 
 ### Added
