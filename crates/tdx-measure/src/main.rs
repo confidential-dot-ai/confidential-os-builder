@@ -570,34 +570,55 @@ fn cmd_verify(ccel_path: &Path, tdreport_path: &Path, uki_path: Option<&Path>) -
     println!("{:=<90}", "");
 
     let names = ["RTMR[0]", "RTMR[1]", "RTMR[2]", "RTMR[3]"];
+    // The verdict rests on RTMR[0..2] only. RTMR[3] is runtime-extendable and
+    // such extends never appear in the CCEL (the log covers firmware/boot
+    // events), so a replay mismatch there is EXPECTED on any guest that
+    // runtime-extends (e.g. confos extends the operator key into RTMR[3] from
+    // its initrd) and must not fail verification — verify RTMR[3] directly
+    // against the quote instead. Same semantics as attestation-rs's
+    // verify_ccel_against_rtmrs.
     let mut all_match = true;
     for i in 0..4 {
         let computed = &replayed[i];
         let hardware = &hw_rtmrs[i];
         let matched = ccel::digests_equal(computed, hardware);
-        if !matched {
+        if !matched && i < 3 {
             all_match = false;
         }
         let event_count = events
             .iter()
             .filter(|e| e.mr_index == (i as u32 + 1))
             .count();
+        let verdict = if i == 3 {
+            "n/a"
+        } else if matched {
+            "YES"
+        } else {
+            "NO"
+        };
         println!(
             "{:<10} | {:>6} | {:>5} | {}... | {}...",
             names[i],
             event_count,
-            if matched { "YES" } else { "NO" },
+            verdict,
             &hex::encode(computed)[..32],
             &hex::encode(hardware)[..32],
         );
     }
     println!("{:=<90}", "");
 
+    if !ccel::digests_equal(&replayed[3], &hw_rtmrs[3]) {
+        println!(
+            "note: RTMR[3] not replayable from the CCEL (runtime extends are not logged); \
+             verify it against the quote directly."
+        );
+    }
+
     if all_match {
         println!("\nAll RTMRs match! Event log replay verification PASSED.");
     } else {
         println!("\nWARNING: Some RTMRs do not match!");
-        for i in 0..4 {
+        for i in 0..3 {
             if !ccel::digests_equal(&replayed[i], &hw_rtmrs[i]) {
                 println!("\n{} MISMATCH:", names[i]);
                 println!("  Computed: {}", hex::encode(&replayed[i]));
