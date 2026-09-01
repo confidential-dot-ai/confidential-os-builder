@@ -39,7 +39,7 @@ qemu-system-x86_64 \
 
 ## Installation
 
-Confidential OS Builder runs on Ubuntu Linux. Clone the confos repo and run `bin/setup` to install everything you'll need (mkosi v26, qemu utils, swtpm, rust, cargo-nextest).
+Confidential OS Builder runs on Ubuntu Linux. Clone the confos repo and run `bin/setup` to install everything you'll need (mkosi v27, qemu utils, swtpm, rust, cargo-nextest).
 
 ```bash
 git clone https://github.com/confidential-dot-ai/confidential-os-builder.git

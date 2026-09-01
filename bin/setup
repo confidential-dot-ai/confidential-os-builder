@@ -22,7 +22,7 @@ test -e "$HOME/.local/bin/env" && . "$HOME/.local/bin/env"
 which uv
 
 echo "==> Installing mkosi..."
-which mkosi || uv tool install git+https://github.com/systemd/mkosi.git@v26
+which mkosi || uv tool install git+https://github.com/systemd/mkosi.git@v27
 which mkosi
 
 echo "==> Installing rust..."
