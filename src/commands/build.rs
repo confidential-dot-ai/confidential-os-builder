@@ -803,12 +803,14 @@ const MKOSI_CONF_D: &str = "mkosi.conf.d";
 /// link (`mkosi.conf.d/shared.conf -> ../../common/shared.conf`, valid in the
 /// consumer's repo) dangles or resolves to an unrelated file in *this* repo.
 fn reject_escaping_symlinks(root: &Path) -> anyhow::Result<()> {
-    // The exempt subtrees sit at any extras-dir root: the profile root, or a
-    // `mkosi.conf.d/<dir>` dropin reached from one — mkosi parses each dropin
-    // dir as a top-level dir, recursively. The two flags thread that state
-    // through the recursion the same way reject_escaping_includes' anchor
-    // does, so the exemption fires exactly where mkosi resolves the default
-    // trees (a stray `subdir/mkosi.conf.d/x` mints no extras root).
+    // The exempt subtrees sit at extras-dir roots. An extras-dir root is the
+    // profile root, or a `mkosi.conf.d/<dir>` dropin reached from one —
+    // mkosi parses every dropin dir as a top-level dir, recursively.
+    //
+    // The two flags track that chain through the recursion, mirroring the
+    // anchors of reject_escaping_includes below. So the exemption fires
+    // exactly where mkosi resolves the default trees, and a stray
+    // `subdir/mkosi.conf.d/x` gets no exemption.
     fn walk(
         root: &Path,
         rel: &Path,
@@ -1568,10 +1570,9 @@ mod tests {
 
     #[test]
     fn reject_escaping_symlinks_exempts_dropin_local_image_relative_trees() {
-        // mkosi resolves mkosi.extra/mkosi.skeleton inside mkosi.conf.d/<dir>
-        // dropins too (each dropin dir is parsed as a top-level dir,
-        // recursively), so their image-relative links get the same exemption
-        // as the profile root's.
+        // Dropins get the same exemption as the profile root: mkosi parses
+        // each mkosi.conf.d/<dir> as a top-level dir, recursively, and
+        // resolves mkosi.extra/mkosi.skeleton there too.
         let root = TempDir::new().unwrap();
         for dropin in [
             "mkosi.conf.d/10-gpu",
@@ -1587,8 +1588,8 @@ mod tests {
         }
         reject_escaping_symlinks(root.path()).unwrap();
 
-        // An mkosi.extra somewhere mkosi would not resolve one stays
-        // unexempt, even under a dir merely named mkosi.conf.d.
+        // No exemption where mkosi would not resolve a tree — not even
+        // under a dir merely named mkosi.conf.d.
         for stray in ["subdir/mkosi.extra", "subdir/mkosi.conf.d/x/mkosi.extra"] {
             let root = TempDir::new().unwrap();
             let stray = root.path().join(stray);
