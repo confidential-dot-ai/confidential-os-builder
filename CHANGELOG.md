@@ -8,6 +8,16 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Changed
+- **Changes measurements (once).** mkosi is bumped v26 → v27 (#116):
+  `bin/setup` and CI install exactly `mkosi.git@v27`, and `MinimumVersion=27`
+  fails stale hosts closed. mkosi's own behavior shapes measured bytes, so
+  the bump rolls measurements once. v27's `ToolsTreeSnapshot=` is banned by
+  `bin/lint` alongside `Snapshot=` (#115) — it rides apt's fail-open deb822
+  `Snapshot:` field, so the sandbox-tree URI pinning (#96) stays the only
+  mechanism. Existing installs don't self-upgrade: run
+  `uv tool install --force git+https://github.com/systemd/mkosi.git@v27`.
+
 ### Fixed
 - **Changes measurements (once).** Host build deps are snapshot-pinned
   (#36): `bin/host-deps` installs them from snapshot.ubuntu.com at a
