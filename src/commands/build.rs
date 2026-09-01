@@ -126,7 +126,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     fs_err::create_dir_all(&mkosi_local_extra)?;
 
     if let Some(ref extra) = args.extra {
-        copy_extra(extra, &mkosi_local_extra)?;
+        copy_tree(extra, &mkosi_local_extra)?;
     }
 
     // Check mkosi is available up front, before any expensive work; the
@@ -748,7 +748,7 @@ fn stage_profile_dirs(
         // staged dir, or the next run hard-errors on it.
         fs_err::create_dir_all(&target)?;
         fs_err::write(target.join(STAGED_PROFILE_MARKER), b"")?;
-        copy_extra(dir, &target)?;
+        copy_tree(dir, &target)?;
         tracing::info!("out-of-tree profile {name} staged from {}", dir.display());
         if !profiles.contains(&name) {
             profiles.push(name);
@@ -934,7 +934,7 @@ fn escapes_root(rel_parent: &Path, target: &Path) -> bool {
 /// - `dst` is created if missing.
 /// - Files preserve their unix mode bits.
 /// - Symlinks are copied as symlinks (target path verbatim, not dereferenced).
-fn copy_extra(src: &Path, dst: &Path) -> anyhow::Result<()> {
+fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     fs_err::create_dir_all(dst)?;
@@ -951,7 +951,7 @@ fn copy_extra(src: &Path, dst: &Path) -> anyhow::Result<()> {
             }
             std::os::unix::fs::symlink(&target, &to)?;
         } else if ft.is_dir() {
-            copy_extra(&from, &to)?;
+            copy_tree(&from, &to)?;
         } else {
             fs_err::copy(&from, &to)?;
             let mode = fs_err::metadata(&from)?.permissions().mode();
@@ -1701,25 +1701,25 @@ mod tests {
     }
 
     #[test]
-    fn copy_extra_copies_files_at_root() {
+    fn copy_tree_copies_files_at_root() {
         let src = TempDir::new().unwrap();
         let dst = TempDir::new().unwrap();
         fs_err::write(src.path().join("a.txt"), b"hello").unwrap();
 
-        copy_extra(src.path(), dst.path()).unwrap();
+        copy_tree(src.path(), dst.path()).unwrap();
 
         let copied = fs_err::read(dst.path().join("a.txt")).unwrap();
         assert_eq!(copied, b"hello");
     }
 
     #[test]
-    fn copy_extra_copies_nested_directories() {
+    fn copy_tree_copies_nested_directories() {
         let src = TempDir::new().unwrap();
         let dst = TempDir::new().unwrap();
         fs_err::create_dir_all(src.path().join("etc/foo")).unwrap();
         fs_err::write(src.path().join("etc/foo/bar.conf"), b"x=1").unwrap();
 
-        copy_extra(src.path(), dst.path()).unwrap();
+        copy_tree(src.path(), dst.path()).unwrap();
 
         assert_eq!(
             fs_err::read(dst.path().join("etc/foo/bar.conf")).unwrap(),
@@ -1728,14 +1728,14 @@ mod tests {
     }
 
     #[test]
-    fn copy_extra_preserves_file_modes() {
+    fn copy_tree_preserves_file_modes() {
         let src = TempDir::new().unwrap();
         let dst = TempDir::new().unwrap();
         let path = src.path().join("script");
         fs_err::write(&path, b"#!/bin/sh\n").unwrap();
         fs_err::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        copy_extra(src.path(), dst.path()).unwrap();
+        copy_tree(src.path(), dst.path()).unwrap();
 
         let mode = fs_err::metadata(dst.path().join("script"))
             .unwrap()
@@ -1746,13 +1746,13 @@ mod tests {
     }
 
     #[test]
-    fn copy_extra_preserves_symlinks() {
+    fn copy_tree_preserves_symlinks() {
         let src = TempDir::new().unwrap();
         let dst = TempDir::new().unwrap();
         fs_err::write(src.path().join("target"), b"t").unwrap();
         std::os::unix::fs::symlink("target", src.path().join("link")).unwrap();
 
-        copy_extra(src.path(), dst.path()).unwrap();
+        copy_tree(src.path(), dst.path()).unwrap();
 
         let link_meta = fs_err::symlink_metadata(dst.path().join("link")).unwrap();
         assert!(link_meta.file_type().is_symlink());
@@ -1761,43 +1761,43 @@ mod tests {
     }
 
     #[test]
-    fn copy_extra_empty_source_is_ok() {
+    fn copy_tree_empty_source_is_ok() {
         let src = TempDir::new().unwrap();
         let dst = TempDir::new().unwrap();
-        copy_extra(src.path(), dst.path()).unwrap();
+        copy_tree(src.path(), dst.path()).unwrap();
         // dst should exist and be empty
         assert!(dst.path().exists());
         assert_eq!(fs_err::read_dir(dst.path()).unwrap().count(), 0);
     }
 
     #[test]
-    fn copy_extra_creates_destination_if_missing() {
+    fn copy_tree_creates_destination_if_missing() {
         let src = TempDir::new().unwrap();
         let dst_parent = TempDir::new().unwrap();
         let dst = dst_parent.path().join("does/not/exist/yet");
         fs_err::write(src.path().join("f"), b"x").unwrap();
 
-        copy_extra(src.path(), &dst).unwrap();
+        copy_tree(src.path(), &dst).unwrap();
 
         assert_eq!(fs_err::read(dst.join("f")).unwrap(), b"x");
     }
 
     #[test]
-    fn copy_extra_fails_on_nonexistent_source() {
+    fn copy_tree_fails_on_nonexistent_source() {
         let parent = TempDir::new().unwrap();
         let src = parent.path().join("nonexistent-child");
         let dst = TempDir::new().unwrap();
-        let result = copy_extra(&src, dst.path());
+        let result = copy_tree(&src, dst.path());
         assert!(result.is_err());
     }
 
     #[test]
-    fn copy_extra_fails_on_file_source() {
+    fn copy_tree_fails_on_file_source() {
         let parent = TempDir::new().unwrap();
         let src = parent.path().join("a-file");
         fs_err::write(&src, b"x").unwrap();
         let dst = TempDir::new().unwrap();
-        let result = copy_extra(&src, dst.path());
+        let result = copy_tree(&src, dst.path());
         assert!(result.is_err());
     }
 
