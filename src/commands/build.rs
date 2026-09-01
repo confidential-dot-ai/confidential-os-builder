@@ -800,13 +800,19 @@ const IMAGE_RELATIVE_SUBTREES: [&str; 2] = ["mkosi.extra", "mkosi.skeleton"];
 /// consumer's repo) dangles or resolves to an unrelated file in *this* repo.
 fn reject_escaping_symlinks(root: &Path) -> anyhow::Result<()> {
     fn walk(root: &Path, rel: &Path) -> anyhow::Result<()> {
-        // Only the profile root can hold the exempt subtrees.
-        let at_root = rel.as_os_str().is_empty();
+        // The exempt subtrees sit at any extras-dir root: the profile root or
+        // a nested `mkosi.conf.d/<dir>` — mkosi resolves the default trees in
+        // both, exactly like the Include= anchors below.
+        let at_extras_root = rel.as_os_str().is_empty()
+            || rel
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|n| n == "mkosi.conf.d");
         for entry in fs_err::read_dir(root.join(rel))? {
             let entry = entry?;
             let name = entry.file_name();
             let ft = entry.file_type()?;
-            if at_root && IMAGE_RELATIVE_SUBTREES.iter().any(|s| name == *s) {
+            if at_extras_root && IMAGE_RELATIVE_SUBTREES.iter().any(|s| name == *s) {
                 // The exemption covers links *inside* these trees; the roots
                 // themselves are copied on the host, so a symlinked root is
                 // still re-parented by staging.
@@ -1546,6 +1552,35 @@ mod tests {
         .unwrap();
 
         reject_escaping_symlinks(root).unwrap();
+    }
+
+    #[test]
+    fn reject_escaping_symlinks_exempts_dropin_local_image_relative_trees() {
+        // mkosi resolves mkosi.extra/mkosi.skeleton inside mkosi.conf.d/<dir>
+        // dropins too (each dropin dir is parsed as a top-level dir), so their
+        // image-relative links get the same exemption as the profile root's.
+        let root = TempDir::new().unwrap();
+        let root = root.path();
+        let dropin = root.join("mkosi.conf.d/10-gpu");
+        fs_err::create_dir_all(dropin.join("mkosi.extra/usr/bin")).unwrap();
+        std::os::unix::fs::symlink(
+            "/usr/lib/systemd/systemd",
+            dropin.join("mkosi.extra/usr/bin/init"),
+        )
+        .unwrap();
+
+        reject_escaping_symlinks(root).unwrap();
+
+        // But a symlinked tree root in a dropin is still rejected, and an
+        // mkosi.extra somewhere mkosi would not resolve one stays unexempt.
+        std::os::unix::fs::symlink("/outside", dropin.join("mkosi.skeleton")).unwrap();
+        assert!(reject_escaping_symlinks(root).is_err());
+        fs_err::remove_file(dropin.join("mkosi.skeleton")).unwrap();
+
+        let stray = root.join("subdir/mkosi.extra");
+        fs_err::create_dir_all(&stray).unwrap();
+        std::os::unix::fs::symlink("/etc/hosts", stray.join("hosts")).unwrap();
+        assert!(reject_escaping_symlinks(root).is_err());
     }
 
     #[test]
