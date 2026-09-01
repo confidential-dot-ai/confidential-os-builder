@@ -17,7 +17,7 @@ plain KVM or emulation for booting.
 ```bash
 git clone https://github.com/confidential-dot-ai/confidential-os-builder.git
 cd confidential-os-builder
-bin/setup        # installs mkosi v26, qemu-utils, swtpm, iasl, ovmf, rust, cargo-nextest
+bin/setup        # installs mkosi v27, qemu-utils, swtpm, iasl, ovmf, rust, cargo-nextest
 sudo apt install qemu-system-x86   # the emulator itself — bin/setup does NOT install it
 ```
 

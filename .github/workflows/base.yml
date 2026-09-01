@@ -23,7 +23,7 @@ jobs:
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
 
       - name: Setup mkosi
-        uses: systemd/mkosi@84af20892b61c8e177e391f997ded8b4cb5514f2 # v26
+        uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
 
       - name: Compute runner-image cache term
         # ImageOS/ImageVersion are runner-process env vars, not workflow env

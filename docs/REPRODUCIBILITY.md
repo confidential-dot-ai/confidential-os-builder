@@ -80,8 +80,8 @@ deb hashes, and any mismatch falls back to a fresh snapshot install.
 CI and `bin/setup` install host deps only through it, and `bin/lint`
 rejects raw apt installs elsewhere in `bin/` and `.github/`.
 
-mkosi itself is pinned to v26 — `bin/setup` and CI install exactly
-`mkosi.git@v26`, and `mkosi.conf` enforces `MinimumVersion=26` as a
+mkosi itself is pinned to v27 — `bin/setup` and CI install exactly
+`mkosi.git@v27`, and `mkosi.conf` enforces `MinimumVersion=27` as a
 floor — since mkosi's own behavior is part of the build's determinism.
 The Rust toolchain that builds the `confos` binary is *not* pinned:
 confos's contributions to the measured artifacts (the DSDT early-cpio,
