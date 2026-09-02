@@ -1,12 +1,19 @@
-# Keep the SHA-pinned actions current; every uses: line carries a # vX.Y.Z
-# comment dependabot rewrites alongside the SHA. The systemd/mkosi pin in
-# base.yml is deliberately excluded: it moves only with MinimumVersion= and
-# bin/setup in a reviewed measurement-roll PR (see CHANGELOG, mkosi v27).
+# Keep the SHA-pinned actions current, grouped into one weekly PR (the c8s
+# convention). The systemd/mkosi pin in base.yml is excluded twice over: it
+# moves only with MinimumVersion= and bin/setup in a reviewed measurement-
+# roll PR (see CHANGELOG, mkosi v27), and c8s's confos-pin-watch scrapes
+# that exact `uses: systemd/mkosi@<sha> # v<N>` line to keep its own mkosi
+# install in lockstep — the line's format is load-bearing downstream.
+# (release.yml still carries tag-only pins; dependabot bumps those too but
+# cannot SHA-pin them for you.)
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
     ignore:
       - dependency-name: systemd/mkosi
