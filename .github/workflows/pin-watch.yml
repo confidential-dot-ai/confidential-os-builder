@@ -1,0 +1,87 @@
+# Watches the two measured-input pins that go stale silently and opens the
+# bump PR for review — never merges: every bump here rolls measurements, so
+# a human owns the merge (docs/VERSIONING.md). Born from 6.16 going EOL on
+# kernel.org unnoticed: no backports reached kernel/version for weeks and
+# nothing failed.
+#
+# Requires "Allow GitHub Actions to create and approve pull requests" in the
+# repo's Actions settings; without it the gh pr create step fails loudly.
+name: pin watch
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # weekly; both jobs are no-ops when nothing drifted
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  kernel:
+    # Patch drift on the pinned branch -> bump PR (tarball fetched + hashed
+    # here, same cdn.kernel.org URL scheme as src/kernel/fetch.rs). Branch
+    # gone from releases.json -> EOL: no PR can fix that, so it opens an
+    # issue demanding a deliberate branch move instead.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Check kernel/version against kernel.org
+        run: |
+          set -euo pipefail
+          . kernel/version
+          branch="${LINUX_VERSION%.*}"
+          latest=$(curl -fsSL --retry 3 https://www.kernel.org/releases.json |
+            jq -r --arg b "$branch." '[.releases[] | select(.moniker == "stable" or .moniker == "longterm") | .version | select(startswith($b))] | first // empty')
+          if [ -z "$latest" ]; then
+            title="kernel: pinned branch ${branch} is EOL on kernel.org"
+            if [ -z "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number')" ]; then
+              gh issue create --title "$title" --body "kernel.org's releases.json no longer lists ${branch}: no more security backports reach the \`kernel/version\` pin (currently ${LINUX_VERSION}). Move to a maintained branch — preferably the newest longterm — via a reviewed bump; the config resolution will drift, and the move rolls measurements."
+            fi
+            exit 0
+          fi
+          [ "$latest" != "$LINUX_VERSION" ] || exit 0
+          pr_branch="pin-watch/kernel-${latest}"
+          git ls-remote --exit-code origin "refs/heads/$pr_branch" >/dev/null && exit 0
+          major="${latest%%.*}"
+          curl -fsSL --retry 3 --retry-all-errors -o /tmp/linux.tar.xz \
+            "https://cdn.kernel.org/pub/linux/kernel/v${major}.x/linux-${latest}.tar.xz"
+          sha=$(sha256sum /tmp/linux.tar.xz | cut -d' ' -f1)
+          printf 'LINUX_VERSION=%s\nLINUX_TARBALL_SHA256=%s\n' "$latest" "$sha" > kernel/version
+          git config user.name "pin-watch"
+          git config user.email "actions@github.com"
+          git checkout -b "$pr_branch"
+          git commit -am "kernel: bump to ${latest} — stable backports on the pinned branch"
+          git push origin "$pr_branch"
+          gh pr create --title "kernel: bump to ${latest} — stable backports on the pinned branch" \
+            --body "Automated pin-watch bump ${LINUX_VERSION} -> ${latest} (tarball fetched from cdn.kernel.org and hashed by the workflow). Rolls measurements; if CI's kernel-config drift gate trips, regenerate the snapshot lockfile in this PR before merging."
+
+  snapshot:
+    # The apt snapshot timestamp is the deliberate act that picks up security
+    # updates (docs/REPRODUCIBILITY.md) — this nags with a ready PR once it is
+    # >35 days old, moving every image dir's mkosi.sources to yesterday
+    # midnight UTC (a timestamp snapshot.ubuntu.com is guaranteed to serve).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Age-check the snapshot pin
+        run: |
+          set -euo pipefail
+          cur=$(grep -oE '[0-9]{8}T[0-9]{6}Z' mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources | head -1)
+          age=$(( ( $(date -u +%s) - $(date -u -d "${cur:0:8}" +%s) ) / 86400 ))
+          [ "$age" -gt 35 ] || exit 0
+          new=$(date -u -d '1 day ago' +%Y%m%dT000000Z)
+          pr_branch="pin-watch/snapshot-${new}"
+          git ls-remote --exit-code origin "refs/heads/$pr_branch" >/dev/null && exit 0
+          sed -i "s/[0-9]\{8\}T[0-9]\{6\}Z/${new}/" mkosi/*/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources
+          git config user.name "pin-watch"
+          git config user.email "actions@github.com"
+          git checkout -b "$pr_branch"
+          git commit -am "mkosi: bump the apt snapshot pin to ${new} — ${age} days of security updates"
+          git push origin "$pr_branch"
+          gh pr create --title "mkosi: bump the apt snapshot pin to ${new} — ${age} days of security updates" \
+            --body "Automated pin-watch bump ${cur} -> ${new} across every image dir's \`mkosi.sources\` (the host-deps closure follows the base pin). Rolls measurements: package versions move to the new snapshot. Merge deliberately, ideally batched with other pending rolls."

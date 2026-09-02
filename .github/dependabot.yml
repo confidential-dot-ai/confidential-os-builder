@@ -1,0 +1,12 @@
+# Keep the SHA-pinned actions current; every uses: line carries a # vX.Y.Z
+# comment dependabot rewrites alongside the SHA. The systemd/mkosi pin in
+# base.yml is deliberately excluded: it moves only with MinimumVersion= and
+# bin/setup in a reviewed measurement-roll PR (see CHANGELOG, mkosi v27).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: systemd/mkosi
