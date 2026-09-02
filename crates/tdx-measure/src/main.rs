@@ -615,7 +615,7 @@ fn cmd_verify(ccel_path: &Path, tdreport_path: &Path, uki_path: Option<&Path>) -
     }
 
     if all_match {
-        println!("\nAll RTMRs match! Event log replay verification PASSED.");
+        println!("\nRTMRs[0], RTMR[1] and RTMR[2] match! RTMR[3] must be verified against a TDX quote direct rather than a TDREPORT. Event log replay verification PASSED.");
     } else {
         println!("\nWARNING: Some RTMRs do not match!");
         for i in 0..3 {
