@@ -92,22 +92,15 @@ the serial port).
 
 ## 3. Run a real workload
 
-`examples/caddy.yaml` is a cloud-init file that installs the Caddy web
-server and serves a page. Cloud-init user-data gets baked into the measured
-rootfs — it is part of the image, not runtime configuration:
+Let's bake the Caddy web server and a page for it to serve. Everything a
+workload needs goes in at build time — the package from Ubuntu's archive,
+the config and content from `examples/caddy/`, a directory whose files are
+copied verbatim onto the rootfs:
 
 ```bash
-bin/confos build web --profile mutable --cloud-init examples/caddy.yaml
+bin/confos build web --package caddy --extra examples/caddy
 bin/confos run output/web --port-forward 8080:80
 ```
-
-`--profile mutable` is needed here because this user-data mutates the root
-at boot (`apt-get install`, a config file under `/etc`): by default the
-root is immutable — `/usr` and `/etc` are the read-only verity mount itself
-— and only the mutable (or dev) profile brings back the whole-root writable
-overlay. The switch rides the measured kernel cmdline, so the relaxed
-posture is always visible to a verifier. Production images should stay
-immutable and bake their content instead (`--package`, `--extra`, below).
 
 From another terminal:
 
@@ -116,20 +109,28 @@ curl http://localhost:8080/
 ```
 
 That response came from inside a VM whose entire contents — Ubuntu, Caddy,
-the HTML, the kernel that booted it — are captured by the digests in
-`output/web/manifest.json`. Because user-data is measured, **never put
-secrets in it**; the disk image is integrity-protected but not encrypted
-(see [THREAT_MODEL.md](THREAT_MODEL.md)).
+the Caddyfile, the HTML, the kernel that booted it — are captured by the
+digests in `output/web/manifest.json`. Because everything baked is
+measured, **never bake secrets**; the disk image is integrity-protected but
+not encrypted (see [THREAT_MODEL.md](THREAT_MODEL.md)).
 
-Beyond cloud-init, the other ways to get content into an image:
+The ways to get content into an image:
 
+- `--package curl,jq` — extra Ubuntu packages.
 - `--extra ./dir` — files copied verbatim onto the rootfs (binaries,
   systemd units, static config).
-- `--package curl,jq` — extra Ubuntu packages.
 - `--script setup.sh` — a post-install script run during the image build,
   with network access.
+- `--cloud-init user-data` — a NoCloud `#cloud-config` baked into the
+  image and run at first boot, for the things that genuinely are runtime
+  (writing under `/var`, starting a workload with boot-time parameters).
 
-All of them land in the verity root, so all of them are measured.
+All of them land in the verity root, so all of them are measured. Note that
+the root is immutable at runtime — `/usr` and `/etc` are the read-only
+verity mount itself, and only `/var`, `/home`, `/root` and `/tmp` are
+writable — so there is no `apt-get install` at boot, and cloud-init
+user-data cannot write to `/etc`: whatever the workload needs has to be
+baked. Nothing installed at runtime could be measured anyway.
 
 ## 4. Give it disk space
 

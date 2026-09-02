@@ -1,6 +1,6 @@
 # attestation-api config baked by confos build --profile attest. Part of the
-# read-only measured root: it cannot be overridden at runtime except under
-# the mutable profile, where /etc sits on the unattested overlay.
+# read-only measured root: it cannot be overridden at runtime (only under
+# --profile dev, where /etc sits on the unattested overlay).
 
 [server]
 bind = "0.0.0.0:8400"

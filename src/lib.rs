@@ -205,10 +205,9 @@ pub struct BuildArgs {
     /// also trigger pre-build hooks (e.g. fetching binaries from GHCR).
     /// Shipped: `attest` / `attest-gpu` (bakes the attestation-api HTTP
     /// service), `gpu` (NVIDIA driver stack), `ssh` (bakes openssh-server;
-    /// host keys regenerate on first boot), `mutable` (whole-root writable
-    /// overlay instead of the default immutable root), and `dev`
-    /// (serial-console autologin + ttyS0 output for debugging; implies
-    /// `mutable`).
+    /// host keys regenerate on first boot), and `dev` (serial-console
+    /// autologin + ttyS0 output, and a whole-root writable overlay instead
+    /// of the immutable root, for debugging).
     #[arg(long = "profile", value_name = "NAME")]
     pub profiles: Vec<String>,
 

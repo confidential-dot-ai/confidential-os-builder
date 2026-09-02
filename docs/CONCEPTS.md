@@ -262,9 +262,11 @@ kernel cmdline:
   and `/etc` above all, refuses writes outright. Programs that want to write
   elsewhere (a package manager writing `/usr`, cloud-init writing `/etc`)
   simply fail — which is the point.
-- **`confai.volatile=overlay`** (the `mutable`/`dev` profiles): one big
-  overlay over the whole root, described below. Everything is writable,
-  which is convenient and exactly as unsafe as it sounds.
+- **`confai.volatile=overlay`** (the `dev` profile only): one big overlay
+  over the whole root, described below. Everything is writable — a debug
+  guest you can `apt install` into — and since the switch is on the
+  measured cmdline, a verifier always sees it. There is no production
+  variant: nothing installed at runtime could be measured anyway.
 
 ### What overlayfs actually does
 
@@ -387,7 +389,7 @@ Boot 2:  upper = empty    -> everything from boot 1 is gone
 
 The tradeoff: **nothing persists across reboots**. Logs, config changes, installed packages — all gone. That's by design for a confidential VM where you want a known-good state every boot. If you need persistence, you'd attach a separate data disk that isn't part of the verified root.
 
-The upper layer doesn't have to be RAM, though. `confos run --scratch 20G` attaches a disk that the initrd detects (by its virtio-blk serial number `confai-scratch`), encrypts with a random per-boot key that never leaves RAM, formats as ext4, and uses as the writable-state backing instead of tmpfs — the upper layers of the state overlays in the default layout, or of the whole-root overlay in the mutable posture. Same ephemerality — the key is gone at shutdown, so the data is unrecoverable — but with disk-sized capacity. See [DEPLOYING.md](DEPLOYING.md#storage).
+The upper layer doesn't have to be RAM, though. `confos run --scratch 20G` attaches a disk that the initrd detects (by its virtio-blk serial number `confai-scratch`), encrypts with a random per-boot key that never leaves RAM, formats as ext4, and uses as the writable-state backing instead of tmpfs — the upper layers of the state overlays (or of dev's whole-root overlay). Same ephemerality — the key is gone at shutdown, so the data is unrecoverable — but with disk-sized capacity. See [DEPLOYING.md](DEPLOYING.md#storage).
 
 ---
 

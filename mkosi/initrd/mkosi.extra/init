@@ -107,8 +107,8 @@ mount_state_backing() {
 # Default: the verity mount is the root; only the state directories listed
 # in the measured image's /usr/lib/confai/state.d/*.conf get a writable
 # overlay, so /usr and /etc refuse writes for the guest's life.
-# confai.volatile=overlay (mutable/dev profiles): one writable overlay over
-# the whole root. Rationale and limits: docs/THREAT_MODEL.md.
+# confai.volatile=overlay (dev profile only): one writable overlay over the
+# whole root. Rationale and limits: docs/THREAT_MODEL.md.
 mkdir -p /sysroot /state
 mount -o ro /dev/mapper/root /sysroot
 mount_state_backing /state

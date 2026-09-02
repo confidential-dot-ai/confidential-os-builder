@@ -118,9 +118,8 @@ confused for it. If your deployment genuinely needs SSH, `--profile ssh`
 bakes `openssh-server` into the measured rootfs (host keys are stripped at
 build time for reproducibility and regenerated on first boot, onto the
 unattested `/etc/ssh` state overlay) — that too changes the measurement.
-Note that the default immutable root cannot create users at runtime, so an
-SSH-reachable image needs baked credentials or the mutable profile (see
-[THREAT_MODEL.md](THREAT_MODEL.md)). Otherwise, for
+Note that the immutable root cannot create users at runtime, so an
+SSH-reachable image needs its account and keys baked (`--extra`). Otherwise, for
 production debugging your workload has to bring its own (attested,
 authenticated) channel.
 

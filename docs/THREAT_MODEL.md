@@ -96,28 +96,26 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   ACPI data tables varying with topology) is data the hardened kernel treats
   as untrusted input. This is a tradeoff, allowing different amounts of
   memory and different numbers of CPU cores while measuring everything else.
-- **The root is immutable by default** — the dm-verity mount is the root the
-  system runs on, so `/usr` and `/etc` stay exactly the measured blocks for
-  the guest's whole life and a runtime write to them fails with `EROFS`.
-  Only the state directories declared in the measured image's
+- **The root is immutable** — the dm-verity mount is the root the system
+  runs on, so `/usr` and `/etc` stay exactly the measured blocks for the
+  guest's whole life and a runtime write to them fails with `EROFS`. Only
+  the state directories declared in the measured image's
   `/usr/lib/confai/state.d/` get a writable overlay (`/var`, `/home`,
   `/root`, `/tmp` from the base; `/etc/ssh` from the ssh profile, for
-  first-boot host keys), and `/run` is a fresh tmpfs. A profile that needs
-  another writable directory declares it there rather than falling back to
-  the mutable posture. This matters for anything that composes attestation evidence at
-  runtime (the attest profiles' attestation-api above all): under a
-  whole-root overlay, one root-owned write could shadow the measured binary,
-  config, or unit file with a copied-up replacement that systemd would
-  execute on the next restart — while the launch measurement stayed green.
-- **Mutability is opt-in and visible in the measurement** — the `mutable`
-  profile (and `dev`, which implies it) puts `confai.volatile=overlay` on
-  the measured kernel cmdline and restores the whole-root overlay, so
-  runtime `apt install` and writes to `/etc` work again. A verifier can
-  always tell the two postures apart; don't accept a mutable measurement for
-  a workload whose attestation story depends on runtime immutability.
-- **Writable state is ephemeral in both postures** — with no scratch disk,
-  writes go to a RAM tmpfs; the scratch disk is re-keyed and reformatted
-  every boot, so nothing survives shutdown either way.
+  first-boot host keys), and `/run` is a fresh tmpfs; a profile that needs
+  another writable directory declares it there. This matters for anything
+  that composes attestation evidence at runtime (the attest profiles'
+  attestation-api above all): under a whole-root overlay, one root-owned
+  write could shadow the measured binary, config, or unit file with a
+  copied-up replacement that systemd would execute on the next restart —
+  while the launch measurement stayed green. There is no production
+  opt-out: nothing installed at runtime could be measured, so workload
+  content is baked at build time. Only `--profile dev` restores the
+  whole-root overlay (`confai.volatile=overlay` on the measured cmdline, so
+  it is visible to verifiers like the rest of dev).
+- **Writable state is ephemeral** — with no scratch disk, writes go to a RAM
+  tmpfs; the scratch disk is re-keyed and reformatted every boot, so nothing
+  survives shutdown either way.
 - **The immutable layout is not a root-process sandbox** — a guest process
   with full root (CAP_SYS_ADMIN and systemd control) can still mount its own
   tmpfs over a path or drop unit overrides under `/run/systemd/system`. The
