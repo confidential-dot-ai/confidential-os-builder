@@ -6,15 +6,12 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 
-# Parse roothash and the root-layout switch from the kernel cmdline (disable
-# globbing to prevent expansion)
+# Parse roothash from kernel cmdline (disable globbing to prevent expansion)
 set -f
 ROOTHASH=""
-VOLATILE=""
 for param in $(cat /proc/cmdline); do
     case "$param" in
         roothash=*) ROOTHASH="${param#roothash=}" ;;
-        confai.volatile=*) VOLATILE="${param#confai.volatile=}" ;;
     esac
 done
 set +f
@@ -104,14 +101,23 @@ mount_state_backing() {
 }
 
 # --- Root layout -------------------------------------------------------------
-# Default: the verity mount is the root; only the state directories listed
-# in the measured image's /usr/lib/confai/state.d/*.conf get a writable
-# overlay, so /usr and /etc refuse writes for the guest's life.
-# confai.volatile=overlay (dev profile only): one writable overlay over the
-# whole root. Rationale and limits: docs/THREAT_MODEL.md.
+# The verity mount is the root the system runs on. Only the state directories
+# listed in the measured image's /usr/lib/confai/state.d/*.conf (one path per
+# line, relative to /; the base ships the defaults, a profile adds its own
+# file) get a writable overlay, so /usr and /etc refuse writes for the
+# guest's life. Rationale and limits: docs/THREAT_MODEL.md.
 mkdir -p /sysroot /state
 mount -o ro /dev/mapper/root /sysroot
 mount_state_backing /state
+
+# A list entry that doesn't resolve is a build bug, and booting without it
+# would surface only as an EROFS deep inside some service — so, like every
+# other failure in this script, it is fatal rather than skipped.
+fail_state() {
+    echo "FATAL: state.d: $1" >&2
+    echo b > /proc/sysrq-trigger
+    exit 1  # fallback if sysrq disabled
+}
 
 # Overlay $1 onto itself with upper/work under /state/$2. lowerdir resolves to
 # the underlying dir at mount time, so naming the mountpoint being covered is
@@ -125,31 +131,28 @@ mount_overlay() {
         -o "lowerdir=$1,upperdir=/state/$2/upper,workdir=/state/$2/work" "$1"
 }
 
-if [ "$VOLATILE" = "overlay" ]; then
-    mount_overlay /sysroot rootfs
-    echo "initrd: root layout: whole-root overlay (confai.volatile=overlay)"
-else
-    # One relative path per line; the base image ships the defaults and a
-    # profile appends its own file (e.g. the ssh profile adds etc/ssh).
-    STATE_DIRS=""
-    for conf in /sysroot/usr/lib/confai/state.d/*.conf; do
-        [ -e "$conf" ] || continue
-        while read -r dir; do
-            case "$dir" in "" | \#*) continue ;; esac
-            [ -d "/sysroot/$dir" ] || continue
-            mount_overlay "/sysroot/$dir" "${dir//\//-}"
-            STATE_DIRS="$STATE_DIRS $dir"
-        done < "$conf"
-    done
-    echo "initrd: root layout: immutable (state overlays:$STATE_DIRS)"
-fi
+STATE_DIRS=""
+for conf in /sysroot/usr/lib/confai/state.d/*.conf; do
+    [ -e "$conf" ] || fail_state "no /usr/lib/confai/state.d/*.conf in the image"
+    # `|| [ -n ]` keeps a final line without a trailing newline; CR is
+    # stripped so a CRLF-edited file doesn't name a directory that isn't there.
+    while read -r dir || [ -n "$dir" ]; do
+        dir="${dir%$'\r'}"
+        case "$dir" in "" | \#*) continue ;; esac
+        case " $STATE_DIRS " in *" $dir "*) continue ;; esac
+        [ -d "/sysroot/$dir" ] || fail_state "$dir listed in ${conf##*/} but not a directory in the image"
+        mount_overlay "/sysroot/$dir" "${dir//\//-}"
+        STATE_DIRS="$STATE_DIRS $dir"
+    done < "$conf"
+done
+echo "initrd: state overlays mounted:$STATE_DIRS"
 
-# /run as an initrd-mounted tmpfs in both postures: PID 1 keeps a pre-mounted
-# /run instead of mounting its own, so what the initrd stages below survives
-# into the booted system. machine-id is left to systemd in both postures
-# (empty baked file: committed on a writable /etc, transient via /run on a
-# read-only one).
-mount -t tmpfs tmpfs /sysroot/run -o mode=0755,nosuid,nodev
+# /run as an initrd-mounted tmpfs, with the same limits PID 1 would apply —
+# it keeps a pre-mounted /run instead of mounting its own, which is what
+# lets what the initrd stages below survive into the booted system.
+# machine-id is left to systemd (empty baked file on a read-only /etc →
+# per-boot id bound from /run).
+mount -t tmpfs tmpfs /sysroot/run -o mode=0755,size=20%,nr_inodes=800k,strictatime,nosuid,nodev
 
 # Minimal runtime directories
 mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
@@ -219,13 +222,18 @@ if [ -n "$OPKEY_DEV" ]; then
     # is exactly the bytes it binds, and the service re-checks the platform
     # binding against this file before trusting it.
     #
-    # Staged under /run (the tmpfs mounted above) because /etc is read-only
-    # in the immutable layout; consumers keep the stable path — the image
-    # bakes an /etc/confai -> /run/confai symlink (mkosi.finalize), so
-    # /etc/confai/operator-pubkey resolves in both postures.
+    # Staged under /run (the tmpfs mounted above) because /etc is read-only;
+    # consumers keep the stable path through the baked /etc/confai ->
+    # /run/confai symlink (mkosi.finalize). The directory is then bound
+    # read-only so the file can't be swapped by a plain write — the consumer
+    # still re-checks the platform binding, this just keeps the staging
+    # honest to the same bar as the rest of /etc.
     mkdir -p /sysroot/run/confai
     cp /opkey/pubkey /sysroot/run/confai/operator-pubkey || fail_opkey "stage pubkey failed"
     chmod 0644 /sysroot/run/confai/operator-pubkey
+    mount --bind /sysroot/run/confai /sysroot/run/confai \
+        && mount -o remount,bind,ro /sysroot/run/confai \
+        || fail_opkey "read-only bind of /run/confai failed"
 
     if [ -w "$RTMR3" ]; then
         # --- TDX arm: extend SHA-384(pubkey) into RTMR[3] ---

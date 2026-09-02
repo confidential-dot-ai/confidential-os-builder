@@ -21,26 +21,29 @@ build configs, since those invalidate published reference values.
   runtime.** The root is immutable: the initrd now runs the system directly
   off the read-only dm-verity mount, with writable state overlays only on
   the directories the image declares in `/usr/lib/confai/state.d/` (`/var`,
-  `/home`, `/root`, `/tmp`; the ssh profile adds `/etc/ssh`) plus a `/run`
-  tmpfs — so `/usr` and `/etc` can no longer be shadowed by a copied-up file
-  on the old whole-root overlay, which let any root-owned write replace what
-  systemd executes (attestation-api included) while the launch measurement
-  stayed green. There is no production opt-out — runtime `apt install` and
-  cloud-init writes to `/etc` no longer work; bake content with
+  `/home`, `/root`, `/tmp`; the ssh profile adds `/etc/ssh`; a `--profile-dir`
+  consumer adds its own file) plus a `/run` tmpfs — so `/usr` and `/etc` can
+  no longer be shadowed by a copied-up file on the old whole-root overlay,
+  which let any root-owned write replace what systemd executes
+  (attestation-api included) while the launch measurement stayed green.
+  There is no opt-out, `--profile dev` included: runtime `apt install` and
+  cloud-init writes to `/etc` no longer work anywhere; bake content with
   `--package`/`--extra` instead (the tutorial's Caddy example now does, via
-  `examples/caddy/`). Only `--profile dev` keeps the whole-root overlay
-  (`confai.volatile=overlay` on its measured cmdline). Supporting changes:
-  the operator pubkey stages under `/run/confai` with a baked `/etc/confai`
-  symlink keeping the consumer path stable; `/etc/resolv.conf` is baked as
-  a symlink to resolved's `/run` stub; cloud-init no longer renders network
-  config (networkd's baked `80-dhcp.network` already manages every link),
-  sets the hostname, or creates the default `ubuntu` user at runtime (bake
-  accounts). The dev profile now appends to the base cmdline instead of
-  replacing it
-- The base `attest` profile's attestation-api unit carries the same sandbox
-  as the `attest-gpu` variant (NoNewPrivileges, ProtectHome, PrivateTmp,
-  LockPersonality, RestrictRealtime, RestrictAddressFamilies incl. the
-  vsock fence)
+  `examples/caddy/`). cloud-init consequently no longer applies datasource
+  network-config (networkd's baked `80-dhcp.network` manages every link),
+  datasource hostnames (every guest carries the baked `/etc/hostname`), or
+  the default `ubuntu` user (bake accounts). Other supporting changes: the
+  operator pubkey stages under a read-only-bound `/run/confai` with a baked
+  `/etc/confai` symlink keeping the consumer path stable; `/etc/resolv.conf`
+  is baked as a symlink to resolved's `/run` stub; the dev profile appends
+  to the base cmdline instead of replacing it. Note for the c8s node image:
+  rke2 writes `/etc/rancher` at runtime, so its profile needs a
+  `state.d/60-c8s.conf` listing it before moving to this release
+- The attestation-api sandbox (NoNewPrivileges, ProtectHome, PrivateTmp,
+  LockPersonality, RestrictRealtime, RestrictAddressFamilies incl. the vsock
+  fence) moves to a base-tree drop-in shared by the `attest` and
+  `attest-gpu` units, so the base `attest` profile — previously unsandboxed
+  — gets it too
 
 ### Fixed
 - **Changes measurements (once).** Host build deps are snapshot-pinned

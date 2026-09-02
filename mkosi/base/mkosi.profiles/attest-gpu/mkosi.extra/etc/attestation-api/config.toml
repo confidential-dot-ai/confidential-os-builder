@@ -3,8 +3,7 @@
 # here. GPU evidence is requested per-call: POST /attest with
 # {"nvidia_gpu": true, "report_data": "<>=16-byte base64 nonce>"}. The one
 # caller nonce binds the TDX quote AND every GPU. This file is part of the
-# read-only measured root; it cannot be overridden at runtime (only under
-# --profile dev, where /etc sits on the unattested overlay).
+# read-only measured root and cannot be overridden at runtime.
 
 [server]
 bind = "0.0.0.0:8400"

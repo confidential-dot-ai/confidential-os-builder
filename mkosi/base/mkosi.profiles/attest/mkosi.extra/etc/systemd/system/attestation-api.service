@@ -15,17 +15,8 @@ RestartSec=3
 # attestation-api binary probes for whichever is available at runtime.
 DeviceAllow=/dev/sev-guest rwm
 DeviceAllow=/dev/tdx_guest rwm
-# Same sandbox as the attest-gpu variant (minus the GPU device grants).
-# AF_VSOCK stays allowed: on TDX the quote is fetched from the host QGS over
-# vsock (CID 2, port 4050); on SNP the family goes unused. UNIX for local
-# plumbing, INET/INET6 for the HTTP endpoint, NETLINK for trivial ifquery
-# paths libc may take.
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_VSOCK
-NoNewPrivileges=yes
-ProtectHome=yes
-PrivateTmp=yes
-LockPersonality=yes
-RestrictRealtime=yes
+# Sandbox (incl. the vsock fence) comes from the base tree's
+# attestation-api.service.d/10-sandbox.conf, shared with attest-gpu.
 
 [Install]
 WantedBy=multi-user.target

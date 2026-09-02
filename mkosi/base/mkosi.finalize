@@ -9,15 +9,11 @@ if [ -f "$BUILDROOT/var/lib/dbus/machine-id" ]; then
 fi
 
 # /etc/confai -> /run/confai: the initrd stages the operator pubkey under
-# /run because /etc is read-only by default; consumers keep the stable
-# /etc/confai/... path. Done here rather than as a checked-in symlink so a
-# profile that baked a real dir there fails loudly instead of losing its
-# files behind the link.
-if [ -e "$BUILDROOT/etc/confai" ] && [ ! -L "$BUILDROOT/etc/confai" ]; then
-    echo "mkosi.finalize: /etc/confai must stay free for the /run/confai symlink (a profile baked a real dir there)" >&2
-    exit 1
-fi
-ln -snf ../run/confai "$BUILDROOT/etc/confai"
+# /run because /etc is read-only; consumers keep the stable /etc/confai/...
+# path. Done here rather than as a checked-in symlink so that a profile
+# which baked anything at /etc/confai (dir, file, or its own link) fails the
+# build here — no -f — instead of losing it behind this link.
+ln -sT ../run/confai "$BUILDROOT/etc/confai"
 
 # Remove timestamped log content
 rm -f "$BUILDROOT/var/log/dpkg.log"

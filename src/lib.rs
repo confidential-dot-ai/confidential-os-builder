@@ -94,7 +94,8 @@ pub struct RunArgs {
     pub firmware: Option<PathBuf>,
 
     /// Attach an ephemeral encrypted scratch disk of this size (e.g. "20G") as
-    /// the writable overlay upper layer. Creates a fresh raw disk in the
+    /// the backing for the writable state directories (/var, /home, /root,
+    /// /tmp; /usr and /etc stay read-only). Creates a fresh raw disk in the
     /// output directory and attaches it with serial=confai-scratch so the
     /// guest initrd encrypts it; contents do not survive a reboot.
     #[arg(long, value_name = "SIZE")]
@@ -206,8 +207,7 @@ pub struct BuildArgs {
     /// Shipped: `attest` / `attest-gpu` (bakes the attestation-api HTTP
     /// service), `gpu` (NVIDIA driver stack), `ssh` (bakes openssh-server;
     /// host keys regenerate on first boot), and `dev` (serial-console
-    /// autologin + ttyS0 output, and a whole-root writable overlay instead
-    /// of the immutable root, for debugging).
+    /// autologin + ttyS0 output for debugging).
     #[arg(long = "profile", value_name = "NAME")]
     pub profiles: Vec<String>,
 

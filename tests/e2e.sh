@@ -244,16 +244,6 @@ else
         skip "boot: dm-verity not visible in log"
     fi
 
-    # Default build must boot the immutable layout: /etc on the verity
-    # mount, /var on a state overlay.
-    if grep -q "CONFOS_E2E_ROOT_IMMUTABLE" "$SERIAL_LOG" 2>/dev/null; then
-        pass "boot: immutable root layout (/etc erofs, /var overlay)"
-    elif grep -q "CONFOS_E2E_ROOT_MUTABLE" "$SERIAL_LOG" 2>/dev/null; then
-        fail "boot: default build did not come up with the immutable layout"
-    else
-        skip "boot: immutability probe not visible in log"
-    fi
-
     echo -n "Waiting for HTTP health check..."
     HTTP_OK=false
     for i in $(seq 1 30); do
@@ -274,6 +264,19 @@ else
     else
         fail "e2e: cloud-init did not complete"
         tail -30 "$SERIAL_LOG"
+    fi
+
+    # The layout probe is printed by runcmd, so it is only checked once the
+    # HTTP/marker wait above has given cloud-final time to run. A missing
+    # token here is a failure, not a skip: it means the default build did
+    # not come up immutable, or the probe never ran.
+    if grep -q "CONFOS_E2E_ROOT_IMMUTABLE" "$SERIAL_LOG" 2>/dev/null; then
+        pass "e2e: immutable root layout (/etc erofs, /var overlay)"
+    elif grep -q "CONFOS_E2E_ROOT_MUTABLE" "$SERIAL_LOG" 2>/dev/null; then
+        fail "e2e: default build did not come up with the immutable layout"
+        grep -A2 "confos e2e: starting" "$SERIAL_LOG" | tail -5
+    else
+        fail "e2e: layout probe never reported"
     fi
 
     kill "$QEMU_PID" 2>/dev/null || true

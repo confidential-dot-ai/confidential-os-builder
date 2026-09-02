@@ -200,5 +200,5 @@ For a production deployment, all of these should hold:
 - [ ] Fresh nonce round-tripped through the report/quote
 - [ ] Measurement matches the manifest (correct `smp` variant on SNP)
 - [ ] Debug policy bits are off
-- [ ] Image was **not** built with `--profile dev` (its markers in the measured cmdline: `console=ttyS0`, `confai.volatile=overlay`)
+- [ ] Image was **not** built with `--profile dev` (its marker in the measured cmdline: `console=ttyS0`)
 - [ ] (TDX) `dmesg` shows the DSDT `override` fired

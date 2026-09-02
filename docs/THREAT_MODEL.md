@@ -108,11 +108,17 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   attestation-api above all): under a whole-root overlay, one root-owned
   write could shadow the measured binary, config, or unit file with a
   copied-up replacement that systemd would execute on the next restart —
-  while the launch measurement stayed green. There is no production
-  opt-out: nothing installed at runtime could be measured, so workload
-  content is baked at build time. Only `--profile dev` restores the
-  whole-root overlay (`confai.volatile=overlay` on the measured cmdline, so
-  it is visible to verifiers like the rest of dev).
+  while the launch measurement stayed green. There is no opt-out, not even
+  in `--profile dev`: nothing installed at runtime could be measured, so
+  workload content is baked at build time, and a debug image keeps the same
+  filesystem semantics as production so that EROFS bugs reproduce.
+  Two paths under `/etc` deliberately resolve into runtime state and are
+  the documented exceptions: `/etc/ssh` (the ssh profile's overlay, so its
+  `sshd_config.d/` is root-writable on ssh images — accept that or don't
+  ship the profile), and the `/etc/confai` → `/run/confai` symlink (the
+  staged operator pubkey; bound read-only by the initrd, and its consumer
+  re-verifies the RTMR/HOSTDATA binding regardless). `/etc/resolv.conf` is a
+  symlink to resolved's stub in `/run`, as on any resolved system.
 - **Writable state is ephemeral** — with no scratch disk, writes go to a RAM
   tmpfs; the scratch disk is re-keyed and reformatted every boot, so nothing
   survives shutdown either way.
