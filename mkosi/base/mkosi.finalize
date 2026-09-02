@@ -1,31 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
-# Empty machine-id so it doesn't vary between builds. On a writable /etc
-# (mutable/dev posture) systemd regenerates it on first boot; on the default
-# read-only /etc it generates a per-boot id and bind-mounts it from /run
-# (machine-id(5)).
+# Empty machine-id so it doesn't vary between builds; systemd fills it in at
+# boot (committed on a writable /etc, transient via /run on a read-only one).
 : > "$BUILDROOT/etc/machine-id"
 if [ -f "$BUILDROOT/var/lib/dbus/machine-id" ]; then
     : > "$BUILDROOT/var/lib/dbus/machine-id"
 fi
 
-# /etc/confai -> /run/confai: the initrd stages the launch-supplied operator
-# pubkey under /run (always a writable tmpfs) because /etc is read-only in
-# the default immutable layout; consumers keep the stable /etc/confai/...
-# path through this symlink. Fail if a profile baked a real dir here — its
-# files would be silently unreachable behind the symlink.
+# /etc/confai -> /run/confai: the initrd stages the operator pubkey under
+# /run because /etc is read-only by default; consumers keep the stable
+# /etc/confai/... path. Done here rather than as a checked-in symlink so a
+# profile that baked a real dir there fails loudly instead of losing its
+# files behind the link.
 if [ -e "$BUILDROOT/etc/confai" ] && [ ! -L "$BUILDROOT/etc/confai" ]; then
     echo "mkosi.finalize: /etc/confai must stay free for the /run/confai symlink (a profile baked a real dir there)" >&2
     exit 1
 fi
 ln -snf ../run/confai "$BUILDROOT/etc/confai"
-
-# /etc/resolv.conf must point into /run: systemd-resolved's stub answers
-# there, and with /etc read-only nothing can rewrite a regular file at
-# runtime. Debian's packaging normally settles this link on first service
-# start, which a read-only /etc forbids — so pin it at build time.
-ln -snf ../run/systemd/resolve/stub-resolv.conf "$BUILDROOT/etc/resolv.conf"
 
 # Remove timestamped log content
 rm -f "$BUILDROOT/var/log/dpkg.log"

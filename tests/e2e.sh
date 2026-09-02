@@ -82,13 +82,11 @@ runcmd:
     set -ex
     echo "=== confos e2e: starting ==="
     cat /var/lib/confos-e2e-marker
-    # Immutable-root probe: a write to /usr must fail (EROFS) on the
-    # default posture. Printed to the serial log and asserted by Test 4.
-    if touch /usr/confos-e2e-probe 2>/dev/null; then
-        echo "CONFOS_E2E_ROOT_MUTABLE"
-    else
-        echo "CONFOS_E2E_ROOT_IMMUTABLE"
-    fi
+    # Root-layout probe, asserted by Test 4: on the default posture /etc is
+    # the raw verity mount (erofs) and /var is a state overlay.
+    findmnt -T /etc -no TARGET,FSTYPE; findmnt -T /var -no TARGET,FSTYPE
+    [ "\$(findmnt -T /etc -no FSTYPE)" = erofs ] && [ "\$(findmnt -T /var -no FSTYPE)" = overlay ] \
+        && echo CONFOS_E2E_ROOT_IMMUTABLE || echo CONFOS_E2E_ROOT_MUTABLE
     python3 -c "
     from http.server import HTTPServer, BaseHTTPRequestHandler
     class H(BaseHTTPRequestHandler):
@@ -246,11 +244,12 @@ else
         skip "boot: dm-verity not visible in log"
     fi
 
-    # Default build must boot the immutable layout: /usr rejects writes.
+    # Default build must boot the immutable layout: /etc on the verity
+    # mount, /var on a state overlay.
     if grep -q "CONFOS_E2E_ROOT_IMMUTABLE" "$SERIAL_LOG" 2>/dev/null; then
-        pass "boot: immutable root (/usr write refused)"
+        pass "boot: immutable root layout (/etc erofs, /var overlay)"
     elif grep -q "CONFOS_E2E_ROOT_MUTABLE" "$SERIAL_LOG" 2>/dev/null; then
-        fail "boot: /usr was writable on a default (immutable) build"
+        fail "boot: default build did not come up with the immutable layout"
     else
         skip "boot: immutability probe not visible in log"
     fi

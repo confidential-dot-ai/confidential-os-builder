@@ -20,8 +20,9 @@ build configs, since those invalidate published reference values.
 - **Changes measurements. Breaking for images that mutate the root at
   runtime.** The root is immutable by default: the initrd now runs the
   system directly off the read-only dm-verity mount, with writable state
-  overlays only on `/var`, `/home`, `/root`, `/tmp` and `/etc/ssh` (plus a
-  `/run` tmpfs) — so `/usr` and `/etc` can no longer be shadowed by a
+  overlays only on the directories the image declares in
+  `/usr/lib/confai/state.d/` (`/var`, `/home`, `/root`, `/tmp`; the ssh
+  profile adds `/etc/ssh`) plus a `/run` tmpfs — so `/usr` and `/etc` can no longer be shadowed by a
   copied-up file on the old whole-root overlay, which let any root-owned
   write replace what systemd executes (attestation-api included) while the
   launch measurement stayed green. The whole-root overlay is now the opt-in
@@ -30,10 +31,12 @@ build configs, since those invalidate published reference values.
   need it, e.g. the tutorial's Caddy example. Supporting changes: the
   operator pubkey stages under `/run/confai` with a baked
   `/etc/confai` symlink keeping the consumer path stable; `/etc/resolv.conf`
-  is pinned to resolved's `/run` stub at build time; cloud-init no longer
+  is baked as a symlink to resolved's `/run` stub; cloud-init no longer
   renders network config (networkd's baked `80-dhcp.network` already manages
-  every link) and no longer creates the default `ubuntu` user at runtime
-  (bake accounts, or `users:` in user-data under the mutable posture)
+  every link), sets the hostname, or creates the default `ubuntu` user at
+  runtime (bake accounts, or `users:` in user-data under the mutable
+  posture). The dev profile now appends to the base cmdline instead of
+  replacing it
 - The base `attest` profile's attestation-api unit carries the same sandbox
   as the `attest-gpu` variant (NoNewPrivileges, ProtectHome, PrivateTmp,
   LockPersonality, RestrictRealtime, RestrictAddressFamilies incl. the

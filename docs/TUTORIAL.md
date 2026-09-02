@@ -142,10 +142,8 @@ bin/confos run output/web --scratch 20G
 
 The initrd encrypts it with a random key generated in-guest (held only in
 RAM, never persisted), formats it, and uses it as the backing for the
-writable state — `/var`, `/home`, `/root`, `/tmp` under the default
-immutable layout, or the whole-root overlay under `--profile mutable` —
-which transparently gains 20G. Contents are ciphertext to the host and
-unrecoverable after shutdown.
+writable state directories, which transparently gain 20G. Contents are
+ciphertext to the host and unrecoverable after shutdown.
 
 ## 5. Ship it
 

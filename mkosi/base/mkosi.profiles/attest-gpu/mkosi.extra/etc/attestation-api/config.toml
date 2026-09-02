@@ -2,9 +2,9 @@
 # Identical in shape to the `attest` profile's config — there is NO GPU flag
 # here. GPU evidence is requested per-call: POST /attest with
 # {"nvidia_gpu": true, "report_data": "<>=16-byte base64 nonce>"}. The one
-# caller nonce binds the TDX quote AND every GPU. Override at runtime by
-# writing /etc/attestation-api/config.toml (persists on the overlay, does not
-# change the measurement).
+# caller nonce binds the TDX quote AND every GPU. This file is part of the
+# read-only measured root; it cannot be overridden at runtime except under
+# the mutable profile, where /etc sits on the unattested overlay.
 
 [server]
 bind = "0.0.0.0:8400"

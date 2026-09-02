@@ -6,9 +6,8 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 
-# Parse roothash and the writable-state posture from the kernel cmdline
-# (disable globbing to prevent expansion). Every confai.* switch rides the
-# measured cmdline, so a verifier always sees which posture booted.
+# Parse roothash and the root-layout switch from the kernel cmdline (disable
+# globbing to prevent expansion)
 set -f
 ROOTHASH=""
 VOLATILE=""
@@ -104,81 +103,52 @@ mount_state_backing() {
     fi
 }
 
-# --- Root layout: immutable by default ---------------------------------------
-# Two measured postures, selected by the (measured) kernel cmdline:
-#
-#   default              -> immutable root. The dm-verity mount IS the root
-#     the system runs on: /usr and /etc stay exactly the blocks the launch
-#     measurement covers for the guest's whole life, and a write to them
-#     fails with EROFS. Only state directories (/var, /home, /root, /tmp,
-#     plus /etc/ssh for first-boot host keys) get a writable overlay, and
-#     /run is a fresh tmpfs. This is what keeps the attestation stack
-#     (attestation-api binary, its config, the unit files) from being
-#     shadowed by a copied-up file: with the whole root under one overlay, a
-#     single root-owned write() was enough to replace what systemd executes
-#     on the next service restart while the launch measurement stayed green.
-#
-#   confai.volatile=overlay -> legacy whole-root overlay. Every path is
-#     writable (runtime apt install, systemctl enable, cloud-init writes to
-#     /etc all work) and every path is shadowable by any root process,
-#     attestation-api included. Selected by the dev and mutable profiles;
-#     because the switch rides the measured cmdline, a verifier can always
-#     tell the two postures apart.
-#
-# Neither posture stops a process with full CAP_SYS_ADMIN from mounting its
-# own tmpfs over a path or writing unit drop-ins under /run/systemd — the
-# immutable layout raises the bar from "any root write" to "root with mount
-# and systemd control". Workload privilege separation on top of this is
-# documented in docs/THREAT_MODEL.md.
-if [ "$VOLATILE" = "overlay" ]; then
-    mkdir -p /sysroot-lower /sysroot-upper /sysroot
-    mount -o ro /dev/mapper/root /sysroot-lower
-    echo "initrd: verified root mounted (read-only lower layer)"
-    mount_state_backing /sysroot-upper
-    mkdir -p /sysroot-upper/upper /sysroot-upper/work
+# --- Root layout -------------------------------------------------------------
+# Default: the verity mount is the root; only the state directories listed
+# in the measured image's /usr/lib/confai/state.d/*.conf get a writable
+# overlay, so /usr and /etc refuse writes for the guest's life.
+# confai.volatile=overlay (mutable/dev profiles): one writable overlay over
+# the whole root. Rationale and limits: docs/THREAT_MODEL.md.
+mkdir -p /sysroot /state
+mount -o ro /dev/mapper/root /sysroot
+mount_state_backing /state
+
+# Overlay $1 onto itself with upper/work under /state/$2. lowerdir resolves to
+# the underlying dir at mount time, so naming the mountpoint being covered is
+# fine. The merged dir takes mode/owner from the upper, so copy the baked
+# dir's — otherwise /root would open up to mkdir's 0755 and /tmp lose 1777.
+mount_overlay() {
+    mkdir -p "/state/$2/upper" "/state/$2/work"
+    chmod --reference="$1" "/state/$2/upper"
+    chown --reference="$1" "/state/$2/upper"
     mount -t overlay overlay \
-        -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
-        /sysroot
-    echo "initrd: whole-root overlayfs mounted (confai.volatile=overlay)"
+        -o "lowerdir=$1,upperdir=/state/$2/upper,workdir=/state/$2/work" "$1"
+}
 
-    # Generate unique machine-id for this boot (writable /etc)
-    cat /proc/sys/kernel/random/uuid | tr -d '-' > /sysroot/etc/machine-id
+if [ "$VOLATILE" = "overlay" ]; then
+    mount_overlay /sysroot rootfs
+    echo "initrd: root layout: whole-root overlay (confai.volatile=overlay)"
 else
-    mkdir -p /sysroot /state
-    mount -o ro /dev/mapper/root /sysroot
-    echo "initrd: verified root mounted read-only at /sysroot (immutable layout)"
-    mount_state_backing /state
-
-    # One writable overlay per state directory. lowerdir resolves to the
-    # underlying dir at mount time, so pointing it at the mountpoint being
-    # covered is fine. The merged root dir takes its mode from the upper dir,
-    # so each upper is chmod'd to match the baked tree (/root is 0700, /tmp
-    # is 1777) instead of inheriting mkdir's 0755.
-    mount_state_overlay() { # <dir-under-root> <state-key> <mode>
-        [ -d "/sysroot/$1" ] || return 0
-        mkdir -p "/state/$2/upper" "/state/$2/work"
-        chmod "$3" "/state/$2/upper"
-        mount -t overlay overlay \
-            -o "lowerdir=/sysroot/$1,upperdir=/state/$2/upper,workdir=/state/$2/work" \
-            "/sysroot/$1"
-    }
-    mount_state_overlay var var 0755
-    mount_state_overlay home home 0755
-    mount_state_overlay root root 0700
-    mount_state_overlay tmp tmp 1777
-    # First-boot SSH host keys are the one legitimate runtime write under
-    # /etc (see the ssh profile); everything else in /etc stays verity-backed.
-    mount_state_overlay etc/ssh etc-ssh 0755
-    echo "initrd: state overlays mounted (var home root tmp etc/ssh)"
-
-    # /etc/machine-id is baked empty; with /etc read-only, systemd generates
-    # a per-boot id and bind-mounts it from /run itself (machine-id(5)), so
-    # no initrd write is needed — or possible.
+    # One relative path per line; the base image ships the defaults and a
+    # profile appends its own file (e.g. the ssh profile adds etc/ssh).
+    STATE_DIRS=""
+    for conf in /sysroot/usr/lib/confai/state.d/*.conf; do
+        [ -e "$conf" ] || continue
+        while read -r dir; do
+            case "$dir" in "" | \#*) continue ;; esac
+            [ -d "/sysroot/$dir" ] || continue
+            mount_overlay "/sysroot/$dir" "${dir//\//-}"
+            STATE_DIRS="$STATE_DIRS $dir"
+        done < "$conf"
+    done
+    echo "initrd: root layout: immutable (state overlays:$STATE_DIRS)"
 fi
 
 # /run as an initrd-mounted tmpfs in both postures: PID 1 keeps a pre-mounted
 # /run instead of mounting its own, so what the initrd stages below survives
-# into the booted system.
+# into the booted system. machine-id is left to systemd in both postures
+# (empty baked file: committed on a writable /etc, transient via /run on a
+# read-only one).
 mount -t tmpfs tmpfs /sysroot/run -o mode=0755,nosuid,nodev
 
 # Minimal runtime directories

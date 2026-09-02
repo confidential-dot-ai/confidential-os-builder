@@ -99,9 +99,12 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
 - **The root is immutable by default** — the dm-verity mount is the root the
   system runs on, so `/usr` and `/etc` stay exactly the measured blocks for
   the guest's whole life and a runtime write to them fails with `EROFS`.
-  Only state directories (`/var`, `/home`, `/root`, `/tmp`, plus `/etc/ssh`
-  for first-boot host keys) get a writable overlay, and `/run` is a fresh
-  tmpfs. This matters for anything that composes attestation evidence at
+  Only the state directories declared in the measured image's
+  `/usr/lib/confai/state.d/` get a writable overlay (`/var`, `/home`,
+  `/root`, `/tmp` from the base; `/etc/ssh` from the ssh profile, for
+  first-boot host keys), and `/run` is a fresh tmpfs. A profile that needs
+  another writable directory declares it there rather than falling back to
+  the mutable posture. This matters for anything that composes attestation evidence at
   runtime (the attest profiles' attestation-api above all): under a
   whole-root overlay, one root-owned write could shadow the measured binary,
   config, or unit file with a copied-up replacement that systemd would

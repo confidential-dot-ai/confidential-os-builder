@@ -255,12 +255,13 @@ Confidential OS Builder answers this two ways, selected by the measured
 kernel cmdline:
 
 - **Default (immutable root)**: the verity mount itself is the root. Only
-  the directories that legitimately hold runtime state — `/var`, `/home`,
-  `/root`, `/tmp`, `/etc/ssh` — each get a small writable overlay, and
-  `/run` is a tmpfs. Everything else, `/usr` and `/etc` above all, refuses
-  writes outright. Programs that want to write elsewhere (a package manager
-  writing `/usr`, cloud-init writing `/etc`) simply fail — which is the
-  point.
+  the directories that legitimately hold runtime state — declared one per
+  line in the image's `/usr/lib/confai/state.d/*.conf`: `/var`, `/home`,
+  `/root`, `/tmp` from the base, `/etc/ssh` from the ssh profile — each get
+  a small writable overlay, and `/run` is a tmpfs. Everything else, `/usr`
+  and `/etc` above all, refuses writes outright. Programs that want to write
+  elsewhere (a package manager writing `/usr`, cloud-init writing `/etc`)
+  simply fail — which is the point.
 - **`confai.volatile=overlay`** (the `mutable`/`dev` profiles): one big
   overlay over the whole root, described below. Everything is writable,
   which is convenient and exactly as unsafe as it sounds.
