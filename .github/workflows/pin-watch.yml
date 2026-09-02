@@ -4,12 +4,11 @@
 # kernel.org unnoticed: no backports reached kernel/version for weeks and
 # nothing failed.
 #
-# PRs opened with the default Actions token trigger no CI (GitHub suppresses
-# runs for GITHUB_TOKEN-created events). Configure a PIN_WATCH_TOKEN secret
-# (a fine-grained PAT with contents+PR write) to get CI on the bump PRs;
-# until then, close/reopen a bump PR by hand to run its checks. Creating
-# PRs also needs "Allow GitHub Actions to create and approve pull requests"
-# enabled in the repo's Actions settings.
+# With PIN_WATCH_TOKEN (a fine-grained PAT with Contents and Pull requests
+# read/write access), checkout, push, and PR creation all use the PAT and PR
+# checks start automatically. Without it, they consistently use GITHUB_TOKEN:
+# the repository must allow Actions to create pull requests, and the resulting
+# PR workflow runs wait for approval before starting.
 name: pin watch
 
 on:
@@ -21,6 +20,10 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: pin-watch
+  cancel-in-progress: false
+
 env:
   GH_TOKEN: ${{ secrets.PIN_WATCH_TOKEN || github.token }}
 
@@ -29,26 +32,55 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          token: ${{ secrets.PIN_WATCH_TOKEN || github.token }}
       - name: Configure the bot identity
         run: |
           git config user.name "pin-watch"
           git config user.email "actions@github.com"
 
-      # Open (or refresh) a PR carrying whatever the caller staged on a
-      # branch. Force-push keeps an open PR current when upstream moves
-      # again, and recovers the orphaned-branch case where a previous run
-      # pushed but pr create failed (the branch alone must not gate reruns).
+      # Open (or refresh) a PR carrying whatever the caller changed. Skip an
+      # unchanged open PR, but recover a same-tree orphan branch by opening
+      # its missing PR. A lease prevents overwriting an unexpected writer.
       - name: Define open_pr helper
         run: |
           cat > /tmp/open_pr <<'SH'
           open_pr() { # <branch> <title> <body>
-            git checkout -b "$1"
-            git commit -am "$2"
-            git push -f origin "$1"
-            if [ -z "$(gh pr list --head "$1" --state open --json number --jq '.[0].number')" ]; then
-              gh pr create --title "$2" --body "$3"
+            local branch="$1" title="$2" body="$3"
+            local open_pr_number remote_oid remote_ref remote_status
+
+            git checkout -b "$branch"
+            git commit -am "$title"
+            open_pr_number=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')
+
+            remote_oid=
+            if remote_ref=$(git ls-remote --exit-code --heads origin "refs/heads/$branch"); then
+              remote_oid="${remote_ref%%[[:space:]]*}"
+              git fetch --no-tags origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+            else
+              remote_status=$?
+              [ "$remote_status" -eq 2 ] || return "$remote_status"
             fi
-            git checkout -
+
+            if [ -n "$remote_oid" ] &&
+              [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse "$remote_oid^{tree}")" ]; then
+              git checkout -
+              if [ -n "$open_pr_number" ]; then
+                echo "pin-watch: $branch already has the proposed tree in PR #$open_pr_number"
+                return 0
+              fi
+            else
+              if [ -n "$remote_oid" ]; then
+                git push --force-with-lease="refs/heads/$branch:$remote_oid" origin "HEAD:refs/heads/$branch"
+              else
+                git push origin "HEAD:refs/heads/$branch"
+              fi
+              git checkout -
+            fi
+
+            if [ -z "$open_pr_number" ]; then
+              gh pr create --head "$branch" --title "$title" --body "$body"
+            fi
           }
           SH
 
@@ -74,15 +106,22 @@ jobs:
             "Automated pin-watch bump ${cur} -> ${new} in: ${moved} (the host-deps closure follows the base pin; sources deliberately skewed behind base keep their own timestamps). Rolls measurements — package versions move to the new snapshot; if the kernel-config drift gate trips, regenerate the snapshot lockfile here. Merge deliberately, ideally batched with other pending rolls."
       - name: Kernel — patch drift or EOL
         # Patch drift on the pinned branch -> bump PR with the digest taken
-        # from kernel.org's signed sha256sums.asc (an independent checksum,
-        # matching the trust model of src/kernel/fetch.rs — this workflow
-        # must never mint a pin by hashing its own download). Branch gone
-        # from releases.json -> EOL: no PR can fix that, so fail red and
-        # stay red weekly until a human moves the branch.
+        # from a signature-verified kernel.org sha256sums.asc (an independent
+        # checksum, matching the trust model of src/kernel/fetch.rs — this
+        # workflow must never mint a pin by hashing its own download). The
+        # checksum autosigner authenticates kernel.org mirror checksum metadata;
+        # it is not a substitute for a kernel developer's tarball signature.
+        # Branch gone from releases.json -> EOL: no PR can fix that, so fail red
+        # and stay red weekly until a human moves the branch.
         run: |
           set -euo pipefail
           source /tmp/open_pr
           . kernel/version
+          kernel_version_re='^[1-9][0-9]*\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$'
+          if [[ ! $LINUX_VERSION =~ $kernel_version_re ]]; then
+            echo "::error::invalid pinned kernel version: ${LINUX_VERSION}; expected MAJOR.MINOR[.PATCH]" >&2
+            exit 1
+          fi
           branch="${LINUX_VERSION%.*}"
           # A series' first release is two-part (6.17, no .0): it IS its
           # own branch; stripping past the last dot would yield "6" and
@@ -94,13 +133,22 @@ jobs:
             echo "::error::kernel branch ${branch} is EOL on kernel.org — no more backports reach the ${LINUX_VERSION} pin; move to a maintained branch (measurement roll)" >&2
             exit 1
           fi
-          [ "$latest" != "$LINUX_VERSION" ] || exit 0
+          if [[ ! $latest =~ $kernel_version_re ]]; then
+            echo "::error::kernel.org returned an invalid stable version: ${latest}; expected MAJOR.MINOR[.PATCH]" >&2
+            exit 1
+          fi
+          dpkg --compare-versions "$latest" eq "$LINUX_VERSION" && exit 0
+          if ! dpkg --compare-versions "$latest" gt "$LINUX_VERSION"; then
+            echo "::error::refusing non-forward kernel update ${LINUX_VERSION} -> ${latest}" >&2
+            exit 1
+          fi
           major="${latest%%.*}"
-          sha=$(curl -fsSL --retry 5 --retry-delay 5 "https://cdn.kernel.org/pub/linux/kernel/v${major}.x/sha256sums.asc" |
-            grep -E "  linux-${latest}\.tar\.xz$" | cut -d' ' -f1)
-          [ -n "$sha" ] || { echo "::error::linux-${latest}.tar.xz missing from sha256sums.asc" >&2; exit 1; }
+          manifest="$RUNNER_TEMP/kernel-sha256sums.asc"
+          curl -fsSL --retry 5 --retry-delay 5 \
+            --output "$manifest" \
+            "https://cdn.kernel.org/pub/linux/kernel/v${major}.x/sha256sums.asc"
+          sha=$(bash .github/scripts/kernel-checksum "$manifest" "$latest")
           printf 'LINUX_VERSION=%s\nLINUX_TARBALL_SHA256=%s\n' "$latest" "$sha" > kernel/version
           open_pr "pin-watch/kernel" \
             "kernel: bump to ${latest} — stable backports on the pinned branch" \
-            "Automated pin-watch bump ${LINUX_VERSION} -> ${latest}; the tarball digest comes from kernel.org's signed sha256sums.asc, not from hashing a download. Rolls measurements; if CI's kernel-config drift gate trips, regenerate the snapshot lockfile in this PR before merging."
-
+            "Automated pin-watch bump ${LINUX_VERSION} -> ${latest}; the tarball digest comes from a signature-verified kernel.org checksum manifest using the repository-pinned checksum-autosigner key, not from hashing a download. That signature authenticates kernel.org mirror checksum metadata; it is not a developer tarball signature. Rolls measurements; if CI's kernel-config drift gate trips, regenerate the snapshot lockfile in this PR before merging."
