@@ -299,7 +299,7 @@ the trusted-DSDT design makes unnecessary.
 
 ### Snapshots
 
-Each fragment combination resolves (via `make olddefconfig`) to a complete `.config`. Confidential OS Builder writes that resolved config to a per-lineage **lockfile**: every kernel build rewrites its lineage's snapshot automatically, and `git diff` is how you see what changed. A build never fails on snapshot drift.
+Each fragment combination resolves (via `make olddefconfig`) to a complete `.config`. Confidential OS Builder writes that resolved config to a per-lineage **lockfile**: every kernel build rewrites its lineage's snapshot automatically, and `git diff` is how you see what changed. A build never fails on snapshot drift; the test suite fails if the committed baseline contradicts the fragments.
 
 After a build, review the snapshot:
 - An **expected** change — you edited a fragment or bumped the kernel version — gets committed alongside that edit.

@@ -454,4 +454,66 @@ mod tests {
         assert!(snapshot_path(Some(Path::new("/"))).is_err());
         assert!(snapshot_path(Some(Path::new("/repo/.config"))).is_err());
     }
+
+    /// Off-requested symbols kconfig omits from the snapshot entirely
+    /// because nothing in the tree offers them; drop an entry once its
+    /// dependency arrives and the snapshot starts stating the symbol.
+    const EXPECTED_ABSENT: &[&str] = &[
+        "CONFIG_9P_FS",
+        "CONFIG_ACPI_CUSTOM_DSDT",
+        "CONFIG_ACPI_HOTPLUG_MEMORY",
+        "CONFIG_BALLOON_COMPACTION",
+        "CONFIG_BLUETOOTH",
+        "CONFIG_CFG80211",
+        "CONFIG_COMPAT",
+        "CONFIG_DEBUG_INFO",
+        "CONFIG_HOTPLUG_PCI_ACPI",
+        "CONFIG_HOTPLUG_PCI_PCIE",
+        "CONFIG_MAC80211",
+        "CONFIG_MEMORY_BALLOON",
+        "CONFIG_NET_9P_VIRTIO",
+        "CONFIG_UBSAN_ALIGNMENT",
+        "CONFIG_UBSAN_SIGNED_WRAP",
+        "CONFIG_UBSAN_UNREACHABLE",
+        "CONFIG_VIRTIO_FS",
+    ];
+
+    /// The committed baseline lockfile must state, line for line, what the
+    /// fragments request; regenerate it with `bin/confos kernel` and commit.
+    #[test]
+    fn committed_snapshot_matches_its_fragments() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let snapshot = root.join(SNAPSHOT_PATH);
+        // Floors are minimums: adding requests needs no edit here, removing
+        // one must lower the number in the same change.
+        let owned = [
+            (root.join(REQUIRED_FRAGMENT), 18),
+            (root.join(HARDENING_FRAGMENT), 144),
+            (root.join(CONFIDENTIAL_FRAGMENT), 4),
+        ];
+        let fragments: Vec<(&Path, usize)> = owned.iter().map(|(p, n)| (p.as_path(), *n)).collect();
+        config::verify_snapshot(&fragments, &snapshot, EXPECTED_ABSENT).unwrap_or_else(|e| {
+            panic!(
+                "{e}\n\nRegenerate {} with `bin/confos kernel` and commit it.",
+                snapshot.display()
+            )
+        });
+
+        // A snapshot resolved for a different kernel is not evidence about
+        // this one, and a synthetic stand-in carries no header at all.
+        let version = fs_err::read_to_string(root.join(VERSION_PATH)).unwrap();
+        let linux_version = version
+            .lines()
+            .find_map(|l| l.strip_prefix("LINUX_VERSION="))
+            .unwrap();
+        let header = format!("# Linux/x86 {linux_version} Kernel Configuration");
+        assert!(
+            fs_err::read_to_string(&snapshot)
+                .unwrap()
+                .lines()
+                .any(|l| l == header),
+            "{} lacks {header:?}; regenerate it with `bin/confos kernel`",
+            snapshot.display()
+        );
+    }
 }
