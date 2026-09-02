@@ -15,8 +15,6 @@ RestartSec=3
 # attestation-api binary probes for whichever is available at runtime.
 DeviceAllow=/dev/sev-guest rwm
 DeviceAllow=/dev/tdx_guest rwm
-# Sandbox (incl. the vsock fence) comes from the base tree's
-# attestation-api.service.d/10-sandbox.conf, shared with attest-gpu.
 
 [Install]
 WantedBy=multi-user.target
