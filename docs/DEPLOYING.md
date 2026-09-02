@@ -126,16 +126,18 @@ partitioning at all:
 
 At boot the initrd generates a random key in RAM, opens the device as
 dm-crypt (aes-xts-plain64, 512-bit key), formats it ext4, and mounts it as
-the root overlay's upper layer. The host sees only ciphertext; the key is
-never persisted, so contents are unrecoverable after the guest stops. Size
-it for your workload's runtime writes — without it, writes land in a 2G RAM
-tmpfs.
+the backing for the guest's writable state — the `/var`/`/home`/`/root`/
+`/tmp` overlays under the default immutable layout, or the whole-root
+overlay's upper layer under the mutable posture. The host sees only
+ciphertext; the key is never persisted, so contents are unrecoverable after
+the guest stops. Size it for your workload's runtime writes — without it,
+writes land in a 2G RAM tmpfs.
 
 ### Persistent data
 
 Confidential OS Builder currently has **no persistent-disk convention**:
 everything under `/` is either measured-and-read-only (the verity root) or
-ephemeral (the overlay). If your workload needs durable state, attach an
+ephemeral (the state overlays). If your workload needs durable state, attach an
 additional disk and manage it from the workload itself — and remember the host
 reads and tampers with attached storage freely, so the workload must bring its
 own encryption *and* integrity protection (e.g. dm-crypt + dm-integrity keyed

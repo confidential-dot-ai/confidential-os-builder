@@ -6,12 +6,16 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 
-# Parse roothash from kernel cmdline (disable globbing to prevent expansion)
+# Parse roothash and the writable-state posture from the kernel cmdline
+# (disable globbing to prevent expansion). Every confai.* switch rides the
+# measured cmdline, so a verifier always sees which posture booted.
 set -f
 ROOTHASH=""
+VOLATILE=""
 for param in $(cat /proc/cmdline); do
     case "$param" in
         roothash=*) ROOTHASH="${param#roothash=}" ;;
+        confai.volatile=*) VOLATILE="${param#confai.volatile=}" ;;
     esac
 done
 set +f
@@ -50,12 +54,7 @@ fi
 veritysetup open /dev/vda2 root /dev/vda3 "$ROOTHASH"
 echo "initrd: dm-verity device created at /dev/mapper/root"
 
-# Mount verified root as lower layer
-mkdir -p /sysroot-lower /sysroot-upper /sysroot
-mount -o ro /dev/mapper/root /sysroot-lower
-echo "initrd: verified root mounted (read-only)"
-
-# Pick overlay upper-layer backing. Scan virtio disks by their virtio-block
+# Pick writable-state backing. Scan virtio disks by their virtio-block
 # device serial number (NOT a serial port — this is the per-device identifier
 # string QEMU exposes via the virtio descriptor, surfaced by Linux at
 # /sys/block/<dev>/serial the moment the device is enumerated, before any
@@ -79,50 +78,111 @@ for dev in /dev/vdb /dev/vdc /dev/vdd; do
     fi
 done
 
-# Robust overlay setup. tmpfs is the safe fallback for any path that doesn't
-# end up on the encrypted scratch disk.
-use_tmpfs_overlay() {
-    echo "initrd: setting up tmpfs overlay (writes lost on reboot)"
-    mount -t tmpfs tmpfs /sysroot-upper -o size=2G,nosuid,nodev
-    mkdir -p /sysroot-upper/upper /sysroot-upper/work
-    mount -t overlay overlay \
-        -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
-        /sysroot
+# Mount the writable-state backing at $1. tmpfs is the safe fallback for any
+# path that doesn't end up on the encrypted scratch disk.
+mount_state_backing() {
+    if [ -n "$SCRATCH_DEV" ]; then
+        echo "initrd: found confai-scratch disk at $SCRATCH_DEV — ephemeral encrypted state"
+        # Random per-boot key, kept only in TEE-encrypted guest RAM (SEV-SNP or
+        # TDX; the platform running the VM protects the key-holding page in
+        # either case), never persisted.
+        mkdir -p /run
+        head -c 64 /dev/urandom > /run/scratch.key
+        # --batch-mode: the raw PVC may carry stale filesystem signatures from a
+        # previous boot (cryptsetup detects those and would otherwise block on an
+        # interactive "Are you sure?" prompt the stdin-less initrd can never
+        # answer). The mapping is plain-mode over a random per-boot key, so any
+        # prior bytes are unreadable and mkfs.ext4 rewrites them immediately.
+        cryptsetup open --batch-mode --type plain --cipher aes-xts-plain64 --key-size 512 \
+            -d /run/scratch.key "$SCRATCH_DEV" scratch
+        # Reformat every boot: prior contents are unrecoverable (key is gone) anyway.
+        mkfs.ext4 -q /dev/mapper/scratch
+        mount /dev/mapper/scratch "$1"
+    else
+        echo "initrd: no confai-scratch disk found — 2G RAM tmpfs (writes lost on reboot)"
+        mount -t tmpfs tmpfs "$1" -o size=2G,nosuid,nodev
+    fi
 }
 
-if [ -n "$SCRATCH_DEV" ]; then
-    echo "initrd: found confai-scratch disk at $SCRATCH_DEV — ephemeral encrypted overlay"
-    # Random per-boot key, kept only in TEE-encrypted guest RAM (SEV-SNP or
-    # TDX; the platform running the VM protects the key-holding page in either
-    # case), never persisted.
-    mkdir -p /run
-    head -c 64 /dev/urandom > /run/scratch.key
-    # --batch-mode: the raw PVC may carry stale filesystem signatures from a
-    # previous boot (cryptsetup detects those and would otherwise block on an
-    # interactive "Are you sure?" prompt the stdin-less initrd can never answer).
-    # The mapping is plain-mode over a random per-boot key, so any prior bytes
-    # are unreadable and mkfs.ext4 rewrites them immediately.
-    cryptsetup open --batch-mode --type plain --cipher aes-xts-plain64 --key-size 512 \
-        -d /run/scratch.key "$SCRATCH_DEV" scratch
-    # Reformat every boot: prior contents are unrecoverable (key is gone) anyway.
-    mkfs.ext4 -q /dev/mapper/scratch
-    mount /dev/mapper/scratch /sysroot-upper
+# --- Root layout: immutable by default ---------------------------------------
+# Two measured postures, selected by the (measured) kernel cmdline:
+#
+#   default              -> immutable root. The dm-verity mount IS the root
+#     the system runs on: /usr and /etc stay exactly the blocks the launch
+#     measurement covers for the guest's whole life, and a write to them
+#     fails with EROFS. Only state directories (/var, /home, /root, /tmp,
+#     plus /etc/ssh for first-boot host keys) get a writable overlay, and
+#     /run is a fresh tmpfs. This is what keeps the attestation stack
+#     (attestation-api binary, its config, the unit files) from being
+#     shadowed by a copied-up file: with the whole root under one overlay, a
+#     single root-owned write() was enough to replace what systemd executes
+#     on the next service restart while the launch measurement stayed green.
+#
+#   confai.volatile=overlay -> legacy whole-root overlay. Every path is
+#     writable (runtime apt install, systemctl enable, cloud-init writes to
+#     /etc all work) and every path is shadowable by any root process,
+#     attestation-api included. Selected by the dev and mutable profiles;
+#     because the switch rides the measured cmdline, a verifier can always
+#     tell the two postures apart.
+#
+# Neither posture stops a process with full CAP_SYS_ADMIN from mounting its
+# own tmpfs over a path or writing unit drop-ins under /run/systemd — the
+# immutable layout raises the bar from "any root write" to "root with mount
+# and systemd control". Workload privilege separation on top of this is
+# documented in docs/THREAT_MODEL.md.
+if [ "$VOLATILE" = "overlay" ]; then
+    mkdir -p /sysroot-lower /sysroot-upper /sysroot
+    mount -o ro /dev/mapper/root /sysroot-lower
+    echo "initrd: verified root mounted (read-only lower layer)"
+    mount_state_backing /sysroot-upper
     mkdir -p /sysroot-upper/upper /sysroot-upper/work
     mount -t overlay overlay \
         -o lowerdir=/sysroot-lower,upperdir=/sysroot-upper/upper,workdir=/sysroot-upper/work \
         /sysroot
-    echo "initrd: overlayfs mounted (ephemeral encrypted, backed by $SCRATCH_DEV)"
+    echo "initrd: whole-root overlayfs mounted (confai.volatile=overlay)"
+
+    # Generate unique machine-id for this boot (writable /etc)
+    cat /proc/sys/kernel/random/uuid | tr -d '-' > /sysroot/etc/machine-id
 else
-    echo "initrd: no confai-scratch disk found"
-    use_tmpfs_overlay
+    mkdir -p /sysroot /state
+    mount -o ro /dev/mapper/root /sysroot
+    echo "initrd: verified root mounted read-only at /sysroot (immutable layout)"
+    mount_state_backing /state
+
+    # One writable overlay per state directory. lowerdir resolves to the
+    # underlying dir at mount time, so pointing it at the mountpoint being
+    # covered is fine. The merged root dir takes its mode from the upper dir,
+    # so each upper is chmod'd to match the baked tree (/root is 0700, /tmp
+    # is 1777) instead of inheriting mkdir's 0755.
+    mount_state_overlay() { # <dir-under-root> <state-key> <mode>
+        [ -d "/sysroot/$1" ] || return 0
+        mkdir -p "/state/$2/upper" "/state/$2/work"
+        chmod "$3" "/state/$2/upper"
+        mount -t overlay overlay \
+            -o "lowerdir=/sysroot/$1,upperdir=/state/$2/upper,workdir=/state/$2/work" \
+            "/sysroot/$1"
+    }
+    mount_state_overlay var var 0755
+    mount_state_overlay home home 0755
+    mount_state_overlay root root 0700
+    mount_state_overlay tmp tmp 1777
+    # First-boot SSH host keys are the one legitimate runtime write under
+    # /etc (see the ssh profile); everything else in /etc stays verity-backed.
+    mount_state_overlay etc/ssh etc-ssh 0755
+    echo "initrd: state overlays mounted (var home root tmp etc/ssh)"
+
+    # /etc/machine-id is baked empty; with /etc read-only, systemd generates
+    # a per-boot id and bind-mounts it from /run itself (machine-id(5)), so
+    # no initrd write is needed — or possible.
 fi
-echo "initrd: overlayfs ready"
+
+# /run as an initrd-mounted tmpfs in both postures: PID 1 keeps a pre-mounted
+# /run instead of mounting its own, so what the initrd stages below survives
+# into the booted system.
+mount -t tmpfs tmpfs /sysroot/run -o mode=0755,nosuid,nodev
 
 # Minimal runtime directories
 mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
-
-# Generate unique machine-id for this boot
-cat /proc/sys/kernel/random/uuid | tr -d '-' > /sysroot/etc/machine-id
 
 # --- Operator-key binding: verify before switch_root -----------------------
 # Bind a launch-supplied operator public key into the platform's launch
@@ -188,9 +248,14 @@ if [ -n "$OPKEY_DEV" ]; then
     # hardening. The initrd is the single reader of the disk; what it stages
     # is exactly the bytes it binds, and the service re-checks the platform
     # binding against this file before trusting it.
-    mkdir -p /sysroot/etc/confai
-    cp /opkey/pubkey /sysroot/etc/confai/operator-pubkey || fail_opkey "stage pubkey failed"
-    chmod 0644 /sysroot/etc/confai/operator-pubkey
+    #
+    # Staged under /run (the tmpfs mounted above) because /etc is read-only
+    # in the immutable layout; consumers keep the stable path — the image
+    # bakes an /etc/confai -> /run/confai symlink (mkosi.finalize), so
+    # /etc/confai/operator-pubkey resolves in both postures.
+    mkdir -p /sysroot/run/confai
+    cp /opkey/pubkey /sysroot/run/confai/operator-pubkey || fail_opkey "stage pubkey failed"
+    chmod 0644 /sysroot/run/confai/operator-pubkey
 
     if [ -w "$RTMR3" ]; then
         # --- TDX arm: extend SHA-384(pubkey) into RTMR[3] ---

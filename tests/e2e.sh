@@ -66,10 +66,12 @@ echo -e "${BOLD}Using $CONFOS${NC}"
 # ── Cloud-init test config ────────────────────────────────────────────────────
 CI_FILE=$(mktemp --suffix=.yaml)
 
+# The marker lives under /var: the default build is the immutable layout,
+# where /etc refuses runtime writes and /var is the writable state overlay.
 cat > "$CI_FILE" <<USERDATA
 #cloud-config
 write_files:
-  - path: /etc/confos-e2e-marker
+  - path: /var/lib/confos-e2e-marker
     permissions: '0644'
     content: |
       ${MARKER}
@@ -79,7 +81,14 @@ runcmd:
     exec > /dev/hvc0 2>&1
     set -ex
     echo "=== confos e2e: starting ==="
-    cat /etc/confos-e2e-marker
+    cat /var/lib/confos-e2e-marker
+    # Immutable-root probe: a write to /usr must fail (EROFS) on the
+    # default posture. Printed to the serial log and asserted by Test 4.
+    if touch /usr/confos-e2e-probe 2>/dev/null; then
+        echo "CONFOS_E2E_ROOT_MUTABLE"
+    else
+        echo "CONFOS_E2E_ROOT_IMMUTABLE"
+    fi
     python3 -c "
     from http.server import HTTPServer, BaseHTTPRequestHandler
     class H(BaseHTTPRequestHandler):
@@ -235,6 +244,15 @@ else
         pass "boot: dm-verity setup seen in log"
     else
         skip "boot: dm-verity not visible in log"
+    fi
+
+    # Default build must boot the immutable layout: /usr rejects writes.
+    if grep -q "CONFOS_E2E_ROOT_IMMUTABLE" "$SERIAL_LOG" 2>/dev/null; then
+        pass "boot: immutable root (/usr write refused)"
+    elif grep -q "CONFOS_E2E_ROOT_MUTABLE" "$SERIAL_LOG" 2>/dev/null; then
+        fail "boot: /usr was writable on a default (immutable) build"
+    else
+        skip "boot: immutability probe not visible in log"
     fi
 
     echo -n "Waiting for HTTP health check..."

@@ -249,11 +249,21 @@ dm-verity makes the root filesystem **physically read-only**. Not just "please d
 
 So we need writes to work, but we can't write to the real disk.
 
-### The naive solution (and why it's wrong)
+### Two answers, one per posture
 
-You might think: "Just mount a tmpfs at `/var/log` and another at `/tmp` and another at `/run`..."
+Confidential OS Builder answers this two ways, selected by the measured
+kernel cmdline:
 
-But that doesn't scale. Cloud-init needs to write to `/etc/`. Package managers write to `/usr/`. Random programs write to random places. You'd need a tmpfs mount for every possible writable path, and you'd miss some.
+- **Default (immutable root)**: the verity mount itself is the root. Only
+  the directories that legitimately hold runtime state — `/var`, `/home`,
+  `/root`, `/tmp`, `/etc/ssh` — each get a small writable overlay, and
+  `/run` is a tmpfs. Everything else, `/usr` and `/etc` above all, refuses
+  writes outright. Programs that want to write elsewhere (a package manager
+  writing `/usr`, cloud-init writing `/etc`) simply fail — which is the
+  point.
+- **`confai.volatile=overlay`** (the `mutable`/`dev` profiles): one big
+  overlay over the whole root, described below. Everything is writable,
+  which is convenient and exactly as unsafe as it sounds.
 
 ### What overlayfs actually does
 
@@ -362,7 +372,7 @@ Now `ls /sysroot/usr/bin/vim` returns "no such file". But the original is untouc
 
 The lower layer — the dm-verity verified root — is **never modified**. Not by writes, not by deletes, not by anything. Every block that gets read from the real disk is still verified against the hash tree.
 
-If an attacker somehow got code execution in the VM and modified `/usr/bin/bash` — that modification lives in the tmpfs upper layer (RAM). The real `/usr/bin/bash` on disk is still intact and verified. And on reboot, the tmpfs is gone — the upper layer starts empty again, and the system is back to the exact verified state.
+But notice what shadowing means under a whole-root overlay: if an attacker got code execution in the VM and wrote `/usr/bin/bash` — or `/usr/local/bin/attestation-api` — the verified original on disk stays intact, yet the *merged view* now serves the attacker's copy, and that is what executes next. The launch measurement stays green the whole time. This is exactly why the whole-root overlay is no longer the default: under the immutable layout `/usr` and `/etc` are the raw verity mount, that write fails with `EROFS`, and shadowing a measured binary takes far more than one root-owned `write()` (see [THREAT_MODEL.md](THREAT_MODEL.md)). On reboot either way, all runtime writes are gone and the system is back to the exact verified state.
 
 ```
 Reboot cycle:
@@ -376,7 +386,7 @@ Boot 2:  upper = empty    -> everything from boot 1 is gone
 
 The tradeoff: **nothing persists across reboots**. Logs, config changes, installed packages — all gone. That's by design for a confidential VM where you want a known-good state every boot. If you need persistence, you'd attach a separate data disk that isn't part of the verified root.
 
-The upper layer doesn't have to be RAM, though. `confos run --scratch 20G` attaches a disk that the initrd detects (by its virtio-blk serial number `confai-scratch`), encrypts with a random per-boot key that never leaves RAM, formats as ext4, and uses as the overlay's upper layer instead of tmpfs. Same ephemerality — the key is gone at shutdown, so the data is unrecoverable — but with disk-sized capacity. See [DEPLOYING.md](DEPLOYING.md#storage).
+The upper layer doesn't have to be RAM, though. `confos run --scratch 20G` attaches a disk that the initrd detects (by its virtio-blk serial number `confai-scratch`), encrypts with a random per-boot key that never leaves RAM, formats as ext4, and uses as the writable-state backing instead of tmpfs — the upper layers of the state overlays in the default layout, or of the whole-root overlay in the mutable posture. Same ephemerality — the key is gone at shutdown, so the data is unrecoverable — but with disk-sized capacity. See [DEPLOYING.md](DEPLOYING.md#storage).
 
 ---
 
@@ -461,8 +471,10 @@ The IGVM and the disk image are separate files. QEMU loads the IGVM (which boots
    a. Parse roothash from kernel cmdline (no module loading — everything is compiled in)
    b. Wait for /dev/vda2 to appear
    c. veritysetup open /dev/vda2 root /dev/vda3 <roothash>
-   d. Mount /dev/mapper/root read-only -> /sysroot-lower
-   e. Mount tmpfs overlay -> /sysroot (writes go to RAM)
+   d. Mount /dev/mapper/root read-only -> /sysroot
+   e. Mount writable state overlays on /var /home /root /tmp /etc/ssh,
+      tmpfs on /run (default immutable layout; confai.volatile=overlay
+      instead mounts one whole-root overlay — writes go to RAM either way)
    f. Switch root to /sysroot
       |
 6. systemd starts from the verified root

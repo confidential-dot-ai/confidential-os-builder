@@ -97,9 +97,17 @@ server and serves a page. Cloud-init user-data gets baked into the measured
 rootfs — it is part of the image, not runtime configuration:
 
 ```bash
-bin/confos build web --cloud-init examples/caddy.yaml
+bin/confos build web --profile mutable --cloud-init examples/caddy.yaml
 bin/confos run output/web --port-forward 8080:80
 ```
+
+`--profile mutable` is needed here because this user-data mutates the root
+at boot (`apt-get install`, a config file under `/etc`): by default the
+root is immutable — `/usr` and `/etc` are the read-only verity mount itself
+— and only the mutable (or dev) profile brings back the whole-root writable
+overlay. The switch rides the measured kernel cmdline, so the relaxed
+posture is always visible to a verifier. Production images should stay
+immutable and bake their content instead (`--package`, `--extra`, below).
 
 From another terminal:
 
@@ -133,9 +141,11 @@ bin/confos run output/web --scratch 20G
 ```
 
 The initrd encrypts it with a random key generated in-guest (held only in
-RAM, never persisted), formats it, and uses it as the overlay's upper
-layer — the whole filesystem transparently gains 20G. Contents are
-ciphertext to the host and unrecoverable after shutdown.
+RAM, never persisted), formats it, and uses it as the backing for the
+writable state — `/var`, `/home`, `/root`, `/tmp` under the default
+immutable layout, or the whole-root overlay under `--profile mutable` —
+which transparently gains 20G. Contents are ciphertext to the host and
+unrecoverable after shutdown.
 
 ## 5. Ship it
 

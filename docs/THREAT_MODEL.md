@@ -96,8 +96,35 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   ACPI data tables varying with topology) is data the hardened kernel treats
   as untrusted input. This is a tradeoff, allowing different amounts of
   memory and different numbers of CPU cores while measuring everything else.
-- **Writable state is an overlay, ephemeral by default** — with no scratch
-  disk, writes go to a RAM tmpfs and vanish on shutdown.
+- **The root is immutable by default** — the dm-verity mount is the root the
+  system runs on, so `/usr` and `/etc` stay exactly the measured blocks for
+  the guest's whole life and a runtime write to them fails with `EROFS`.
+  Only state directories (`/var`, `/home`, `/root`, `/tmp`, plus `/etc/ssh`
+  for first-boot host keys) get a writable overlay, and `/run` is a fresh
+  tmpfs. This matters for anything that composes attestation evidence at
+  runtime (the attest profiles' attestation-api above all): under a
+  whole-root overlay, one root-owned write could shadow the measured binary,
+  config, or unit file with a copied-up replacement that systemd would
+  execute on the next restart — while the launch measurement stayed green.
+- **Mutability is opt-in and visible in the measurement** — the `mutable`
+  profile (and `dev`, which implies it) puts `confai.volatile=overlay` on
+  the measured kernel cmdline and restores the whole-root overlay, so
+  runtime `apt install` and writes to `/etc` work again. A verifier can
+  always tell the two postures apart; don't accept a mutable measurement for
+  a workload whose attestation story depends on runtime immutability.
+- **Writable state is ephemeral in both postures** — with no scratch disk,
+  writes go to a RAM tmpfs; the scratch disk is re-keyed and reformatted
+  every boot, so nothing survives shutdown either way.
+- **The immutable layout is not a root-process sandbox** — a guest process
+  with full root (CAP_SYS_ADMIN and systemd control) can still mount its own
+  tmpfs over a path or drop unit overrides under `/run/systemd/system`. The
+  layout raises tampering from "any root write" to "root with mount and
+  service-manager control"; the rest is the workload's privilege separation.
+  Run workloads as non-root or in containers without `CAP_SYS_ADMIN`, deny
+  them the TEE device nodes (`DeviceAllow=` allowlists, as the attest units
+  do), and remember the attestation report itself is signed by the CPU — a
+  compromised workload can request quotes with its own `REPORT_DATA` but can
+  neither forge the launch state nor rewind an RTMR extend.
 - **`--profile dev` changes the measurement** — this is the feature. A dev
   image can never silently pass verification as a production image.
 

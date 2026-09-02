@@ -81,8 +81,8 @@ verifiers can `cargo install` just the measurement tool.
 
 | Dir | Produces |
 |---|---|
-| `base/` | The Ubuntu guest rootfs → erofs+verity disk and UKI. `mkosi.conf.d/` splits config, `mkosi.extra/` is baked-in filesystem content, `mkosi.profiles/` holds the `dev` (serial autologin), `attest` (attestation-api service, fetched from GHCR by digest), and `ssh` (openssh-server, host keys stripped for reproducibility) profiles, `mkosi.repart/` defines the GPT layout, `acpi-tables/dsdt.asl` is the trusted DSDT source |
-| `initrd/` | A minimal custom initrd; `mkosi.extra/init` is the entire early-boot logic — verity root setup, overlay assembly, scratch-disk detection/encryption |
+| `base/` | The Ubuntu guest rootfs → erofs+verity disk and UKI. `mkosi.conf.d/` splits config, `mkosi.extra/` is baked-in filesystem content, `mkosi.profiles/` holds the `dev` (serial autologin, implies mutable), `mutable` (whole-root overlay via the measured `confai.volatile=overlay` cmdline switch), `attest` (attestation-api service, fetched from GHCR by digest), and `ssh` (openssh-server, host keys stripped for reproducibility) profiles, `mkosi.repart/` defines the GPT layout, `acpi-tables/dsdt.asl` is the trusted DSDT source |
+| `initrd/` | A minimal custom initrd; `mkosi.extra/init` is the entire early-boot logic — verity root setup, the writable-state layout (immutable root with per-directory state overlays by default; whole-root overlay under `confai.volatile=overlay`), scratch-disk detection/encryption |
 | `kernel-builder/` | A tools-tree image in which the guest kernel is compiled, isolating the toolchain from the host for reproducibility |
 
 Reproducibility work (`SOURCE_DATE_EPOCH`, mtime normalization, etc.) is
