@@ -10,11 +10,10 @@ This repo is consumed purely as the builder: the profile is staged via
 `--kernel-config-fragment`, and consumer inputs (`c8s-ref`,
 `c8s-registry`) via `--sync-input`.
 
-The guest root is immutable at runtime (`/usr` and `/etc` are the read-only
-verity mount; only `/var`, `/home`, `/root`, `/tmp` are writable by
-default). A node image whose services write elsewhere — rke2 under
-`/etc/rancher`, for instance — must declare each such directory, one per
-line, in its profile's `mkosi.extra/usr/lib/confai/state.d/<NN-name>.conf`;
-the initrd then gives it an ephemeral writable overlay. Each listed
-directory must already exist in the built image (baked by the profile), or
-the initrd fails the boot rather than silently skipping it.
+The guest runs directly from the read-only verity root. Writable overlays
+cover `/var`, `/home`, `/root`, and `/tmp` by default. A node image must
+declare any additional runtime state directory in its profile's
+`mkosi.extra/usr/lib/confai/state.d/<NN-name>.conf`, one path per line.
+For example, rke2 requires `/etc/rancher`. Each declared directory must
+already exist in the built image; the initrd gives it an ephemeral writable
+overlay and fails the boot if it is missing.

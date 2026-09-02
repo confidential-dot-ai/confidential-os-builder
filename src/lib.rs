@@ -94,10 +94,11 @@ pub struct RunArgs {
     pub firmware: Option<PathBuf>,
 
     /// Attach an ephemeral encrypted scratch disk of this size (e.g. "20G") as
-    /// the backing for the writable state directories (/var, /home, /root,
-    /// /tmp; /usr and /etc stay read-only). Creates a fresh raw disk in the
-    /// output directory and attaches it with serial=confai-scratch so the
-    /// guest initrd encrypts it; contents do not survive a reboot.
+    /// the backing for declared writable state directories. Creates a fresh raw
+    /// disk in the output directory and attaches it with serial=confai-scratch.
+    /// The guest initrd encrypts and reformats it on every boot. Under SNP or
+    /// TDX, guest-memory protection hides the per-boot key from the host; a
+    /// plain VM provides no such protection.
     #[arg(long, value_name = "SIZE")]
     pub scratch: Option<String>,
 }
@@ -204,10 +205,12 @@ pub struct BuildArgs {
     /// Repeatable. Profiles compose extra config (packages, systemd units,
     /// files) into the base image at build time. Each enabled profile may
     /// also trigger pre-build hooks (e.g. fetching binaries from GHCR).
-    /// Shipped: `attest` / `attest-gpu` (bakes the attestation-api HTTP
-    /// service), `gpu` (NVIDIA driver stack), `ssh` (bakes openssh-server;
-    /// host keys regenerate on first boot), and `dev` (serial-console
-    /// autologin + ttyS0 output for debugging).
+    /// Shipped profiles: `attest` adds the attestation-api HTTP service;
+    /// `gpu` adds the NVIDIA stack; `attest-gpu` combines both; `ssh`
+    /// adds OpenSSH with first-boot host keys; and `dev` adds serial
+    /// autologin and the ttyS0 boot argument while retaining the immutable
+    /// root. Pair `dev` with `--kernel-config-fragment kernel/dev.config`
+    /// to enable the UART driver.
     #[arg(long = "profile", value_name = "NAME")]
     pub profiles: Vec<String>,
 

@@ -50,19 +50,16 @@ fi
 veritysetup open /dev/vda2 root /dev/vda3 "$ROOTHASH"
 echo "initrd: dm-verity device created at /dev/mapper/root"
 
-# Pick writable-state backing. Scan virtio disks by their virtio-block
-# device serial number (NOT a serial port — this is the per-device identifier
-# string QEMU exposes via the virtio descriptor, surfaced by Linux at
-# /sys/block/<dev>/serial the moment the device is enumerated, before any
-# block I/O):
+# Select the writable-state backing by virtio-block device serial (not a
+# serial port). QEMU exposes this per-device identifier through the virtio
+# descriptor, and Linux publishes it at /sys/block/<dev>/serial before I/O:
 #   serial=confai-scratch -> ephemeral, encrypted with a random in-RAM key
 #   anything else / none  -> 2G RAM tmpfs (writes lost on reboot)
 #
-# Using the serial (vs. a filesystem LABEL written by mkfs) is what lets the
-# guest gate on the cluster operator's intent without requiring any pre-format
-# step on the PVC. KubeVirt plumbs Disk.serial in the VM spec through to
-# QEMU's virtio device attribute, so the cluster declares intent in YAML and
-# the guest sees it pre-boot. See src/qemu.rs for the matching confos-run path.
+# Unlike a filesystem label, the serial requires no pre-formatting. KubeVirt
+# passes Disk.serial from the VM spec to QEMU, so the cluster declares the
+# device's purpose in YAML and the guest sees it before boot. See src/qemu.rs
+# for the matching `confos run` path.
 SCRATCH_DEV=""
 for dev in /dev/vdb /dev/vdc /dev/vdd; do
     [ -e "$dev" ] || continue
@@ -74,24 +71,22 @@ for dev in /dev/vdb /dev/vdc /dev/vdd; do
     fi
 done
 
-# Mount the writable-state backing at $1. tmpfs is the safe fallback for any
-# path that doesn't end up on the encrypted scratch disk.
+# Mount writable-state storage at $1, preferring the encrypted scratch disk
+# and falling back to tmpfs.
 mount_state_backing() {
     if [ -n "$SCRATCH_DEV" ]; then
         echo "initrd: found confai-scratch disk at $SCRATCH_DEV — ephemeral encrypted state"
-        # Random per-boot key, kept only in TEE-encrypted guest RAM (SEV-SNP or
-        # TDX; the platform running the VM protects the key-holding page in
-        # either case), never persisted.
+        # Generate a per-boot key held only in guest RAM. SNP and TDX protect
+        # that memory from the host; a plain VM provides no such guarantee.
         mkdir -p /run
         head -c 64 /dev/urandom > /run/scratch.key
-        # --batch-mode: the raw PVC may carry stale filesystem signatures from a
-        # previous boot (cryptsetup detects those and would otherwise block on an
-        # interactive "Are you sure?" prompt the stdin-less initrd can never
-        # answer). The mapping is plain-mode over a random per-boot key, so any
-        # prior bytes are unreadable and mkfs.ext4 rewrites them immediately.
+        # A reused PVC may contain stale signatures. --batch-mode prevents
+        # cryptsetup from waiting for input that the initrd cannot provide.
+        # The fresh plain-mode key makes prior bytes unreadable, and mkfs.ext4
+        # immediately replaces the filesystem metadata.
         cryptsetup open --batch-mode --type plain --cipher aes-xts-plain64 --key-size 512 \
             -d /run/scratch.key "$SCRATCH_DEV" scratch
-        # Reformat every boot: prior contents are unrecoverable (key is gone) anyway.
+        # Reformat every boot because the previous key no longer exists.
         mkfs.ext4 -q /dev/mapper/scratch
         mount /dev/mapper/scratch "$1"
     else
@@ -101,28 +96,27 @@ mount_state_backing() {
 }
 
 # --- Root layout -------------------------------------------------------------
-# The verity mount is the root the system runs on. Only the state directories
-# listed in the measured image's /usr/lib/confai/state.d/*.conf (one path per
-# line, relative to /; the base ships the defaults, a profile adds its own
-# file) get a writable overlay, so /usr and /etc refuse writes for the
-# guest's life. Rationale and limits: docs/THREAT_MODEL.md.
+# The system runs directly from the verity mount. Only relative paths listed
+# in the measured image's /usr/lib/confai/state.d/*.conf receive writable
+# overlays; the base supplies defaults and profiles add separate files.
+# Unlisted paths, including /usr and most of /etc, remain read-only. See
+# docs/THREAT_MODEL.md for the security boundary.
 mkdir -p /sysroot /state
 mount -o ro /dev/mapper/root /sysroot
 mount_state_backing /state
 
-# A list entry that doesn't resolve is a build bug, and booting without it
-# would surface only as an EROFS deep inside some service — so, like every
-# other failure in this script, it is fatal rather than skipped.
+# A missing state directory is an image-build error. Fail the boot here
+# instead of surfacing an unrelated EROFS error later in a service.
 fail_state() {
     echo "FATAL: state.d: $1" >&2
     echo b > /proc/sysrq-trigger
     exit 1  # fallback if sysrq disabled
 }
 
-# Overlay $1 onto itself with upper/work under /state/$2. lowerdir resolves to
-# the underlying dir at mount time, so naming the mountpoint being covered is
-# fine. The merged dir takes mode/owner from the upper, so copy the baked
-# dir's — otherwise /root would open up to mkdir's 0755 and /tmp lose 1777.
+# Mount an overlay at $1 with its upper/work directories under /state/$2.
+# The kernel resolves lowerdir=$1 before covering that mountpoint. The merged
+# directory inherits mode and ownership from the upper layer, so copy them
+# from the baked directory; otherwise /root becomes 0755 and /tmp loses 1777.
 mount_overlay() {
     mkdir -p "/state/$2/upper" "/state/$2/work"
     chmod --reference="$1" "/state/$2/upper"
@@ -134,8 +128,7 @@ mount_overlay() {
 STATE_DIRS=""
 for conf in /sysroot/usr/lib/confai/state.d/*.conf; do
     [ -e "$conf" ] || fail_state "no /usr/lib/confai/state.d/*.conf in the image"
-    # `|| [ -n ]` keeps a final line without a trailing newline; CR is
-    # stripped so a CRLF-edited file doesn't name a directory that isn't there.
+    # Preserve a final unterminated line and strip CR from CRLF input.
     while read -r dir || [ -n "$dir" ]; do
         dir="${dir%$'\r'}"
         case "$dir" in "" | \#*) continue ;; esac
@@ -147,11 +140,10 @@ for conf in /sysroot/usr/lib/confai/state.d/*.conf; do
 done
 echo "initrd: state overlays mounted:$STATE_DIRS"
 
-# /run as an initrd-mounted tmpfs, with the same limits PID 1 would apply —
-# it keeps a pre-mounted /run instead of mounting its own, which is what
-# lets what the initrd stages below survive into the booted system.
-# machine-id is left to systemd (empty baked file on a read-only /etc →
-# per-boot id bound from /run).
+# Mount /run before switch_root with systemd's usual limits. PID 1 retains an
+# existing /run, so data staged below survives into the booted system.
+# Systemd also places the transient machine-id there because the baked
+# /etc/machine-id is empty and read-only.
 mount -t tmpfs tmpfs /sysroot/run -o mode=0755,size=20%,nr_inodes=800k,strictatime,nosuid,nodev
 
 # Minimal runtime directories
@@ -194,9 +186,9 @@ mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
 # keeps the launcher side a plain Secret (no PVC lifecycle) at the cost of one
 # labelled mount here. Guest kernel has ISO9660 (CONFIG_ISO9660_FS=y).
 #
-# This runs BEFORE switch_root: nothing in the measured root or the (host-
-# writable) overlay executes first, so the binding is fixed for the guest's
-# life and reflects only the launch-supplied key.
+# This runs before switch_root, so no code from the measured root or writable
+# state executes first. The binding is fixed for the guest's lifetime and
+# reflects only the launch-supplied key.
 #
 # Fail-closed asymmetry (security-critical):
 #   - no opkey disk                 -> skip (unbound node; a non-operator boot)
@@ -216,18 +208,14 @@ if [ -n "$OPKEY_DEV" ]; then
     mkdir -p /opkey
     mount -o ro "$OPKEY_DEV" /opkey 2>/dev/null || fail_opkey "mount $OPKEY_DEV failed"
     [ -s /opkey/pubkey ] || fail_opkey "no /opkey/pubkey on disk"
-    # Stage the pubkey into the (post-switch_root) rootfs so the cred-release
-    # service reads a plain file — it can't mount the ISO itself under systemd
-    # hardening. The initrd is the single reader of the disk; what it stages
-    # is exactly the bytes it binds, and the service re-checks the platform
-    # binding against this file before trusting it.
+    # Copy the key into the post-switch_root filesystem because the hardened
+    # cred-release service cannot mount the ISO. The initrd stages exactly the
+    # bytes it binds, and the service rechecks that platform binding.
     #
-    # Staged under /run (the tmpfs mounted above) because /etc is read-only;
-    # consumers keep the stable path through the baked /etc/confai ->
-    # /run/confai symlink (mkosi.finalize). The directory is then bound
-    # read-only so the file can't be swapped by a plain write — the consumer
-    # still re-checks the platform binding, this just keeps the staging
-    # honest to the same bar as the rest of /etc.
+    # Stage under /run because /etc is read-only; the baked /etc/confai ->
+    # /run/confai symlink preserves the consumer path. Bind the directory
+    # read-only to prevent ordinary replacement. The consumer still verifies
+    # the platform binding before trusting the key.
     mkdir -p /sysroot/run/confai
     cp /opkey/pubkey /sysroot/run/confai/operator-pubkey || fail_opkey "stage pubkey failed"
     chmod 0644 /sysroot/run/confai/operator-pubkey

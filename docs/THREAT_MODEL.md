@@ -96,34 +96,33 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   ACPI data tables varying with topology) is data the hardened kernel treats
   as untrusted input. This is a tradeoff, allowing different amounts of
   memory and different numbers of CPU cores while measuring everything else.
-- **The root is immutable** — the dm-verity mount is the root the system
-  runs on, so `/usr` and `/etc` stay exactly the measured blocks for the
-  guest's whole life and a runtime write to them fails with `EROFS`. Only
-  the state directories declared in the measured image's
-  `/usr/lib/confai/state.d/` get a writable overlay (`/var`, `/home`,
-  `/root`, `/tmp` from the base; `/etc/ssh` from the ssh profile, for
-  first-boot host keys), and `/run` is a fresh tmpfs; a profile that needs
-  another writable directory declares it there. This matters for anything
-  that composes attestation evidence at runtime (the attest profiles'
-  attestation-api above all): under a whole-root overlay, one root-owned
-  write could shadow the measured binary, config, or unit file with a
-  copied-up replacement that systemd would execute on the next restart —
-  while the launch measurement stayed green. There is no opt-out, not even
-  in `--profile dev`: nothing installed at runtime could be measured, so
-  workload content is baked at build time, and a debug image keeps the same
-  filesystem semantics as production so that EROFS bugs reproduce.
-  Two paths under `/etc` deliberately resolve into runtime state and are
-  the documented exceptions: `/etc/ssh` (the ssh profile's overlay, so its
-  `sshd_config.d/` is root-writable on ssh images — accept that or don't
-  ship the profile), and the `/etc/confai` → `/run/confai` symlink (the
-  staged operator pubkey; bound read-only by the initrd, and its consumer
-  re-verifies the RTMR/HOSTDATA binding regardless). `/etc/resolv.conf` is a
-  symlink to resolved's stub in `/run`, as on any resolved system.
+- **The root is immutable** — the system runs directly from the read-only
+  dm-verity mount. `/usr` and most of `/etc` therefore remain the measured
+  bytes for the life of the guest, and ordinary writes fail with `EROFS`.
+  Only directories declared in the measured image's
+  `/usr/lib/confai/state.d/` receive writable overlays. The base declares
+  `/var`, `/home`, `/root`, and `/tmp`; the ssh profile adds
+  `/etc/ssh`; `/run` is a fresh tmpfs. No profile enables a mutable root;
+  `--profile dev` retains the same immutable layout because content installed
+  at runtime cannot be covered by the launch measurement.
+- **Whole-root shadowing is prevented** — with the former whole-root overlay,
+  one root-owned write could replace the merged view of a measured binary,
+  configuration file, or unit. Systemd could then execute the replacement
+  while the launch measurement remained valid. Keeping executable and
+  configuration paths on the verity root removes that ordinary-write path,
+  which is especially important for the attestation-api that composes
+  evidence at runtime.
+- **Some `/etc` paths intentionally resolve to runtime state** —
+  `/etc/ssh` is writable when the ssh profile is enabled so first-boot host
+  keys can be generated; this also makes its SSH configuration root-writable.
+  `/etc/confai` points to the read-only-bound `/run/confai` directory that
+  holds the staged operator key, whose consumer rechecks the RTMR/HOSTDATA
+  binding. `/etc/resolv.conf` points to systemd-resolved's stub under `/run`.
 - **Writable state is ephemeral** — with no scratch disk, writes go to a RAM
   tmpfs; the scratch disk is re-keyed and reformatted every boot, so nothing
   survives shutdown either way.
 - **The immutable layout is not a root-process sandbox** — a guest process
-  with full root (CAP_SYS_ADMIN and systemd control) can still mount its own
+  with full root (`CAP_SYS_ADMIN` and systemd control) can still mount its own
   tmpfs over a path or drop unit overrides under `/run/systemd/system`. The
   layout raises tampering from "any root write" to "root with mount and
   service-manager control"; the rest is the workload's privilege separation.

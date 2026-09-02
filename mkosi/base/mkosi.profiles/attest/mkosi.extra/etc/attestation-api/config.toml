@@ -1,5 +1,5 @@
-# attestation-api config baked by confos build --profile attest. Part of the
-# read-only measured root and cannot be overridden at runtime.
+# Baked by `confos build --profile attest`. This measured configuration is
+# read-only at runtime; change it at build time.
 
 [server]
 bind = "0.0.0.0:8400"

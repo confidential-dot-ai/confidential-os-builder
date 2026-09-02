@@ -18,32 +18,27 @@ build configs, since those invalidate published reference values.
   mechanism. Existing installs don't self-upgrade: run
   `uv tool install --force git+https://github.com/systemd/mkosi.git@v27`.
 - **Changes measurements. Breaking for images that mutate the root at
-  runtime.** The root is immutable: the initrd now runs the system directly
-  off the read-only dm-verity mount, with writable state overlays only on
-  the directories the image declares in `/usr/lib/confai/state.d/` (`/var`,
-  `/home`, `/root`, `/tmp`; the ssh profile adds `/etc/ssh`; a `--profile-dir`
-  consumer adds its own file) plus a `/run` tmpfs — so `/usr` and `/etc` can
-  no longer be shadowed by a copied-up file on the old whole-root overlay,
-  which let any root-owned write replace what systemd executes
-  (attestation-api included) while the launch measurement stayed green.
-  There is no opt-out, `--profile dev` included: runtime `apt install` and
-  cloud-init writes to `/etc` no longer work anywhere; bake content with
-  `--package`/`--extra` instead (the tutorial's Caddy example now does, via
-  `examples/caddy/`). cloud-init consequently no longer applies datasource
-  network-config (networkd's baked `80-dhcp.network` manages every link),
-  datasource hostnames (every guest carries the baked `/etc/hostname`), or
-  the default `ubuntu` user (bake accounts). Other supporting changes: the
-  operator pubkey stages under a read-only-bound `/run/confai` with a baked
-  `/etc/confai` symlink keeping the consumer path stable; `/etc/resolv.conf`
-  is baked as a symlink to resolved's `/run` stub; the dev profile appends
-  to the base cmdline instead of replacing it. Note for the c8s node image:
-  rke2 writes `/etc/rancher` at runtime, so its profile needs a
-  `state.d/60-c8s.conf` listing it before moving to this release
-- The attestation-api sandbox (NoNewPrivileges, ProtectHome, PrivateTmp,
-  LockPersonality, RestrictRealtime, RestrictAddressFamilies incl. the vsock
-  fence) moves to a base-tree drop-in shared by the `attest` and
-  `attest-gpu` units, so the base `attest` profile — previously unsandboxed
-  — gets it too
+  runtime.** The initrd now runs directly from the read-only dm-verity root.
+  The previous whole-root overlay allowed a root-owned write to shadow a
+  measured binary, configuration file, or unit—including attestation-api—
+  while the launch measurement remained valid.
+
+  Writable state is now limited to directories declared by the measured image
+  in `/usr/lib/confai/state.d/`: the base declares `/var`, `/home`, `/root`,
+  and `/tmp`; the ssh profile adds `/etc/ssh`; external profiles can add
+  their own files. `/run` remains a tmpfs. Missing declared directories fail
+  the boot instead of being silently skipped.
+
+  There is no mutable-root opt-out, including for `--profile dev`. Runtime
+  `apt install` and cloud-init writes to undeclared `/etc` paths no longer
+  work. Bake packages, configuration, and accounts with `--package` and
+  `--extra`. The Caddy tutorial now follows this model. Before upgrading, the
+  c8s node-image profile
+  must declare `/etc/rancher`, which rke2 writes at runtime.
+
+  Supporting changes adapt cloud-init, hostname handling, DNS, machine-id, and
+  operator-key staging to a read-only `/etc`. The dev profile now appends to
+  the base kernel command line instead of replacing it.
 
 ### Fixed
 - **Changes measurements (once).** Host build deps are snapshot-pinned

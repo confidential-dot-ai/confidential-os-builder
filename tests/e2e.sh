@@ -66,8 +66,8 @@ echo -e "${BOLD}Using $CONFOS${NC}"
 # ── Cloud-init test config ────────────────────────────────────────────────────
 CI_FILE=$(mktemp --suffix=.yaml)
 
-# The marker lives under /var: the default build is the immutable layout,
-# where /etc refuses runtime writes and /var is the writable state overlay.
+# Store the marker under the writable /var state overlay; /etc remains on
+# the read-only verity root.
 cat > "$CI_FILE" <<USERDATA
 #cloud-config
 write_files:
@@ -82,8 +82,7 @@ runcmd:
     set -ex
     echo "=== confos e2e: starting ==="
     cat /var/lib/confos-e2e-marker
-    # Root-layout probe, asserted by Test 4: on the default posture /etc is
-    # the raw verity mount (erofs) and /var is a state overlay.
+    # Emit the root-layout invariant: /etc is erofs and /var is overlayfs.
     findmnt -T /etc -no TARGET,FSTYPE; findmnt -T /var -no TARGET,FSTYPE
     [ "\$(findmnt -T /etc -no FSTYPE)" = erofs ] && [ "\$(findmnt -T /var -no FSTYPE)" = overlay ] \
         && echo CONFOS_E2E_ROOT_IMMUTABLE || echo CONFOS_E2E_ROOT_MUTABLE

@@ -1,9 +1,8 @@
-# attestation-api config baked by `confos build --profile attest-gpu`.
-# Identical in shape to the `attest` profile's config — there is NO GPU flag
-# here. GPU evidence is requested per-call: POST /attest with
-# {"nvidia_gpu": true, "report_data": "<>=16-byte base64 nonce>"}. The one
-# caller nonce binds the TDX quote AND every GPU. This file is part of the
-# read-only measured root and cannot be overridden at runtime.
+# Baked by `confos build --profile attest-gpu`. The schema matches the
+# `attest` profile; GPU evidence is selected per request with POST /attest
+# and {"nvidia_gpu": true, "report_data": "<>=16-byte base64 nonce>"}.
+# One caller nonce binds both the TDX quote and every GPU. This measured
+# configuration is read-only at runtime; change it at build time.
 
 [server]
 bind = "0.0.0.0:8400"

@@ -81,8 +81,8 @@ verifiers can `cargo install` just the measurement tool.
 
 | Dir | Produces |
 |---|---|
-| `base/` | The Ubuntu guest rootfs → erofs+verity disk and UKI. `mkosi.conf.d/` splits config, `mkosi.extra/` is baked-in filesystem content, `mkosi.profiles/` holds the `dev` (serial autologin), `attest` (attestation-api service, fetched from GHCR by digest), and `ssh` (openssh-server, host keys stripped for reproducibility) profiles, `mkosi.repart/` defines the GPT layout, `acpi-tables/dsdt.asl` is the trusted DSDT source |
-| `initrd/` | A minimal custom initrd; `mkosi.extra/init` is the entire early-boot logic — verity root setup, the per-directory state overlays declared in the image's `/usr/lib/confai/state.d/`, scratch-disk detection/encryption |
+| `base/` | Builds the Ubuntu root into an erofs+verity disk and UKI. Its configuration defines the filesystem content, GPT layout, trusted DSDT, and shipped `dev`, `attest`, `attest-gpu`, `gpu`, and `ssh` profiles. |
+| `initrd/` | Builds the minimal early-boot environment. `mkosi.extra/init` opens the verity root, mounts declared state overlays, and detects and encrypts an optional scratch disk. |
 | `kernel-builder/` | A tools-tree image in which the guest kernel is compiled, isolating the toolchain from the host for reproducibility |
 
 Reproducibility work (`SOURCE_DATE_EPOCH`, mtime normalization, etc.) is

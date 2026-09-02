@@ -1,18 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
-# Empty machine-id so it doesn't vary between builds; systemd fills it in at
-# boot (committed on a writable /etc, transient via /run on a read-only one).
+# Keep machine-id reproducible in the image. At boot, systemd generates a
+# transient ID under /run and exposes it through the read-only /etc.
 : > "$BUILDROOT/etc/machine-id"
 if [ -f "$BUILDROOT/var/lib/dbus/machine-id" ]; then
     : > "$BUILDROOT/var/lib/dbus/machine-id"
 fi
 
-# /etc/confai -> /run/confai: the initrd stages the operator pubkey under
-# /run because /etc is read-only; consumers keep the stable /etc/confai/...
-# path. Done here rather than as a checked-in symlink so that a profile
-# which baked anything at /etc/confai (dir, file, or its own link) fails the
-# build here — no -f — instead of losing it behind this link.
+# The initrd stages the operator key under /run because /etc is read-only.
+# This symlink preserves the public /etc/confai path. Creating it during
+# finalization, without replacement, makes the build fail if a profile has
+# already placed a file, directory, or symlink there instead of hiding it.
 ln -sT ../run/confai "$BUILDROOT/etc/confai"
 
 # Remove timestamped log content

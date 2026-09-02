@@ -111,17 +111,17 @@ All are measured — each changes the image's digests, which is the point.
 
 ### Why is there no SSH / console / shell in my image?
 
-By design: the attack surface is what you bake in, nothing more. For
-interactive debugging build a separate image with `--profile dev` (serial
-root autologin) — its measurement differs from production's, so it can't be
-confused for it. If your deployment genuinely needs SSH, `--profile ssh`
-bakes `openssh-server` into the measured rootfs (host keys are stripped at
-build time for reproducibility and regenerated on first boot, onto the
-unattested `/etc/ssh` state overlay) — that too changes the measurement.
-Note that the immutable root cannot create users at runtime, so an
-SSH-reachable image needs its account and keys baked (`--extra`). Otherwise, for
-production debugging your workload has to bring its own (attested,
-authenticated) channel.
+By design: the image exposes only the access paths you bake into it.
+`--profile dev` adds passwordless serial-root autologin for interactive
+debugging. Its measurement differs from production, so verifiers cannot
+mistake one for the other.
+
+If a deployment requires SSH, `--profile ssh` bakes `openssh-server` into
+the measured root. Host keys are omitted for reproducibility and regenerated
+on first boot in the unattested `/etc/ssh` state overlay. Because the
+read-only account database prevents runtime user creation, bake the account
+and authorized keys with `--extra`. Production workloads should otherwise
+provide their own attested, authenticated debugging channel.
 
 ### Can I run containers inside a confos guest?
 

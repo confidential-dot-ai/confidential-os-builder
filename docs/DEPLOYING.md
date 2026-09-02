@@ -124,24 +124,24 @@ partitioning at all:
 -device virtio-blk-pci,drive=scratch0,serial=confai-scratch
 ```
 
-At boot the initrd generates a random key in RAM, opens the device as
-dm-crypt (aes-xts-plain64, 512-bit key), formats it ext4, and mounts it as
-the backing for the guest's writable state (the state-directory overlays;
-see [CONCEPTS.md](CONCEPTS.md)). The host sees only ciphertext; the key is
-never persisted, so contents are unrecoverable after the guest stops. Size
-it for your workload's runtime writes — without it, writes land in a 2G RAM
-tmpfs.
+At boot, the initrd generates a random key in RAM, opens the device with
+dm-crypt (aes-xts-plain64, 512-bit key), formats it as ext4, and uses it to
+back every writable state overlay. Under SNP or TDX, guest-memory protection
+keeps the ephemeral key hidden, so the host sees only ciphertext and cannot
+recover the contents after shutdown. A plain-VM run provides neither guarantee
+because the host can inspect guest memory.
+Size the disk for the workload's runtime writes; without it, all writable
+overlays share a 2G RAM tmpfs. See [CONCEPTS.md](CONCEPTS.md).
 
 ### Persistent data
 
 Confidential OS Builder currently has **no persistent-disk convention**:
-everything under `/` is either measured-and-read-only (the verity root) or
-ephemeral (the state overlays). If your workload needs durable state, attach an
-additional disk and manage it from the workload itself — and remember the host
-reads and tampers with attached storage freely, so the workload must bring its
-own encryption *and* integrity protection (e.g. dm-crypt + dm-integrity keyed
-from a secret released only after attestation). Treat host-visible plaintext
-storage as published.
+everything under `/` is either measured and read-only (the verity root) or
+ephemeral (the state overlays). A workload that needs durable state must
+manage an additional disk itself. The host can read and modify that storage,
+so the workload must provide both encryption and integrity protection—for
+example, dm-crypt plus dm-integrity keyed with a secret released only after
+attestation. Treat host-visible plaintext storage as published.
 
 ## Operational policy
 

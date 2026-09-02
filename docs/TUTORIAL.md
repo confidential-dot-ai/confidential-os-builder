@@ -79,7 +79,7 @@ host supports it, plain KVM if not, software emulation as a last resort —
 and drops you on the VM's serial console at a root prompt. Poke around:
 
 ```bash
-findmnt /        # overlay on top of a dm-verity-protected erofs
+findmnt /        # read-only erofs mounted through dm-verity
 dmesg | head -30 # the boot chain you just measured
 poweroff         # exits QEMU, returns your terminal
 ```
@@ -125,26 +125,28 @@ The ways to get content into an image:
   image and run at first boot, for the things that genuinely are runtime
   (writing under `/var`, starting a workload with boot-time parameters).
 
-All of them land in the verity root, so all of them are measured. Note that
-the root is immutable at runtime — `/usr` and `/etc` are the read-only
-verity mount itself, and only `/var`, `/home`, `/root` and `/tmp` are
-writable — so there is no `apt-get install` at boot, and cloud-init
-user-data cannot write to `/etc`: whatever the workload needs has to be
-baked. Nothing installed at runtime could be measured anyway.
+Each option changes the measured image. For cloud-init, the measurement
+covers the baked user-data file—not the changes it makes after boot. The
+runtime root remains immutable: `/usr` and `/etc` stay on the read-only
+verity mount, while only declared state directories are writable. Bake
+packages and configuration instead of running `apt-get install` or writing
+to undeclared `/etc` paths during boot; runtime changes cannot be covered by
+the launch measurement.
 
 ## 4. Give it disk space
 
-The writable layer is a 2G RAM tmpfs by default. For workloads that need
-room, attach an ephemeral encrypted scratch disk:
+The writable state overlays share a 2G RAM tmpfs by default. Workloads that
+need more room can attach an ephemeral encrypted scratch disk:
 
 ```bash
 bin/confos run output/web --scratch 20G
 ```
 
-The initrd encrypts it with a random key generated in-guest (held only in
-RAM, never persisted), formats it, and uses it as the backing for the
-writable state directories, which transparently gain 20G. Contents are
-ciphertext to the host and unrecoverable after shutdown.
+The initrd encrypts and formats the disk with a random in-guest key held only
+in RAM, then uses it to back all writable state overlays. Under SNP or TDX,
+guest-memory protection keeps the ephemeral key hidden, so the host sees only
+ciphertext and cannot recover the data after shutdown. A plain-VM run provides
+neither guarantee because the host can inspect guest memory.
 
 ## 5. Ship it
 
