@@ -19,6 +19,14 @@ build configs, since those invalidate published reference values.
   `uv tool install --force git+https://github.com/systemd/mkosi.git@v27`.
 
 ### Fixed
+- `tdx-measure verify` read RTMR[0..3] from the wrong TDREPORT offsets
+  (720/768/816/864 instead of 584/632/680/728 — TDINFO begins at byte 256,
+  not 512, and the register block follows ten fields, not four), so CCEL
+  replay verification reported a mismatch against every genuine TDREPORT.
+  RTMR[3] is additionally no longer treated as a replay failure: runtime
+  extends (e.g. the initrd's operator-key extend) never appear in the CCEL,
+  matching attestation-rs's `verify_ccel_against_rtmrs`. Verification-path
+  only; **no change to build outputs or measurements**
 - **Changes measurements (once).** Host build deps are snapshot-pinned
   (#36): `bin/host-deps` installs them from snapshot.ubuntu.com at a
   committed timestamp with a fail-closed live-mirror guard, closing the
