@@ -66,9 +66,42 @@ echo -e "${BOLD}Using $CONFOS${NC}"
 # ── Cloud-init test config ────────────────────────────────────────────────────
 CI_FILE=$(mktemp --suffix=.yaml)
 
-# Store the marker under the writable /var state overlay; /etc remains on
-# the read-only verity root.
+# Everything runs from bootcmd: cloud-init feeds it to /bin/sh as a file, so
+# the interpreter (on the verity root) is what executes. runcmd would write a
+# script and exec it from /var, which IPE denies — that denial is one of the
+# probes below, and the reason user-data must not rely on runcmd.
 cat > "$CI_FILE" <<USERDATA
+#cloud-config
+bootcmd:
+  - |
+    exec > /dev/hvc0 2>&1
+    set -x
+    echo "=== confos e2e: starting ==="
+    echo ${MARKER}
+    # Emit the root-layout invariant: /etc is erofs and /var is overlayfs.
+    findmnt -T /etc -no TARGET,FSTYPE; findmnt -T /var -no TARGET,FSTYPE
+    [ "\$(findmnt -T /etc -no FSTYPE)" = erofs ] && [ "\$(findmnt -T /var -no FSTYPE)" = overlay ] \
+        && echo CONFOS_E2E_ROOT_IMMUTABLE || echo CONFOS_E2E_ROOT_MUTABLE
+    # IPE: a binary copied to writable state and a script written to /run
+    # must not execute; enforcement must be locked (CAP_MAC_ADMIN dropped).
+    mountpoint -q /sys/kernel/security || mount -t securityfs securityfs /sys/kernel/security
+    cp /usr/bin/true /var/tmp/confos-e2e-true && chmod 0755 /var/tmp/confos-e2e-true
+    /var/tmp/confos-e2e-true && echo CONFOS_E2E_IPE_BINARY_RAN || echo CONFOS_E2E_IPE_BINARY_DENIED
+    printf '#!/bin/sh\ntrue\n' > /run/confos-e2e.sh && chmod 0755 /run/confos-e2e.sh
+    /run/confos-e2e.sh && echo CONFOS_E2E_IPE_SCRIPT_RAN || echo CONFOS_E2E_IPE_SCRIPT_DENIED
+    echo 0 > /sys/kernel/security/ipe/enforce && echo CONFOS_E2E_IPE_UNLOCKED || echo CONFOS_E2E_IPE_LOCKED
+    echo "CONFOS_E2E_IPE enforce=\$(cat /sys/kernel/security/ipe/enforce) active=\$(cat /sys/kernel/security/ipe/policies/confos/active)"
+    python3 -c "
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'${MARKER}')
+        def log_message(self, *a): pass
+    HTTPServer(('', ${GUEST_PORT}), H).serve_forever()
+    " &
+USERDATA
 #cloud-config
 write_files:
   - path: /var/lib/confos-e2e-marker
@@ -123,7 +156,7 @@ if m['build']['platform'] != 'generic': print('bad platform'); ok = False
 if 'measurement' in m and m['measurement'] is not None: print('unexpected measurement'); ok = False
 for section in ['inputs', 'outputs']:
     for key, entry in m[section].items():
-        if entry is None: continue
+        if entry is None or key == 'kernel': continue
         h = entry.get('sha256', '')
         if len(h) != 64 or not all(c in '0123456789abcdef' for c in h):
             print(f'bad sha256 in {section}.{key}: {h}'); ok = False
@@ -265,10 +298,10 @@ else
         tail -30 "$SERIAL_LOG"
     fi
 
-    # The layout probe is printed by runcmd, so it is only checked once the
-    # HTTP/marker wait above has given cloud-final time to run. A missing
+    # The probes print from bootcmd, so they are only checked once the
+    # HTTP/marker wait above has given cloud-init time to run. A missing
     # token here is a failure, not a skip: it means the default build did
-    # not come up immutable, or the probe never ran.
+    # not come up immutable or enforcing, or the probe never ran.
     if grep -q "CONFOS_E2E_ROOT_IMMUTABLE" "$SERIAL_LOG" 2>/dev/null; then
         pass "e2e: immutable root layout (/etc erofs, /var overlay)"
     elif grep -q "CONFOS_E2E_ROOT_MUTABLE" "$SERIAL_LOG" 2>/dev/null; then
@@ -276,6 +309,23 @@ else
         grep -A2 "confos e2e: starting" "$SERIAL_LOG" | tail -5
     else
         fail "e2e: layout probe never reported"
+    fi
+
+    for probe in BINARY SCRIPT; do
+        if grep -q "CONFOS_E2E_IPE_${probe}_DENIED" "$SERIAL_LOG" 2>/dev/null; then
+            pass "e2e: IPE denied executing a ${probe,,} outside the verity root"
+        elif grep -q "CONFOS_E2E_IPE_${probe}_RAN" "$SERIAL_LOG" 2>/dev/null; then
+            fail "e2e: IPE let a ${probe,,} outside the verity root execute"
+        else
+            fail "e2e: IPE ${probe,,} probe never reported"
+        fi
+    done
+    if grep -q "CONFOS_E2E_IPE_LOCKED" "$SERIAL_LOG" 2>/dev/null \
+        && grep -q "CONFOS_E2E_IPE enforce=1 active=1" "$SERIAL_LOG" 2>/dev/null; then
+        pass "e2e: IPE enforcing the confos policy and root cannot switch it off"
+    else
+        fail "e2e: IPE enforcement is not locked"
+        grep "CONFOS_E2E_IPE" "$SERIAL_LOG" | tail -5
     fi
 
     kill "$QEMU_PID" 2>/dev/null || true

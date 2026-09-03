@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use crate::commands::kernel as kernel_cmd;
+use crate::kernel::ipe;
 use crate::{
-    igvm, is_safe_name, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform, SyncInput,
+    igvm, is_safe_name, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform, KernelArgs,
+    SyncInput,
 };
 
 pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
@@ -177,11 +180,19 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         kernel.linux_version
     );
 
-    // Pre-stage the custom kernel into mkosi.extra so mkosi finds it during UKI assembly.
+    // Pre-stage the custom kernel into mkosi.extra so mkosi finds it during
+    // UKI assembly. The root partition excludes it (10-root.conf): the root
+    // hash gets sealed into the kernel below, so it must not depend on it.
+    ipe::verify_kernel_excluded_from_root(Path::new(ipe::ROOT_REPART), &kernel.linux_version)?;
     let staged_kernel_dir = PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/usr/lib/modules")
         .join(&kernel.linux_version);
     fs_err::create_dir_all(&staged_kernel_dir)?;
-    fs_err::copy(&kernel.vmlinuz_path, staged_kernel_dir.join("vmlinuz"))?;
+    let staged_vmlinuz = staged_kernel_dir.join("vmlinuz");
+    fs_err::copy(&kernel.vmlinuz_path, &staged_vmlinuz)?;
+    let ipe_enabled = kernel_cmd::ipe_enabled(&args.kernel_inputs)?;
+    if !ipe_enabled {
+        println!("kernel built without IPE: the image will run code from any filesystem");
+    }
 
     // Step 2: Build the verity initrd via mkosi (declarative)
     println!("\n=== Step 2/4: Building verity initrd (mkosi) ===");
@@ -250,8 +261,38 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         mkosi_args.push(format!("--profile={profile}"));
     }
     tools::run_mkosi(&mkosi_args)?;
-
     let mkosi_output = mkosi_dir.join("mkosi.output");
+    let roothash = read_roothash(&mkosi_output)?;
+
+    // The kernel's IPE policy pins the root hash, and the hash exists only
+    // now. Seal it into the cached kernel and build again with that kernel;
+    // the root is bit-identical because it never contained the kernel, and
+    // the check below turns any drift into a build error instead of an
+    // image whose policy denies its own root.
+    if ipe_enabled {
+        println!("\n=== Step 3b: Sealing the IPE policy to root hash {roothash} ===");
+        let sealed_vmlinuz = kernel_cmd::seal(
+            &KernelArgs {
+                force: false,
+                output: PathBuf::from(kernel_cache::KERNEL_OUT_DIR),
+                kernel_inputs: args.kernel_inputs.clone(),
+            },
+            &roothash,
+            &output,
+        )?;
+        fs_err::copy(&sealed_vmlinuz, &staged_vmlinuz)?;
+        println!("\n=== Step 3c: Building image with the sealed kernel (mkosi) ===");
+        tools::run_mkosi(&mkosi_args)?;
+        let resealed = read_roothash(&mkosi_output)?;
+        if resealed != roothash {
+            anyhow::bail!(
+                "root hash changed between the two mkosi passes ({roothash} -> {resealed}); \
+                 the root partition depends on something that changed with the kernel, so \
+                 the sealed IPE policy would deny the image's own root"
+            );
+        }
+    }
+
     // Find the split artifacts mkosi produced
     let uki_path = mkosi_output.join("image.efi");
     if !uki_path.exists() {
@@ -266,23 +307,6 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     let output_uki = output.join("uki.efi");
     tools::sudo_mv(&uki_path, &output_uki)?;
 
-    // Read roothash (produced by mkosi SplitArtifacts=roothash)
-    let roothash_path = mkosi_output.join("image.roothash");
-    if !roothash_path.exists() {
-        anyhow::bail!("image.roothash not found — check mkosi.conf has SplitArtifacts=roothash");
-    }
-    tools::sudo_chmod_readable(&roothash_path)?;
-    let roothash = fs_err::read_to_string(&roothash_path)?
-        .trim()
-        .to_lowercase();
-    let valid_lengths = [64, 96, 128]; // SHA-256, SHA-384, SHA-512
-    if !valid_lengths.contains(&roothash.len()) || !roothash.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        anyhow::bail!(
-            "invalid roothash from mkosi: {roothash:?} (expected 64/96/128 hex chars, got {})",
-            roothash.len()
-        );
-    }
     fs_err::write(output.join("roothash"), &roothash)?;
     println!("Root hash: {roothash}");
     println!(
@@ -476,7 +500,14 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         inputs: manifest::ManifestInputs {
             kernel: Some(manifest::KernelInputs {
                 linux_version: kernel.linux_version.clone(),
-                vmlinuz_sha256: kernel.manifest.outputs.vmlinuz_sha256.clone(),
+                // The kernel inside the UKI: sealed when IPE is on.
+                vmlinuz_sha256: manifest::sha256_file(&staged_vmlinuz)?,
+                base_vmlinuz_sha256: kernel.manifest.outputs.vmlinuz_sha256.clone(),
+                ipe_boot_policy_sha256: if ipe_enabled {
+                    kernel.manifest.inputs.ipe_boot_policy_sha256.clone()
+                } else {
+                    String::new()
+                },
                 required_config_sha256: kernel.manifest.inputs.required_config_sha256.clone(),
                 hardening_config_sha256: kernel.manifest.inputs.hardening_config_sha256.clone(),
                 kernel_extra_config_sha256: kernel
@@ -558,9 +589,34 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     if args.cloud_init.is_some() {
         println!("  Cloud-init: measured in verity root");
     }
+    if ipe_enabled {
+        println!("  IPE:        kernel executes only the initramfs and this root hash");
+    }
     println!("===============================");
 
     Ok(())
+}
+
+/// The verity root hash mkosi split out (`SplitArtifacts=roothash`),
+/// lowercased and validated as SHA-256/384/512 hex.
+fn read_roothash(mkosi_output: &Path) -> anyhow::Result<String> {
+    let roothash_path = mkosi_output.join("image.roothash");
+    if !roothash_path.exists() {
+        anyhow::bail!("image.roothash not found — check mkosi.conf has SplitArtifacts=roothash");
+    }
+    tools::sudo_chmod_readable(&roothash_path)?;
+    let roothash = fs_err::read_to_string(&roothash_path)?
+        .trim()
+        .to_lowercase();
+    let valid_lengths = [64, 96, 128]; // SHA-256, SHA-384, SHA-512
+    if !valid_lengths.contains(&roothash.len()) || !roothash.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        anyhow::bail!(
+            "invalid roothash from mkosi: {roothash:?} (expected 64/96/128 hex chars, got {})",
+            roothash.len()
+        );
+    }
+    Ok(roothash)
 }
 
 /// Return the SHA-256 recorded for `filename` in a sha256sum-compatible file.

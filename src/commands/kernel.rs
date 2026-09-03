@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use sha2::{Digest, Sha256};
 
-use crate::kernel::{compile, config, fetch, manifest as km, version::KernelVersion};
+use crate::kernel::{compile, config, fetch, ipe, manifest as km, version::KernelVersion};
 use crate::tools;
-use crate::KernelArgs;
+use crate::{KernelArgs, KernelInputs};
 
 const REQUIRED_FRAGMENT: &str = "kernel/required.config";
 /// Committed, public RANDSTRUCT/latent_entropy seed — pins per-build struct
@@ -130,11 +130,8 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // committed seed instead of reading /dev/urandom. The Makefile rule is
     // FORCE + if_changed, so staging the .seed file alone would be
     // regenerated — the script is the deterministic point.
-    let seed = fs_err::read_to_string(Path::new(RANDSTRUCT_SEED))?;
-    let seed = seed.trim();
-    if seed.len() != 64 || !seed.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(anyhow!("{RANDSTRUCT_SEED} must be 64 hex chars (32 bytes)"));
-    }
+    let seed = randstruct_seed()?;
+    let seed = seed.as_str();
     let gen = kernel_src.join("scripts/gen-randstruct-seed.sh");
     fs_err::write(
         &gen,
@@ -191,6 +188,13 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // kernel_src is a freshly extracted tarball (wiped above), so a plain copy
     // is enough — no staging guard as for --profile-dir.
     fs_err::copy(signing_cert, certs_dir.join(STAGED_SIGNING_CERT))?;
+    // The IPE boot policy the fragment points CONFIG_IPE_BOOT_POLICY at.
+    // Staged unconditionally: a fragment that turns IPE off leaves the
+    // symbol unset and the file unread. `seal` rewrites it per image.
+    fs_err::copy(
+        Path::new(ipe::BOOT_POLICY),
+        kernel_src.join(ipe::STAGED_BOOT_POLICY),
+    )?;
 
     config::run_configure_phase(
         &tools_tree,
@@ -236,6 +240,69 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     println!("kernel: {}", vmlinuz_path.display());
     println!("manifest: {}", manifest_path.display());
     Ok(())
+}
+
+/// Committed RANDSTRUCT seed, validated. Read by the base build and again by
+/// `seal`, whose relink must pass the same KCFLAGS or kbuild rebuilds
+/// everything (and the latent_entropy plugin reseeds).
+fn randstruct_seed() -> Result<String> {
+    let seed = fs_err::read_to_string(Path::new(RANDSTRUCT_SEED))?;
+    let seed = seed.trim();
+    if seed.len() != 64 || !seed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(anyhow!("{RANDSTRUCT_SEED} must be 64 hex chars (32 bytes)"));
+    }
+    Ok(seed.to_string())
+}
+
+/// Whether the lineage's kernel has IPE built in, read from the snapshot the
+/// last build of these inputs wrote (its hash is in the cache fingerprint,
+/// so a cache hit vouches for it).
+pub fn ipe_enabled(inputs: &KernelInputs) -> Result<bool> {
+    ipe::enabled(&snapshot_path(inputs.kernel_config_fragment.as_deref())?)
+}
+
+/// Seal `roothash` into the cached kernel's IPE policy: rewrite the staged
+/// policy in the build tree and relink. Only the policy object changes, so
+/// this is a relink, not a rebuild; if the tree is gone (a cache restored
+/// without it), the base kernel is rebuilt first, reproducibly.
+///
+/// Writes `vmlinuz`, `ipe-boot-policy`, and `kernel-seal.log` into
+/// `out_dir` and returns the `vmlinuz` path. The cache artifact is left
+/// alone so its manifest stays true.
+pub fn seal(args: &KernelArgs, roothash: &str, out_dir: &Path) -> Result<PathBuf> {
+    let version = KernelVersion::read(Path::new(VERSION_PATH))?;
+    let kernel_src = args
+        .output
+        .join("build")
+        .join(format!("linux-{}", version.linux_version));
+    if !kernel_src.join("vmlinux").is_file() || !kernel_src.join(".config").is_file() {
+        println!(
+            "kernel build tree {} is incomplete; rebuilding the kernel before sealing",
+            kernel_src.display()
+        );
+        run(&KernelArgs {
+            force: true,
+            output: args.output.clone(),
+            kernel_inputs: args.kernel_inputs.clone(),
+        })?;
+    }
+    let base = fs_err::read_to_string(Path::new(ipe::BOOT_POLICY))?;
+    let policy = ipe::seal(&base, roothash)?;
+    fs_err::write(kernel_src.join(ipe::STAGED_BOOT_POLICY), &policy)?;
+    fs_err::write(out_dir.join("ipe-boot-policy"), &policy)?;
+
+    let tools_tree = ensure_tools_tree(false, &args.kernel_inputs.kernel_builder_package)?;
+    let vmlinuz = out_dir.join("vmlinuz");
+    let log_path = out_dir.join("kernel-seal.log");
+    fs_err::write(&log_path, b"")?;
+    compile::run(
+        &tools_tree,
+        &kernel_src,
+        &vmlinuz,
+        &randstruct_seed()?,
+        &log_path,
+    )?;
+    Ok(vmlinuz)
 }
 
 /// Build the kernel-builder tools tree if needed, return its path.
@@ -328,6 +395,7 @@ pub fn compute_fingerprint(
         confidential_config_sha256: fetch::sha256_file(Path::new(CONFIDENTIAL_FRAGMENT))?,
         module_signing_cert_sha256: fetch::sha256_file(signing_cert)?,
         randstruct_seed_sha256: fetch::sha256_file(Path::new(RANDSTRUCT_SEED))?,
+        ipe_boot_policy_sha256: fetch::sha256_file(Path::new(ipe::BOOT_POLICY))?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
         kernel_extra_config_sha256: match fragment {

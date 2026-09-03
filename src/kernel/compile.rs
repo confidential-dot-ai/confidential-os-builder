@@ -29,6 +29,11 @@ pub fn run(
         ("KBUILD_BUILD_USER", "confos"),
         ("KBUILD_BUILD_HOST", "confos"),
         ("KCONFIG_NOTIMESTAMP", "1"),
+        // Pins the build counter in UTS_VERSION ("#1 SMP ..."). Without it a
+        // relink in an existing tree — which sealing the IPE policy does —
+        // would bump `.version` and produce a kernel a clean build cannot
+        // reproduce. A clean tree starts at 1, so the base kernel is unchanged.
+        ("KBUILD_BUILD_VERSION", "1"),
     ];
 
     // The tools tree's glibc (2.42+, GCC 15) declares the C string functions

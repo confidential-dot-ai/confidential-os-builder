@@ -119,6 +119,15 @@ pub struct KernelInputs {
     // RANDSTRUCT seed — a reproduction input (#85). `default` for older manifests.
     #[serde(default)]
     pub randstruct_seed_sha256: String,
+    // The kernel-cache artifact (`output/kernel/vmlinuz`), before `confos
+    // build` sealed this image's root hash into its IPE policy. Equal to
+    // `vmlinuz_sha256` when the kernel was built without IPE.
+    #[serde(default)]
+    pub base_vmlinuz_sha256: String,
+    // Committed IPE boot policy the sealed policy extends. Empty when the
+    // kernel was built without IPE.
+    #[serde(default)]
+    pub ipe_boot_policy_sha256: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

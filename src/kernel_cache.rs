@@ -12,7 +12,7 @@ use crate::commands;
 use crate::kernel::manifest as km;
 use crate::{KernelArgs, KernelInputs};
 
-const KERNEL_OUT_DIR: &str = "output/kernel";
+pub const KERNEL_OUT_DIR: &str = "output/kernel";
 
 pub struct KernelArtifact {
     pub vmlinuz_path: PathBuf,

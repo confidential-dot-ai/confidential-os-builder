@@ -42,6 +42,10 @@ pub struct Fingerprint {
     // rotating it changes vmlinuz. `default` for pre-field manifests.
     #[serde(default)]
     pub randstruct_seed_sha256: String,
+    // Committed IPE boot policy (kernel/ipe-boot-policy): compiled into the
+    // kernel, so editing it changes vmlinuz. `default` for pre-field manifests.
+    #[serde(default)]
+    pub ipe_boot_policy_sha256: String,
     pub tools_tree_digest: String,
 }
 
@@ -69,6 +73,7 @@ impl Fingerprint {
             &self.kernel_extra_config_sha256,
         );
         m.insert("snapshot_config_sha256", &self.snapshot_config_sha256);
+        m.insert("ipe_boot_policy_sha256", &self.ipe_boot_policy_sha256);
         m.insert("tools_tree_digest", &self.tools_tree_digest);
         serde_json::to_string(&m).expect("BTreeMap of strings serializes")
     }
@@ -102,6 +107,7 @@ mod tests {
             snapshot_config_sha256: "d".repeat(64),
             module_signing_cert_sha256: "1".repeat(64),
             randstruct_seed_sha256: "2".repeat(64),
+            ipe_boot_policy_sha256: "3".repeat(64),
             tools_tree_digest: "e".repeat(64),
         }
     }

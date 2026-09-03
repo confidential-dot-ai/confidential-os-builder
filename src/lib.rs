@@ -109,7 +109,11 @@ pub struct BuildArgs {
     #[arg(default_value = "base")]
     pub name: PathBuf,
 
-    /// Path to cloud-init user-data file to optionally include in the image
+    /// Path to cloud-init user-data file to optionally include in the image.
+    /// Baked into the measured root as the only datasource. The kernel's IPE
+    /// policy refuses to execute files outside the verity root, so `runcmd`
+    /// (which writes a script under /var and executes it) does not work;
+    /// use `bootcmd`, or bake units and scripts with `--extra`.
     #[arg(short, long)]
     pub cloud_init: Option<PathBuf>,
 
