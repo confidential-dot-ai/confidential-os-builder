@@ -29,6 +29,9 @@ pub fn fetch(version: &str, expected_sha256: &str, cache_dir: &Path) -> Result<P
     }
 
     tracing::info!(%url, "fetching kernel tarball");
+    // --retry-all-errors: bare --retry skips protocol errors, and cdn.kernel.org
+    // has failed CI twice with HTTP/2 PROTOCOL_ERROR (curl exit 92); the SHA
+    // check below still gates whatever a retry produces.
     tools::run_command_streaming(
         "curl",
         &[
@@ -36,6 +39,11 @@ pub fn fetch(version: &str, expected_sha256: &str, cache_dir: &Path) -> Result<P
             "--show-error",
             "--silent",
             "--location",
+            "--retry",
+            "5",
+            "--retry-all-errors",
+            "--retry-delay",
+            "5",
             "--output",
             &dest.to_string_lossy(),
             &url,

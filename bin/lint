@@ -49,18 +49,34 @@ fi
 
 # Every apt source must point at snapshot.ubuntu.com by URI (#96): Mirror=
 # leaves the security pocket live, and both mkosi's Snapshot= and apt's
-# deb822 Snapshot: field keep live repos reachable — all fail open. The pin
+# deb822 Snapshot: field keep live repos reachable — all fail open, v27's
+# ToolsTreeSnapshot= included (same deb822 field, wider scope). The pin
 # is a full sandbox-tree sources file per image dir, handed to the tools
 # tree via ToolsTreeSandboxTrees= (it inherits nothing from [Distribution]).
 # This lint asserts the config shape; confos's mirror guard asserts the apt
 # logs at build time — config presence alone has failed open twice.
 git rev-parse --is-inside-work-tree >/dev/null
-failopen=$(git grep -nE '^(Mirror|ToolsTreeMirror|Snapshot)=' -- 'mkosi/' || true)
+failopen=$(git grep -nE '^(Mirror|ToolsTreeMirror|Snapshot|ToolsTreeSnapshot)=' -- 'mkosi/' || true)
 if [ -n "$failopen" ]; then
-    echo "bin/lint: Mirror=/ToolsTreeMirror=/Snapshot= all leave live pockets reachable (#96) — pin via mkosi.sandbox sources instead:" >&2
+    echo "bin/lint: Mirror=/ToolsTreeMirror=/Snapshot=/ToolsTreeSnapshot= all leave live pockets reachable (#96) — pin via mkosi.sandbox sources instead:" >&2
     echo "$failopen" >&2
     exit 1
 fi
+# Host toolchain debs shape measured bytes too (iasl compiles the trusted
+# DSDT; ovmf is the published SNP firmware), so bin/host-deps is the only
+# permitted apt caller in bin/ and .github/ (#36), and its transcript
+# scanner must keep parity with the shared is_live_mirror_fetch vectors.
+# The apt pattern is deliberately broad (no sudo/\b anchors: sudo-less
+# container jobs count, and \b is a no-op in macOS git grep) — reword prose
+# that trips it rather than narrowing it.
+bin/host-deps --self-test >/dev/null
+rawinstall=$(git grep -nE 'apt(-get)?[[:space:]].*install' -- '.github/' 'bin/' ':!bin/host-deps' || true)
+if [ -n "$rawinstall" ]; then
+    echo "bin/lint: host debs must install via bin/host-deps (snapshot-pinned, fail-closed, #36), not raw apt:" >&2
+    echo "$rawinstall" >&2
+    exit 1
+fi
+
 pin='^URIs: https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z$'
 for conf in mkosi/*/mkosi.conf; do
     dir=$(dirname "$conf")

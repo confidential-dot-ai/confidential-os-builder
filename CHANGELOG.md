@@ -8,11 +8,53 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Changed
+- **Changes measurements (once).** mkosi is bumped v26 → v27 (#116):
+  `bin/setup` and CI install exactly `mkosi.git@v27`, and `MinimumVersion=27`
+  fails stale hosts closed. mkosi's own behavior shapes measured bytes, so
+  the bump rolls measurements once. v27's `ToolsTreeSnapshot=` is banned by
+  `bin/lint` alongside `Snapshot=` (#115) — it rides apt's fail-open deb822
+  `Snapshot:` field, so the sandbox-tree URI pinning (#96) stays the only
+  mechanism. Existing installs don't self-upgrade: run
+  `uv tool install --force git+https://github.com/systemd/mkosi.git@v27`.
+
+### Fixed
+- **Changes measurements (once).** Host build deps are snapshot-pinned
+  (#36): `bin/host-deps` installs them from snapshot.ubuntu.com at a
+  committed timestamp with a fail-closed live-mirror guard, closing the
+  last unpinned measured input (iasl compiles the trusted DSDT; ovmf is
+  the published SNP firmware). Pinning moves the published OVMF.fd from
+  the live archive's ovmf (2024.02-2ubuntu0.9 today) to the snapshot's
+  (2024.02-2ubuntu0.8), rolling the SNP launch measurement once; the
+  DSDT toolchain (acpica-tools 20230628-1) is unchanged. The host pin
+  is the base image's `mkosi.sources` timestamp, so bumping that one
+  committed value is the deliberate act that picks up image and
+  host-toolchain updates — and can move measurements
+
+## [0.4.3] — 2026-08-18
+
+### Added
+- **Changes measurements (once).** SNP arm of the initrd operator-key
+  binding (#106, c8s#331): with no runtime-extend register on SEV-SNP, the
+  initrd reads its own report via ConfigFS-TSM and fails closed unless
+  HOSTDATA equals sha256 of the staged operator pubkey. A keyless launch
+  carries all-zero HOSTDATA and is caught. The initrd change rolls both
+  platforms' measurements once
+- Per-lineage kernel config snapshots (#105, #66): fragment builds write
+  `config-x86_64-<stem>.snapshot` beside their fragment, in the caller's own
+  tree; the committed bare-baseline lockfile was regenerated from the exact
+  CI-resolved bytes (kernel bit-identical, verified `0cf18191…` before and
+  after)
+
 ### Fixed
 - CDI tarballs are byte-reproducible: tar headers no longer carry the source
   files' mtime/uid/gid, so identical artifacts produce an identical layer and
   image digest. Changes the CDI image digest once (measurements unaffected —
   the digest wraps the measured bytes, it is not itself measured)
+- attest-gpu profile serves SNP requests and can open `/dev/sev-guest`,
+  matching the attest profile (#102, #103)
+- CI base builds reuse the kernel cache instead of rebuilding every push
+  (#104; build time 13-16m to ~3m, no artifact change)
 
 ## [0.4.2] — 2026-08-15
 

@@ -59,9 +59,16 @@ ln -sf "libnvat.so.1" "$LIBDIR/libnvat.so"
 # versioned ICU). Everything else libnvat needs — libz, liblzma, libstdc++,
 # libgcc_s — has a stable soname present in the base. Auto-discovered via ldd
 # so the exact versions libnvat was built against travel with it.
+# A dep the host cannot resolve is a dep the guest will not have either:
+# the binary then fails to load at boot, taking CPU attestation down with
+# it. Fail here instead. Point LD_LIBRARY_PATH at copies of the exact
+# sonames libnvat wants (e.g. libicu*.so.74, libxml2.so.2 from a 24.04 tree)
+# when the host ships another major.
 echo "bundling libnvat's versioned deps (ICU + libxml2)"
+missing=$(ldd "$LIBNVAT" 2>/dev/null | awk '/libicu|libxml2/ && /not found/{print $1}')
+[[ -z "$missing" ]] || die "libnvat's deps do not resolve on this host: $(echo $missing) — install matching versions or set LD_LIBRARY_PATH to copies of them."
 for lib in $(ldd "$LIBNVAT" 2>/dev/null | awk '/libicu|libxml2/{print $3}'); do
-    [[ -f "$lib" ]] || continue
+    [[ -f "$lib" ]] || die "libnvat dep $lib is not a file."
     b="$(basename "$lib")"
     install -m0644 "$(readlink -f "$lib")" "$LIBDIR/$b"
     echo "  bundled $b"
