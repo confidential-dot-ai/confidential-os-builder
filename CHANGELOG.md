@@ -37,7 +37,9 @@ build configs, since those invalidate published reference values.
   must declare `/etc/rancher`, which rke2 writes at runtime.
 
   Supporting changes adapt cloud-init, hostname handling, DNS, machine-id, and
-  operator-key staging to a read-only `/etc`. The dev profile now appends to
+  operator-key staging to a read-only `/etc`. A login shell prints the
+  writable set and points at `state.d`, so "Read-only file system" is
+  explained where it is hit. The dev profile now appends to
   the base kernel command line instead of replacing it.
 
 ### Fixed
