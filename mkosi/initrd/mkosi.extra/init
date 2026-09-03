@@ -291,17 +291,12 @@ fi
 # the booted guest can switch enforcement off or activate another policy.
 # Nothing the base image runs needs CAP_MAC_ADMIN. Skipped when the kernel was
 # built without IPE, because privileged containers request every capability.
-INIT="switch_root /sysroot /sbin/init"
-if mount -t securityfs securityfs /sys/kernel/security 2>/dev/null; then
-    if [ -d /sys/kernel/security/ipe ]; then
-        echo "initrd: IPE active — dropping CAP_MAC_ADMIN from the bounding set"
-        INIT="setpriv --bounding-set -mac_admin $INIT"
-    else
-        echo "initrd: kernel has no IPE — exec policy not enforced"
-    fi
+mount -t securityfs securityfs /sys/kernel/security 2>/dev/null || true
+if [ -d /sys/kernel/security/ipe ]; then
     umount /sys/kernel/security
+    echo "initrd: IPE active — dropping CAP_MAC_ADMIN, switching root..."
+    exec setpriv --bounding-set -mac_admin switch_root /sysroot /sbin/init
 fi
-
-echo "initrd: switching root..."
-# shellcheck disable=SC2086
-exec $INIT
+umount /sys/kernel/security 2>/dev/null || true
+echo "initrd: kernel has no IPE — exec policy not enforced; switching root..."
+exec switch_root /sysroot /sbin/init

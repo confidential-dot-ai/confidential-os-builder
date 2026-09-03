@@ -102,34 +102,6 @@ bootcmd:
     HTTPServer(('', ${GUEST_PORT}), H).serve_forever()
     " &
 USERDATA
-#cloud-config
-write_files:
-  - path: /var/lib/confos-e2e-marker
-    permissions: '0644'
-    content: |
-      ${MARKER}
-
-runcmd:
-  - |
-    exec > /dev/hvc0 2>&1
-    set -ex
-    echo "=== confos e2e: starting ==="
-    cat /var/lib/confos-e2e-marker
-    # Emit the root-layout invariant: /etc is erofs and /var is overlayfs.
-    findmnt -T /etc -no TARGET,FSTYPE; findmnt -T /var -no TARGET,FSTYPE
-    [ "\$(findmnt -T /etc -no FSTYPE)" = erofs ] && [ "\$(findmnt -T /var -no FSTYPE)" = overlay ] \
-        && echo CONFOS_E2E_ROOT_IMMUTABLE || echo CONFOS_E2E_ROOT_MUTABLE
-    python3 -c "
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    class H(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b'${MARKER}')
-        def log_message(self, *a): pass
-    HTTPServer(('', ${GUEST_PORT}), H).serve_forever()
-    " &
-USERDATA
 
 # ── Test 1: Build (--skip-igvm) ──────────────────────────────────────────────
 OUT="$REPO_DIR/output/e2e-test"
@@ -302,24 +274,24 @@ else
     # HTTP/marker wait above has given cloud-init time to run. A missing
     # token here is a failure, not a skip: it means the default build did
     # not come up immutable or enforcing, or the probe never ran.
-    if grep -q "CONFOS_E2E_ROOT_IMMUTABLE" "$SERIAL_LOG" 2>/dev/null; then
-        pass "e2e: immutable root layout (/etc erofs, /var overlay)"
-    elif grep -q "CONFOS_E2E_ROOT_MUTABLE" "$SERIAL_LOG" 2>/dev/null; then
-        fail "e2e: default build did not come up with the immutable layout"
-        grep -A2 "confos e2e: starting" "$SERIAL_LOG" | tail -5
-    else
-        fail "e2e: layout probe never reported"
-    fi
-
-    for probe in BINARY SCRIPT; do
-        if grep -q "CONFOS_E2E_IPE_${probe}_DENIED" "$SERIAL_LOG" 2>/dev/null; then
-            pass "e2e: IPE denied executing a ${probe,,} outside the verity root"
-        elif grep -q "CONFOS_E2E_IPE_${probe}_RAN" "$SERIAL_LOG" 2>/dev/null; then
-            fail "e2e: IPE let a ${probe,,} outside the verity root execute"
+    # probe <good token> <bad token> <subject>: pass on the good token, fail
+    # on the bad one, fail if neither was printed.
+    probe() {
+        if grep -q "$1" "$SERIAL_LOG" 2>/dev/null; then
+            pass "e2e: $3"
+        elif grep -q "$2" "$SERIAL_LOG" 2>/dev/null; then
+            fail "e2e: $3 (guest reported $2)"
+            grep -A2 "confos e2e: starting" "$SERIAL_LOG" | tail -5
         else
-            fail "e2e: IPE ${probe,,} probe never reported"
+            fail "e2e: $3 (probe never reported)"
         fi
-    done
+    }
+    probe CONFOS_E2E_ROOT_IMMUTABLE CONFOS_E2E_ROOT_MUTABLE \
+        "immutable root layout (/etc erofs, /var overlay)"
+    probe CONFOS_E2E_IPE_BINARY_DENIED CONFOS_E2E_IPE_BINARY_RAN \
+        "IPE denies executing a binary outside the verity root"
+    probe CONFOS_E2E_IPE_SCRIPT_DENIED CONFOS_E2E_IPE_SCRIPT_RAN \
+        "IPE denies executing a script outside the verity root"
     if grep -q "CONFOS_E2E_IPE_LOCKED" "$SERIAL_LOG" 2>/dev/null \
         && grep -q "CONFOS_E2E_IPE enforce=1 active=1" "$SERIAL_LOG" 2>/dev/null; then
         pass "e2e: IPE enforcing the confos policy and root cannot switch it off"

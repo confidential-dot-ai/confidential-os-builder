@@ -48,7 +48,7 @@ pub fn run(
     // build (scripts/gcc-plugins/latent_entropy_plugin.c). Without it vmlinuz
     // is not reproducible even with the RANDSTRUCT seed pinned (#85).
     let script = format!(
-        "set -eux\n\
+        "set -euxo pipefail\n\
          cd /build\n\
          make -j{parallelism} HOSTCFLAGS='{hostcflags}' KCFLAGS='-frandom-seed={random_seed}' bzImage 2>&1 | tee -a /build.log\n\
          test -f arch/x86/boot/bzImage\n",

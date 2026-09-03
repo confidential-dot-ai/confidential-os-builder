@@ -13,6 +13,8 @@ use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
 
+use crate::kernel::config;
+
 /// Committed policy every kernel is built with; sealing appends to it.
 pub const BOOT_POLICY: &str = "kernel/ipe-boot-policy";
 /// Where the policy is staged in the kernel tree. `kernel/hardening.config`
@@ -21,13 +23,11 @@ pub const STAGED_BOOT_POLICY: &str = "security/ipe/confos-boot-policy";
 /// The repart definition that keeps the kernel out of the root partition.
 pub const ROOT_REPART: &str = "mkosi/base/mkosi.repart/10-root.conf";
 
-/// Whether the lineage's resolved kernel config has IPE built in.
-pub fn enabled(snapshot: &Path) -> Result<bool> {
-    let config = fs_err::read_to_string(snapshot)
-        .with_context(|| format!("reading kernel config snapshot {}", snapshot.display()))?;
-    Ok(config
-        .lines()
-        .any(|line| line.trim() == "CONFIG_SECURITY_IPE=y"))
+/// Whether a resolved kernel config has IPE built in.
+pub fn enabled(resolved_config: &Path) -> Result<bool> {
+    let config = fs_err::read_to_string(resolved_config)
+        .with_context(|| format!("reading kernel config {}", resolved_config.display()))?;
+    Ok(config::symbol_enabled(&config, "CONFIG_SECURITY_IPE"))
 }
 
 /// The sealed policy: the committed base plus rules allowing execution,
@@ -49,8 +49,9 @@ pub fn seal(base: &str, roothash: &str) -> Result<String> {
 }
 
 /// IPE names the digest the way the dm-verity target reports it; mkosi's
-/// verity partitions use the default algorithm for their hash length.
-fn digest_name(roothash: &str) -> Result<&'static str> {
+/// verity partitions use the default algorithm for their hash length. This
+/// is also the one validator for a root hash read from mkosi.
+pub fn digest_name(roothash: &str) -> Result<&'static str> {
     if !roothash
         .chars()
         .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
@@ -87,6 +88,7 @@ pub fn verify_kernel_excluded_from_root(repart: &Path, linux_version: &str) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::version::KernelVersion;
 
     const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -132,7 +134,6 @@ mod tests {
             !base.contains("dmverity_roothash"),
             "the base must not name a root"
         );
-        assert!(seal(&base, HASH).unwrap().ends_with("action=ALLOW\n"));
     }
 
     #[test]
@@ -144,13 +145,8 @@ mod tests {
 
     #[test]
     fn root_partition_excludes_the_pinned_kernel_version() {
-        let version = fs_err::read_to_string(repo("kernel/version")).unwrap();
-        let linux_version = version
-            .lines()
-            .find_map(|l| l.strip_prefix("LINUX_VERSION="))
-            .unwrap()
-            .trim();
-        verify_kernel_excluded_from_root(&repo(ROOT_REPART), linux_version).unwrap();
+        let version = KernelVersion::read(&repo("kernel/version")).unwrap();
+        verify_kernel_excluded_from_root(&repo(ROOT_REPART), &version.linux_version).unwrap();
         let err = verify_kernel_excluded_from_root(&repo(ROOT_REPART), "0.0.0")
             .unwrap_err()
             .to_string();

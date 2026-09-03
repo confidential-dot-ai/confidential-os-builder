@@ -1,12 +1,7 @@
-# Integrity Policy Enforcement boot policy, compiled into the kernel via
-# CONFIG_IPE_BOOT_POLICY (kernel/hardening.config). The kernel cache carries
-# exactly this text; `confos build` appends the rules that allow execution
-# from the dm-verity root of the image it is building and relinks the kernel
-# (src/kernel/ipe.rs), so the finished kernel executes code only from the
-# measured initramfs and from that one root hash. Runtime policy updates
-# would need a signature from a key in the kernel's builtin keyring, and the
-# initrd drops CAP_MAC_ADMIN before switch_root, so this policy is final for
-# the life of the guest. See docs/THREAT_MODEL.md.
+# IPE boot policy compiled into the kernel (CONFIG_IPE_BOOT_POLICY). This
+# base allows only the initramfs; `confos build` appends the image's
+# dm-verity root hash before relinking (src/kernel/ipe.rs). Final for the
+# life of the guest: see docs/THREAT_MODEL.md.
 policy_name=confos policy_version=0.0.0
 DEFAULT action=DENY
 op=EXECUTE boot_verified=TRUE action=ALLOW

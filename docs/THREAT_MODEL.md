@@ -150,11 +150,14 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   configuration file, drop a transient unit under `/run/systemd/system`
   that runs a *measured* binary with attacker-chosen arguments, or feed a
   script to an interpreter (`bash /tmp/x` reads the file; `/tmp/x` is what
-  is denied). Anonymous executable memory (JITs, libffi trampolines) is
-  outside IPE by construction. So the layout plus IPE raise tampering from
-  "any root write" to "root with mount control, and only through measured
-  code and unmeasured configuration"; the rest is the workload's privilege
-  separation. Run workloads as non-root or in containers without
+  is denied). So the layout plus IPE raise tampering from "any root write"
+  to "root with mount control, and only through measured code and
+  unmeasured configuration"; the rest is the workload's privilege
+  separation. Anonymous executable memory is the other way round: an
+  executable mapping with no file behind it matches no rule and is denied,
+  so JITs and libffi closure trampolines fail with `EACCES` rather than run
+  unmeasured. Workloads that need them (JIT-enabled runtimes such as Node,
+  Java, or .NET) belong on an IPE-off kernel. Run workloads as non-root or in containers without
   `CAP_SYS_ADMIN`, deny them the TEE device nodes (`DeviceAllow=`
   allowlists, as the attest units do), and remember the attestation report
   itself is signed by the CPU — a compromised workload can request quotes

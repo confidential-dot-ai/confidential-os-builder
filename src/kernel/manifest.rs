@@ -53,6 +53,12 @@ pub struct Fingerprint {
 #[serde(deny_unknown_fields)]
 pub struct Outputs {
     pub vmlinuz_sha256: String,
+    /// Whether the resolved config built IPE in. Recorded here so consumers
+    /// read what was built instead of re-deriving it from the snapshot.
+    /// `default` for pre-field manifests (whose fingerprint no longer
+    /// matches, so they rebuild).
+    #[serde(default)]
+    pub ipe: bool,
 }
 
 impl Fingerprint {

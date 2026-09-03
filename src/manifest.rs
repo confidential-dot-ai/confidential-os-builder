@@ -124,8 +124,12 @@ pub struct KernelInputs {
     // `vmlinuz_sha256` when the kernel was built without IPE.
     #[serde(default)]
     pub base_vmlinuz_sha256: String,
-    // Committed IPE boot policy the sealed policy extends. Empty when the
-    // kernel was built without IPE.
+    // Whether the kernel enforces the IPE policy (built with
+    // CONFIG_SECURITY_IPE). `default` for older manifests.
+    #[serde(default)]
+    pub ipe: bool,
+    // Committed IPE boot policy compiled into the kernel and, when `ipe` is
+    // set, extended by the sealed policy. `default` for older manifests.
     #[serde(default)]
     pub ipe_boot_policy_sha256: String,
 }

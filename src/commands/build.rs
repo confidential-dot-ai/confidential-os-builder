@@ -1,10 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::commands::kernel as kernel_cmd;
 use crate::kernel::ipe;
 use crate::{
-    igvm, is_safe_name, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform, KernelArgs,
-    SyncInput,
+    igvm, is_safe_name, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform, SyncInput,
 };
 
 pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
@@ -173,7 +171,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
 
     // Phase 1: ensure custom kernel artifact is current
     println!("\n=== Step 1/4: Ensuring custom kernel ===");
-    let kernel = kernel_cache::ensure_kernel(false, args.kernel_inputs.clone())?;
+    let mut kernel = kernel_cache::ensure_kernel(false, args.kernel_inputs.clone())?;
     println!(
         "kernel: {} (linux {})",
         kernel.vmlinuz_path.display(),
@@ -189,7 +187,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     fs_err::create_dir_all(&staged_kernel_dir)?;
     let staged_vmlinuz = staged_kernel_dir.join("vmlinuz");
     fs_err::copy(&kernel.vmlinuz_path, &staged_vmlinuz)?;
-    let ipe_enabled = kernel_cmd::ipe_enabled(&args.kernel_inputs)?;
+    let ipe_enabled = kernel.manifest.outputs.ipe;
     if !ipe_enabled {
         println!("kernel built without IPE: the image will run code from any filesystem");
     }
@@ -271,24 +269,25 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // image whose policy denies its own root.
     if ipe_enabled {
         println!("\n=== Step 3b: Sealing the IPE policy to root hash {roothash} ===");
-        let sealed_vmlinuz = kernel_cmd::seal(
-            &KernelArgs {
-                force: false,
-                output: PathBuf::from(kernel_cache::KERNEL_OUT_DIR),
-                kernel_inputs: args.kernel_inputs.clone(),
-            },
-            &roothash,
-            &output,
-        )?;
+        let sealed_vmlinuz = kernel_cache::seal(&mut kernel, &roothash, &output)?;
+        if manifest::sha256_file(&sealed_vmlinuz)? == kernel.manifest.outputs.vmlinuz_sha256 {
+            anyhow::bail!(
+                "sealed kernel is byte-identical to the base kernel: the relink did not \
+                 take (see {})",
+                output.join("kernel-seal.log").display()
+            );
+        }
         fs_err::copy(&sealed_vmlinuz, &staged_vmlinuz)?;
         println!("\n=== Step 3c: Building image with the sealed kernel (mkosi) ===");
         tools::run_mkosi(&mkosi_args)?;
         let resealed = read_roothash(&mkosi_output)?;
         if resealed != roothash {
             anyhow::bail!(
-                "root hash changed between the two mkosi passes ({roothash} -> {resealed}); \
-                 the root partition depends on something that changed with the kernel, so \
-                 the sealed IPE policy would deny the image's own root"
+                "root hash changed between the two mkosi passes ({roothash} -> {resealed}), \
+                 so the sealed IPE policy would deny the image's own root. The root must \
+                 build bit-identically twice: a --script that downloads, generates keys, \
+                 or stamps timestamps cannot be sealed, and the kernel must stay excluded \
+                 from the root partition"
             );
         }
     }
@@ -503,11 +502,8 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 // The kernel inside the UKI: sealed when IPE is on.
                 vmlinuz_sha256: manifest::sha256_file(&staged_vmlinuz)?,
                 base_vmlinuz_sha256: kernel.manifest.outputs.vmlinuz_sha256.clone(),
-                ipe_boot_policy_sha256: if ipe_enabled {
-                    kernel.manifest.inputs.ipe_boot_policy_sha256.clone()
-                } else {
-                    String::new()
-                },
+                ipe: ipe_enabled,
+                ipe_boot_policy_sha256: kernel.manifest.inputs.ipe_boot_policy_sha256.clone(),
                 required_config_sha256: kernel.manifest.inputs.required_config_sha256.clone(),
                 hardening_config_sha256: kernel.manifest.inputs.hardening_config_sha256.clone(),
                 kernel_extra_config_sha256: kernel
@@ -608,14 +604,7 @@ fn read_roothash(mkosi_output: &Path) -> anyhow::Result<String> {
     let roothash = fs_err::read_to_string(&roothash_path)?
         .trim()
         .to_lowercase();
-    let valid_lengths = [64, 96, 128]; // SHA-256, SHA-384, SHA-512
-    if !valid_lengths.contains(&roothash.len()) || !roothash.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        anyhow::bail!(
-            "invalid roothash from mkosi: {roothash:?} (expected 64/96/128 hex chars, got {})",
-            roothash.len()
-        );
-    }
+    anyhow::Context::context(ipe::digest_name(&roothash), "invalid roothash from mkosi")?;
     Ok(roothash)
 }
 

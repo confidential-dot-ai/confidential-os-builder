@@ -25,13 +25,15 @@ build configs, since those invalidate published reference values.
   refuses to run the shadow.
 
   cloud-init `runcmd` no longer works (it executes a script it writes
-  under `/var`); `bootcmd` does. Container hosts must turn IPE off in their
+  under `/var`); `bootcmd` does. Anonymous executable memory is denied too,
+  so JIT runtimes need an IPE-off kernel. Container hosts must turn IPE off in their
   kernel fragment (`# CONFIG_SECURITY_IPE is not set`) — the c8s node
   image needs this before bumping — which builds in one pass and changes
   the measurement. The manifest records the sealed kernel as
   `kernel.vmlinuz_sha256`, the cache artifact as `base_vmlinuz_sha256`,
-  and the committed policy as `ipe_boot_policy_sha256`; the sealed policy
-  text lands in `output/<name>/ipe-boot-policy`.
+  whether IPE is built in as `kernel.ipe`, and the committed policy as
+  `ipe_boot_policy_sha256`; the sealed policy text lands in
+  `output/<name>/ipe-boot-policy`.
 
 ### Changed
 - **Changes measurements (once).** mkosi is bumped v26 → v27 (#116):
