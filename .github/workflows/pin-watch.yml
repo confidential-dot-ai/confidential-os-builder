@@ -4,11 +4,27 @@
 # kernel.org unnoticed: no backports reached kernel/version for weeks and
 # nothing failed.
 #
-# With PIN_WATCH_TOKEN (a fine-grained PAT with Contents and Pull requests
-# read/write access), checkout, push, and PR creation all use the PAT and PR
-# checks start automatically. Without it, they consistently use GITHUB_TOKEN:
-# the repository must allow Actions to create pull requests, and the resulting
-# PR workflow runs wait for approval before starting.
+# Authentication setup:
+# - Create a dedicated organization-owned GitHub App. Grant no organization or
+#   account permissions and subscribe to no webhooks. Grant only repository
+#   Contents and Pull requests read/write. A shared App also needs Workflows
+#   read/write for c8s; this workflow does not request that permission. Install
+#   it only on the three pin-watch repositories.
+# - Store its client ID in the PIN_WATCH_APP_CLIENT_ID Actions variable and a
+#   generated private key in the PIN_WATCH_APP_PRIVATE_KEY Actions secret. For
+#   organization-level values, restrict both to the same selected repositories.
+#
+# A shared App private key can mint tokens for every App installation. Keep the
+# installation and variable/secret allowlists identical and minimal, and rotate
+# the key after suspected disclosure or compromise of any selected repository.
+#
+# When the client ID is present, the pinned action mints a short-lived token
+# scoped to this repository. Checkout, push, and gh use that same token; PRs
+# created with it start checks automatically, and the action revokes it in its
+# post-step. A missing or invalid key fails closed.
+# Leaving the client ID unset intentionally falls back to GITHUB_TOKEN, limited
+# by the permissions below. The repository must enable "Allow GitHub Actions to
+# create and approve pull requests"; resulting PR workflow runs await approval.
 name: pin watch
 
 on:
@@ -24,16 +40,22 @@ concurrency:
   group: pin-watch
   cancel-in-progress: false
 
-env:
-  GH_TOKEN: ${{ secrets.PIN_WATCH_TOKEN || github.token }}
-
 jobs:
   watch:
     runs-on: ubuntu-latest
     steps:
+      - name: Create pin-watch GitHub App token
+        id: pin-watch-app-token
+        if: ${{ vars.PIN_WATCH_APP_CLIENT_ID != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PIN_WATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PIN_WATCH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          token: ${{ secrets.PIN_WATCH_TOKEN || github.token }}
+          token: ${{ steps.pin-watch-app-token.outputs.token || github.token }}
       - name: Configure the bot identity
         run: |
           git config user.name "pin-watch"
@@ -91,6 +113,8 @@ jobs:
         # pin's exact timestamp move (kernel-builder is deliberately skewed
         # behind it — see the CHANGELOG on per-lineage kernel toolchains —
         # and a blanket rewrite would silently collapse that skew).
+        env:
+          GH_TOKEN: ${{ steps.pin-watch-app-token.outputs.token || github.token }}
         run: |
           set -euo pipefail
           source /tmp/open_pr
@@ -113,6 +137,8 @@ jobs:
         # it is not a substitute for a kernel developer's tarball signature.
         # Branch gone from releases.json -> EOL: no PR can fix that, so fail red
         # and stay red weekly until a human moves the branch.
+        env:
+          GH_TOKEN: ${{ steps.pin-watch-app-token.outputs.token || github.token }}
         run: |
           set -euo pipefail
           source /tmp/open_pr
