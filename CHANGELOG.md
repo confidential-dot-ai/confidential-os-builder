@@ -39,7 +39,11 @@ build configs, since those invalidate published reference values.
   Supporting changes adapt cloud-init, hostname handling, DNS, machine-id, and
   operator-key staging to a read-only `/etc`. A login shell prints the
   writable set and points at `state.d`, so "Read-only file system" is
-  explained where it is hit. The dev profile now appends to
+  explained where it is hit. cloud-init now reads only the baked seed:
+  NoCloud's probe for an attached `cidata` disk is off, closing the one
+  path by which a host could hand any image unmeasured user-data
+  (measured runtime user-data is
+  confidential-os-builder-workspace#5). The dev profile now appends to
   the base kernel command line instead of replacing it.
 
 ### Fixed

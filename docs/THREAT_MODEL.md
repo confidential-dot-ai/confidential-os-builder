@@ -50,8 +50,9 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
 2. **Root filesystem integrity** — every block of the root filesystem the
    guest ever reads matches the dm-verity root hash embedded in the measured
    cmdline. This transitively covers everything baked in at build time:
-   packages, `--extra` files, cloud-init user-data, post-install script
-   effects.
+   packages, `--extra` files, cloud-init user-data (the baked seed is the
+   only datasource; an attached `cidata` disk is ignored), post-install
+   script effects.
 3. **Runtime memory confidentiality** — guest RAM is encrypted with a key
    the host does not have (hardware guarantee, not confos's).
 4. **Scratch confidentiality** — the optional scratch disk is encrypted with
