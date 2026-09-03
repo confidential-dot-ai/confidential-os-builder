@@ -1,0 +1,163 @@
+# Watches the two measured-input pins that go stale silently and opens the
+# bump PR for review — never merges: every bump here rolls measurements, so
+# a human owns the merge (docs/VERSIONING.md). Born from 6.16 going EOL on
+# kernel.org unnoticed: no backports reached kernel/version for weeks and
+# nothing failed.
+#
+# Authentication prefers a short-lived, repository-scoped GitHub App token.
+# The action requests only Contents and Pull requests write. Checkout, push,
+# and gh use one credential; an unconfigured App falls back to GITHUB_TOKEN,
+# while invalid configured credentials fail before checkout.
+name: pin watch
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # weekly; both steps are no-ops when nothing drifted
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pin-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create pin-watch GitHub App token
+        id: pin-watch-app-token
+        if: ${{ vars.PIN_WATCH_APP_CLIENT_ID != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PIN_WATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PIN_WATCH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          token: ${{ steps.pin-watch-app-token.outputs.token || github.token }}
+      - name: Configure the bot identity
+        run: |
+          git config user.name "pin-watch"
+          git config user.email "actions@github.com"
+
+      # Open (or refresh) a PR carrying whatever the caller changed. Skip an
+      # unchanged open PR, but recover a same-tree orphan branch by opening
+      # its missing PR. A lease prevents overwriting an unexpected writer.
+      - name: Define open_pr helper
+        run: |
+          cat > /tmp/open_pr <<'SH'
+          open_pr() { # <branch> <title> <body>
+            local branch="$1" title="$2" body="$3"
+            local open_pr_number remote_oid remote_ref remote_status
+
+            git checkout -b "$branch"
+            git commit -am "$title"
+            open_pr_number=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')
+
+            remote_oid=
+            if remote_ref=$(git ls-remote --exit-code --heads origin "refs/heads/$branch"); then
+              remote_oid="${remote_ref%%[[:space:]]*}"
+              git fetch --no-tags origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+            else
+              remote_status=$?
+              [ "$remote_status" -eq 2 ] || return "$remote_status"
+            fi
+
+            if [ -n "$remote_oid" ] &&
+              [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse "$remote_oid^{tree}")" ]; then
+              git checkout -
+              if [ -n "$open_pr_number" ]; then
+                echo "pin-watch: $branch already has the proposed tree in PR #$open_pr_number"
+                return 0
+              fi
+            else
+              if [ -n "$remote_oid" ]; then
+                git push --force-with-lease="refs/heads/$branch:$remote_oid" origin "HEAD:refs/heads/$branch"
+              else
+                git push origin "HEAD:refs/heads/$branch"
+              fi
+              git checkout -
+            fi
+
+            if [ -z "$open_pr_number" ]; then
+              gh pr create --head "$branch" --title "$title" --body "$body"
+            fi
+          }
+          SH
+
+      - name: Snapshot — age nag
+        # The apt snapshot timestamp is the deliberate act that picks up
+        # security updates (docs/REPRODUCIBILITY.md) — nag with a ready PR
+        # once the base pin is >35 days old. Only sources carrying the base
+        # pin's exact timestamp move (kernel-builder is deliberately skewed
+        # behind it — see the CHANGELOG on per-lineage kernel toolchains —
+        # and a blanket rewrite would silently collapse that skew).
+        env:
+          GH_TOKEN: ${{ steps.pin-watch-app-token.outputs.token || github.token }}
+        run: |
+          set -euo pipefail
+          source /tmp/open_pr
+          base=mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources
+          cur=$(sed -n 's#^URIs: https://snapshot\.ubuntu\.com/ubuntu/##p' "$base")
+          age=$(( ( $(date -u +%s) - $(date -u -d "${cur%%T*}" +%s) ) / 86400 ))
+          [ "$age" -gt 35 ] || exit 0
+          new=$(date -u -d '1 day ago' +%Y%m%dT000000Z)
+          sed -i "s/${cur}/${new}/" mkosi/*/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources
+          moved=$(git diff --name-only | paste -sd' ' -)
+          open_pr "pin-watch/snapshot" \
+            "mkosi: bump the apt snapshot pin to ${new} — ${age} days of security updates" \
+            "Automated pin-watch bump ${cur} -> ${new} in: ${moved} (the host-deps closure follows the base pin; sources deliberately skewed behind base keep their own timestamps). Rolls measurements — package versions move to the new snapshot; if the kernel-config drift gate trips, regenerate the snapshot lockfile here. Merge deliberately, ideally batched with other pending rolls."
+      - name: Kernel — patch drift or EOL
+        # Patch drift on the pinned branch -> bump PR with the digest taken
+        # from a signature-verified kernel.org sha256sums.asc (an independent
+        # checksum, matching the trust model of src/kernel/fetch.rs — this
+        # workflow must never mint a pin by hashing its own download). The
+        # checksum autosigner authenticates kernel.org mirror checksum metadata;
+        # it is not a substitute for a kernel developer's tarball signature.
+        # Branch gone from releases.json -> EOL: no PR can fix that, so fail red
+        # and stay red weekly until a human moves the branch.
+        env:
+          GH_TOKEN: ${{ steps.pin-watch-app-token.outputs.token || github.token }}
+        run: |
+          set -euo pipefail
+          source /tmp/open_pr
+          . kernel/version
+          kernel_version_re='^[1-9][0-9]*\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$'
+          if [[ ! $LINUX_VERSION =~ $kernel_version_re ]]; then
+            echo "::error::invalid pinned kernel version: ${LINUX_VERSION}; expected MAJOR.MINOR[.PATCH]" >&2
+            exit 1
+          fi
+          branch="${LINUX_VERSION%.*}"
+          # A series' first release is two-part (6.17, no .0): it IS its
+          # own branch; stripping past the last dot would yield "6" and
+          # match every 6.x series below.
+          case "$branch" in *.*) ;; *) branch="$LINUX_VERSION";; esac
+          latest=$(curl -fsSL --retry 5 --retry-delay 5 https://www.kernel.org/releases.json |
+            jq -r --arg b "$branch." '[.releases[] | select(.moniker == "stable" or .moniker == "longterm") | .version | select(. + "." | startswith($b))] | first // empty')
+          if [ -z "$latest" ]; then
+            echo "::error::kernel branch ${branch} is EOL on kernel.org — no more backports reach the ${LINUX_VERSION} pin; move to a maintained branch (measurement roll)" >&2
+            exit 1
+          fi
+          if [[ ! $latest =~ $kernel_version_re ]]; then
+            echo "::error::kernel.org returned an invalid stable version: ${latest}; expected MAJOR.MINOR[.PATCH]" >&2
+            exit 1
+          fi
+          dpkg --compare-versions "$latest" eq "$LINUX_VERSION" && exit 0
+          if ! dpkg --compare-versions "$latest" gt "$LINUX_VERSION"; then
+            echo "::error::refusing non-forward kernel update ${LINUX_VERSION} -> ${latest}" >&2
+            exit 1
+          fi
+          major="${latest%%.*}"
+          manifest="$RUNNER_TEMP/kernel-sha256sums.asc"
+          curl -fsSL --retry 5 --retry-delay 5 \
+            --output "$manifest" \
+            "https://cdn.kernel.org/pub/linux/kernel/v${major}.x/sha256sums.asc"
+          sha=$(bash .github/scripts/kernel-checksum "$manifest" "$latest")
+          printf 'LINUX_VERSION=%s\nLINUX_TARBALL_SHA256=%s\n' "$latest" "$sha" > kernel/version
+          open_pr "pin-watch/kernel" \
+            "kernel: bump to ${latest} — stable backports on the pinned branch" \
+            "Automated pin-watch bump ${LINUX_VERSION} -> ${latest}; the tarball digest comes from a signature-verified kernel.org checksum manifest using the repository-pinned checksum-autosigner key, not from hashing a download. That signature authenticates kernel.org mirror checksum metadata; it is not a developer tarball signature. Rolls measurements; if CI's kernel-config drift gate trips, regenerate the snapshot lockfile in this PR before merging."

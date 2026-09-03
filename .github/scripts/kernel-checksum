@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly KERNEL_ORG_CHECKSUM_FINGERPRINT="B8868C80BA62A1FFFAF5FDA9632D3A06589DA6B1"
+KERNEL_CHECKSUM_SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+readonly KERNEL_CHECKSUM_SCRIPT_DIR
+readonly KERNEL_ORG_CHECKSUM_KEY="$KERNEL_CHECKSUM_SCRIPT_DIR/../keys/kernel-org-checksum-autosigner.asc"
+
+kernel_checksum_error() {
+  echo "kernel-checksum: $*" >&2
+}
+
+verify_kernel_checksum() (
+  set -euo pipefail
+
+  if [ "$#" -ne 4 ]; then
+    kernel_checksum_error "internal usage: verify_kernel_checksum MANIFEST VERSION KEY FINGERPRINT"
+    exit 2
+  fi
+
+  local manifest="$1" version="$2" trusted_key="$3" expected_fingerprint="$4"
+  local work_dir gnupg_home keyring verified_payload actual_fingerprints artifact matches
+  local match_count checksum filename extra
+
+  [ -f "$manifest" ] || { kernel_checksum_error "manifest not found: $manifest"; exit 1; }
+  [ -f "$trusted_key" ] || { kernel_checksum_error "trusted key not found: $trusted_key"; exit 1; }
+  [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || {
+    kernel_checksum_error "invalid stable kernel version: $version"
+    exit 1
+  }
+  [[ "$expected_fingerprint" =~ ^[0-9A-F]{40}$ ]] || {
+    kernel_checksum_error "invalid expected key fingerprint"
+    exit 1
+  }
+
+  work_dir=$(mktemp -d "${TMPDIR:-/tmp}/kernel-checksum.XXXXXXXX")
+  trap 'rm -rf "$work_dir"' EXIT
+  gnupg_home="$work_dir/gnupg"
+  keyring="$work_dir/kernel-org-autosigner.gpg"
+  verified_payload="$work_dir/sha256sums"
+  matches="$work_dir/matches"
+  mkdir -m 700 "$gnupg_home"
+
+  actual_fingerprints=$(
+    GNUPGHOME="$gnupg_home" gpg --batch --no-options --with-colons --show-keys "$trusted_key" |
+      awk -F: '
+        $1 == "pub" { want_fingerprint = 1; next }
+        want_fingerprint && $1 == "fpr" { print $10; want_fingerprint = 0 }
+      '
+  )
+  if [ "$actual_fingerprints" != "$expected_fingerprint" ]; then
+    kernel_checksum_error "trusted key fingerprint mismatch; expected $expected_fingerprint"
+    exit 1
+  fi
+
+  GNUPGHOME="$gnupg_home" gpg --batch --no-options --yes \
+    --dearmor --output "$keyring" "$trusted_key"
+  if ! gpgv --homedir "$gnupg_home" --keyring "$keyring" \
+    --output "$verified_payload" "$manifest"; then
+    kernel_checksum_error "manifest signature verification failed"
+    exit 1
+  fi
+
+  artifact="linux-${version}.tar.xz"
+  awk -v artifact="$artifact" '
+    {
+      for (field = 1; field <= NF; field++) {
+        if ($field == artifact) {
+          print
+          next
+        }
+      }
+    }
+  ' "$verified_payload" > "$matches"
+  match_count=$(wc -l < "$matches")
+  match_count=${match_count//[[:space:]]/}
+  if [ "$match_count" != 1 ]; then
+    kernel_checksum_error "expected exactly one checksum for $artifact, found $match_count"
+    exit 1
+  fi
+
+  IFS=' ' read -r checksum filename extra < "$matches"
+  if [ "$filename" != "$artifact" ] || [ -n "${extra:-}" ] ||
+    [ "${#checksum}" -ne 64 ] || [[ "$checksum" == *[!0-9a-f]* ]]; then
+    kernel_checksum_error "malformed checksum entry for $artifact"
+    exit 1
+  fi
+
+  printf '%s\n' "$checksum"
+)
+
+main() {
+  if [ "$#" -ne 2 ]; then
+    echo "usage: kernel-checksum MANIFEST VERSION" >&2
+    return 2
+  fi
+
+  verify_kernel_checksum \
+    "$1" "$2" "$KERNEL_ORG_CHECKSUM_KEY" "$KERNEL_ORG_CHECKSUM_FINGERPRINT"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
