@@ -8,6 +8,31 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Added
+- **Changes measurements. Breaking for images that execute code from
+  writable state.** The kernel now enforces an Integrity Policy Enforcement
+  (IPE) policy: it executes, maps executable, and loads modules and
+  firmware only from the initramfs and from the dm-verity root of the
+  image it was built for. `confos build` runs mkosi twice — once to learn
+  the root hash, then again with the cached kernel relinked around a policy
+  that pins it (`kernel/ipe-boot-policy` plus the hash). The root partition
+  no longer contains the kernel, so both passes hash the same root and the
+  build fails if they do not. The initrd drops `CAP_MAC_ADMIN` before
+  `switch_root`, which is the capability every IPE control needs, so no
+  process in the guest can switch enforcement off or activate another
+  policy. This closes the residual from the immutable-root change: root
+  with mount control could still shadow a measured binary; now the kernel
+  refuses to run the shadow.
+
+  cloud-init `runcmd` no longer works (it executes a script it writes
+  under `/var`); `bootcmd` does. Container hosts must turn IPE off in their
+  kernel fragment (`# CONFIG_SECURITY_IPE is not set`) — the c8s node
+  image needs this before bumping — which builds in one pass and changes
+  the measurement. The manifest records the sealed kernel as
+  `kernel.vmlinuz_sha256`, the cache artifact as `base_vmlinuz_sha256`,
+  and the committed policy as `ipe_boot_policy_sha256`; the sealed policy
+  text lands in `output/<name>/ipe-boot-policy`.
+
 ### Changed
 - **Changes measurements (once).** mkosi is bumped v26 → v27 (#116):
   `bin/setup` and CI install exactly `mkosi.git@v27`, and `MinimumVersion=27`

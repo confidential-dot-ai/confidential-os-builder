@@ -19,7 +19,10 @@ bin/confos build
    ├─ 1. kernel        src/commands/kernel.rs + src/kernel/*    (cached)
    ├─ 2. initrd + DSDT mkosi/initrd/ + iasl early-cpio prepend
    ├─ 3. image         mkosi/base/ via mkosi (reproducible rootfs
-   │                   + erofs + verity + ukify)       → disk.raw, uki.efi, roothash
+   │                   + erofs + verity + ukify)       → roothash
+   ├─ 3b. seal         src/kernel/ipe.rs: roothash → IPE policy → relink kernel
+   ├─ 3c. image again  same mkosi run with the sealed kernel
+   │                   (roothash must not move)       → disk.raw, uki.efi
    ├─ 4. SNP measure   src/igvm/ → crates/igvm-tools   → guest-smp<N>.igvm + digests
    ├─ 5. TDX measure   crates/tdx-measure (library)    → mrtd/rtmr1/rtmr2
    └─ 6. manifest      src/manifest.rs                 → manifest.json
@@ -34,11 +37,11 @@ bin/confos build
 | `main.rs` | clap entry point; subcommand dispatch |
 | `lib.rs` | Shared argument structs and `BuildPlatform` (snp/tdx/both) |
 | `commands/build.rs` | The pipeline above. Per-build file injections (cloud-init, `--extra`, dev-profile console) go into a temporary `mkosi.local/` overlay removed by an RAII guard; the trusted-DSDT step compiles ASL → AML and prepends an uncompressed early cpio to the mkosi initrd, and *that* combined initrd is what the UKI and both measurement paths see |
-| `commands/kernel.rs` | Kernel build orchestration + cache check |
+| `commands/kernel.rs` | Kernel build orchestration + cache check, and `seal`: relink the cached kernel with an image's root hash in its IPE policy |
 | `commands/run.rs` | Boot an output dir in QEMU |
 | `commands/igvm.rs` | Re-render IGVM SMP variants for an existing build |
 | `commands/push.rs`, `commands/pull.rs` | OCI transfer via `oras` |
-| `kernel/` | `version.rs` parses `kernel/version`; `fetch.rs` downloads the pinned tarball (SHA-256-checked); `config.rs` merges fragments and maintains the snapshot lockfile; `compile.rs` drives the mkosi kernel-builder; `manifest.rs` fingerprints inputs for caching |
+| `kernel/` | `version.rs` parses `kernel/version`; `fetch.rs` downloads the pinned tarball (SHA-256-checked); `config.rs` merges fragments and maintains the snapshot lockfile; `compile.rs` drives the mkosi kernel-builder; `ipe.rs` renders the sealed IPE policy and checks the repart exclusion that makes sealing sound; `manifest.rs` fingerprints inputs for caching |
 | `kernel_cache.rs` | Thin cache-aware accessor `commands/build.rs` uses to get a kernel artifact |
 | `igvm/invoke.rs` | Bridges to the `igvm-tools` crate to emit IGVMs and capture digests |
 | `manifest.rs` | Manifest schema (v3), hashing helpers, version-gated reader — see [MANIFEST.md](MANIFEST.md) |

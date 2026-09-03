@@ -17,3 +17,10 @@ declare any additional runtime state directory in its profile's
 For example, rke2 requires `/etc/rancher`. Each declared directory must
 already exist in the built image; the initrd gives it an ephemeral writable
 overlay and fails the boot if it is missing.
+
+The default kernel also enforces an execution policy (IPE) that allows
+code only from the verity root. A node image runs rke2 from `/var/lib/rancher`
+and containers from the scratch disk, so its kernel fragment must retract
+it with `# CONFIG_SECURITY_IPE is not set`; the image then builds in one
+mkosi pass, the initrd leaves the capability set alone (privileged pods
+need it), and the measurement records the difference.

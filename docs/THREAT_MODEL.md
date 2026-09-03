@@ -58,6 +58,12 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
 4. **Scratch confidentiality** — the optional scratch disk is encrypted with
    a random key generated in-guest at boot and never persisted. The host
    sees only ciphertext; contents do not survive reboot.
+5. **Execution integrity** — the kernel executes code (exec, executable
+   mappings, kernel modules, firmware) only from the measured initramfs and
+   from the dm-verity root whose hash is in its compiled-in IPE policy, and
+   that policy cannot be changed or switched off from inside the guest.
+   Every executable that ever runs is therefore covered by guarantee 2.
+   Holds only for kernels built with IPE, which the measurement shows.
 
 ## Explicitly not protected
 
@@ -113,6 +119,23 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   configuration paths on the verity root removes that ordinary-write path,
   which is especially important for the attestation-api that composes
   evidence at runtime.
+- **The kernel executes only the measured root** — the Integrity Policy
+  Enforcement LSM carries a compiled-in policy (`kernel/ipe-boot-policy`
+  plus the image's root hash, which `confos build` seals in by relinking
+  the kernel after the root is built). `DEFAULT action=DENY`; `EXECUTE` is
+  allowed from the initramfs and from that one dm-verity volume, `KMODULE`
+  and `FIRMWARE` from the volume only. A binary dropped in `/var`, a tmpfs
+  mounted over `/usr/bin`, a script executed from `/run`, an `LD_PRELOAD`
+  from `/tmp`: the kernel refuses them all, whatever the caller's uid or
+  capabilities. Overlay state directories are evaluated on the real inode,
+  so unmodified files in `/var` still execute (they are verity-backed) and
+  written ones do not. The policy is final: updates through securityfs
+  need a PKCS#7 signature from a key in the kernel's builtin keyring
+  (empty in non-GPU builds), and the `enforce` switch, `success_audit`,
+  policy loading and activation all require `CAP_MAC_ADMIN`, which the
+  initrd removes from the bounding set before `switch_root`. PID 1 and every
+  descendant inherit that reduced set, so no process in the booted guest —
+  root included — can weaken enforcement; only a kernel exploit can.
 - **Some `/etc` paths intentionally resolve to runtime state** —
   `/etc/ssh` is writable when the ssh profile is enabled so first-boot host
   keys can be generated; this also makes its SSH configuration root-writable.
@@ -122,16 +145,26 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
 - **Writable state is ephemeral** — with no scratch disk, writes go to a RAM
   tmpfs; the scratch disk is re-keyed and reformatted every boot, so nothing
   survives shutdown either way.
-- **The immutable layout is not a root-process sandbox** — a guest process
-  with full root (`CAP_SYS_ADMIN` and systemd control) can still mount its own
-  tmpfs over a path or drop unit overrides under `/run/systemd/system`. The
-  layout raises tampering from "any root write" to "root with mount and
-  service-manager control"; the rest is the workload's privilege separation.
-  Run workloads as non-root or in containers without `CAP_SYS_ADMIN`, deny
-  them the TEE device nodes (`DeviceAllow=` allowlists, as the attest units
-  do), and remember the attestation report itself is signed by the CPU — a
-  compromised workload can request quotes with its own `REPORT_DATA` but can
-  neither forge the launch state nor rewind an RTMR extend.
+- **What IPE does not cover** — configuration and data are read, not
+  executed: a root process with mount control can still shadow a
+  configuration file, drop a transient unit under `/run/systemd/system`
+  that runs a *measured* binary with attacker-chosen arguments, or feed a
+  script to an interpreter (`bash /tmp/x` reads the file; `/tmp/x` is what
+  is denied). Anonymous executable memory (JITs, libffi trampolines) is
+  outside IPE by construction. So the layout plus IPE raise tampering from
+  "any root write" to "root with mount control, and only through measured
+  code and unmeasured configuration"; the rest is the workload's privilege
+  separation. Run workloads as non-root or in containers without
+  `CAP_SYS_ADMIN`, deny them the TEE device nodes (`DeviceAllow=`
+  allowlists, as the attest units do), and remember the attestation report
+  itself is signed by the CPU — a compromised workload can request quotes
+  with its own `REPORT_DATA` but can neither forge the launch state nor
+  rewind an RTMR extend.
+- **IPE is off for images that run code fetched at runtime** — a container
+  host cannot execute only from its root, so the c8s node image's kernel
+  fragment retracts `CONFIG_SECURITY_IPE`. That is a different kernel and a
+  different measurement, and the initrd then keeps `CAP_MAC_ADMIN` (privileged
+  pods request it). Verifiers that need guarantee 5 pin the IPE kernel.
 - **`--profile dev` changes the measurement** — this is the feature. A dev
   image can never silently pass verification as a production image.
 

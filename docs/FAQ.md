@@ -128,6 +128,10 @@ provide their own attested, authenticated debugging channel.
 Yes, in principle — it's a normal Linux with systemd — but container
 runtimes need kernel features confos's minimal baseline omits and disk space
 beyond the 2G tmpfs backing `/var`. Expect to supply a kernel fragment (netfilter,
-overlayfs-in-userns, cgroup options, …) and a scratch disk. Note that
-anything pulled at runtime is *not* measured; only what is included in the
-built image is verified as part of an attestation.
+overlayfs-in-userns, cgroup options, …) and a scratch disk. The fragment
+must also turn off the execution policy (`# CONFIG_SECURITY_IPE is not
+set`): the default kernel executes only from the measured root, and a
+container image pulled at runtime is by definition not there. Turning it
+off changes the measurement, so a verifier can tell the two kinds of
+image apart. Either way, anything pulled at runtime is *not* measured; only
+what is included in the built image is verified as part of an attestation.
