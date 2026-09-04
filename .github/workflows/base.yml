@@ -14,13 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          # mkosi is the only uv consumer; there is no Python dependency set.
+          enable-cache: false
 
       - name: Setup mkosi
         uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
@@ -109,6 +112,7 @@ jobs:
         # root, so their saves fail without this. Runs after all use.
         run: |
           sudo chown -R "$(id -u):$(id -g)" \
+            output/kernel \
             mkosi/kernel-builder/mkosi.output \
             mkosi/base/mkosi.tools \
             mkosi/base/mkosi.pkgcache || true
