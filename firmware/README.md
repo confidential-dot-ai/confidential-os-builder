@@ -15,4 +15,4 @@ noble and ships an MS-keys `.ms.fd` on resolute (doesn't finish-boot an
 unsigned UKI). Vendoring the exact firmware the guest actually boots removes
 all distro/package drift and guarantees `manifest.json`'s `tdx.mrtd` equals a
 live quote's MRTD. Verified: tdx-measure(this file) == 9309eaae… == the digest
-a live b200 c8s CVM attests, and it boots the c8s rootdisk to Linux 6.16.12.
+the validation b200 c8s CVM attested; that image booted Linux 6.16.12.

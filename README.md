@@ -248,7 +248,7 @@ confos igvm output/myimage --smp 1 2 4 8 --firmware output/OVMF.fd
 
 ## Kernel fragments
 
-Confidential OS Builder ships a hardened guest kernel built from `kernel/version` (linux 6.16.12) with two **always-applied** fragments, plus an optional caller-supplied one.
+Confidential OS Builder ships a hardened guest kernel built from `kernel/version` (Linux 6.18.49) with three **always-applied** fragments, plus an optional caller-supplied one.
 
 | Fragment | What it adds | Applied |
 |---|---|---|

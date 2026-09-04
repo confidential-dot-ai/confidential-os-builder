@@ -17,8 +17,9 @@ page](https://kspp.github.io/Recommended_Settings) (as of 2026-07-12) that we do
 **not** apply, as well as what each setting controls, the security risks
 involved in that setting, and an explanation of why we don't apply it.
 
-For this analysis, we used the config `kernel/config-x86_64.snapshot` (the committed bare-baseline lockfile), used to
-compile Linux 6.16.12, on x86_64, with GCC 15, by `mkosi/kernel-builder`. The
+For this analysis, we used `kernel/config-x86_64.snapshot` (the committed
+bare-baseline lockfile), used to compile Linux 6.18.49 on x86_64 with GCC 15 by
+`mkosi/kernel-builder`. The
 kernel command line used in the CVM image is located in `mkosi/base/mkosi.conf`,
 and the sysctls applied inside our CVMs are located at
 `mkosi/base/mkosi.extra/etc/sysctl.d/99-kspp-hardening.conf`.
@@ -167,19 +168,18 @@ double-free corruption go undetected at the allocator level instead of being
 caught and reported at the moment of corruption.
 
 **Why we deviate.** It's slow on every allocation and free, in an allocator
-already carrying our hardening choices. On kernels before 6.17 (ours is 6.16),
-enabling `slub_debug` **disables kernel pointer hashing**, un-hiding kernel
-addresses in every `%p` print — a net security regression for a production image
-that sets `kernel.kptr_restrict=2` precisely to hide them (the
-`hash_pointers=always` escape hatch only exists from 6.17). And the detection
-niche is largely covered at lower cost: `CONFIG_SLAB_FREELIST_HARDENED` catches
-freelist metadata corruption, `CONFIG_INIT_ON_FREE_DEFAULT_ON` wipes freed
-objects, and KFENCE (`CONFIG_KFENCE=y`, sample interval 100) provides sampled
-guard-page overflow/UAF detection with near-zero overhead. 
+already carrying our hardening choices. Linux 6.18 lets us independently pin
+`hash_pointers=always`, so the pointer-address exposure that made this a net
+security regression before 6.17 no longer applies; the allocator overhead
+still does. The detection niche is covered at lower cost:
+`CONFIG_SLAB_FREELIST_HARDENED` catches freelist metadata corruption,
+`CONFIG_INIT_ON_FREE_DEFAULT_ON` wipes freed objects, and KFENCE
+(`CONFIG_KFENCE=y`, sample interval 100) provides sampled guard-page
+overflow/UAF detection with near-zero overhead.
 
 ---
 
-## Inapplicable settings on Linux 6.16.12 / x86 / GCC 15
+## Inapplicable settings on Linux 6.18.49 / x86 / GCC 15
 
 We do not apply any KSPP recommendations for ARM or other non-x86 architectures.
 The recommendations listed below are not applied because the Kconfig symbol no
@@ -194,7 +194,7 @@ usage, catching credential-structure corruption (a common privilege-escalation
 target).
 
 **Why not applicable.** Removed upstream in v6.7 after `struct cred` reference
-counting moved to hardened primitives; the symbol does not exist in 6.16. The
+counting moved to hardened primitives; the symbol does not exist in 6.18. The
 underlying overflow class is covered by the always-on `refcount_t` saturation
 semantics (see `REFCOUNT_FULL` below).
 
@@ -204,7 +204,7 @@ semantics (see `REFCOUNT_FULL` below).
 checking on `refcount_t`, preventing use-after-free via refcount overflow.
 
 **Why not applicable.** Removed in v5.5, when the fast saturation-based checks
-became the unconditional `refcount_t` implementation. Every 6.16 kernel has this
+became the unconditional `refcount_t` implementation. Every 6.18 kernel has this
 protection; there is nothing to enable.
 
 ### `CONFIG_PAGE_POISONING_ZERO=y` (and cmdline `page_poison=1`, `slub_debug=P`)
@@ -239,7 +239,7 @@ and the CPU's hardware RNG (RDRAND) to the kernel entropy pool.
 **Why not applicable.** Both symbols were removed in v6.2; trusting these
 sources is now the default behavior (opt out at boot with `random.trust_cpu=off`
 / `random.trust_bootloader=off`, which we do not). The recommended state is what
-6.16 always does.
+6.18 always does.
 
 ### `CONFIG_GCC_PLUGIN_STRUCTLEAK=y`, `CONFIG_GCC_PLUGIN_STRUCTLEAK_BYREF_ALL=y`
 
@@ -248,7 +248,7 @@ passed by reference, preventing uninitialized-stack-data leaks to userspace —
 the pre-GCC-12 route to stack initialization.
 
 **Why not applicable.** The structleak plugin was removed upstream (the symbols
-do not exist in 6.16's stack-init choice) because compilers grew native support:
+do not exist in 6.18's stack-init choice) because compilers grew native support:
 GCC 12+/Clang `-ftrivial-auto-var-init=zero`. We build with GCC 15 and set the
 successor, `CONFIG_INIT_STACK_ALL_ZERO=y`, which zero-initializes *all* stack
 variables at function entry — a strict superset of what structleak did. KSPP's
@@ -261,7 +261,7 @@ features).
 
 **Why not applicable.** The `amd_iommu_v2` driver was removed upstream (v6.7);
 its functionality folded into the core driver. We set `CONFIG_AMD_IOMMU=y`,
-which is the whole recommendation on 6.16.
+which is the whole recommendation on 6.18.
 
 (`CONFIG_HARDENED_USERCOPY_DEFAULT_ON=y`, which appeared in this section when
 this document covered 6.12, was added upstream in v6.15 and **is** applied since
@@ -286,19 +286,6 @@ the CPUs confos targets) plus `CONFIG_MITIGATION_SLS=y`, ROP surface reduction
 via `CONFIG_ZERO_CALL_USED_REGS=y`, and KASLR
 (`RANDOMIZE_BASE`/`RANDOMIZE_MEMORY`).
 
-### `CONFIG_KSTACK_ERASE=y` (+ `KSTACK_ERASE_METRICS`/`_RUNTIME_DISABLE` off)
-and cmdline `hash_pointers=always`
-
-**What they control.** `KSTACK_ERASE` is the v6.17+ rename of the stackleak
-mechanism (wiping the kernel stack on syscall exit); `hash_pointers=always`
-(v6.17+) keeps `%p` pointer hashing even when debug options would disable it.
-
-**Why not applicable.** Both exist only from v6.17; we run 6.16. The KSPP page
-lists the pre-6.17 equivalents for our case, and we apply them:
-`CONFIG_GCC_PLUGIN_STACKLEAK=y` with `STACKLEAK_METRICS` and
-`STACKLEAK_RUNTIME_DISABLE` off. Pointer hashing is on by default in 6.16 and
-nothing in our config disables it (see the `slub_debug=ZF` entry above).
-
 ### Removed "keep this off" symbols: `CONFIG_SECURITY_WRITABLE_HOOKS`,
 `CONFIG_SECURITY_SELINUX_DISABLE`, `CONFIG_ACPI_CUSTOM_METHOD`,
 `CONFIG_DEVKMEM`, `CONFIG_INET_DIAG` (pre-4.1 note), `CONFIG_X86_X32`,
@@ -312,7 +299,7 @@ option, and the hardened-usercopy fallback / page-span checks (removed upstream
 in v5.16 / v6.x).
 
 **Why not applicable / satisfied.** These are "make sure it's off"
-recommendations for symbols that either no longer exist in 6.16 (off by
+recommendations for symbols that either no longer exist in 6.18 (off by
 construction) or are off in our config anyway (`CONFIG_INET_DIAG` and
 `CONFIG_X86_X32_ABI` are not set).
 
@@ -335,6 +322,7 @@ addresses is closed more completely than the recommendation itself would.
 | sysctls `dev.tty.ldisc_autoload = 0`, `dev.tty.legacy_tiocsti = 0` | Block line-discipline autoload and TIOCSTI keystroke injection | `CONFIG_LDISC_AUTOLOAD` and `CONFIG_LEGACY_TIOCSTI` are not set; the sysctls' compiled-in defaults are already 0 (noted in the sysctl drop-in header) |
 | cmdline `vdso32=0` | Ensure the 32-bit vDSO (fixed-address ROP target) stays off | `CONFIG_COMPAT` / `CONFIG_IA32_EMULATION` are not set — no 32-bit vDSO is built |
 | cmdline `hardened_usercopy=1`, `init_on_alloc=1`, `init_on_free=1`, `randomize_kstack_offset=on`, `slab_nomerge`, `iommu.passthrough=0 iommu.strict=1`, `kfence.sample_interval=100`, `vsyscall=none`, `proc_mem.force_override` | Runtime switches for their compile-time twins | Each is the boot-parameter form of a CONFIG we set (`HARDENED_USERCOPY`, `INIT_ON_{ALLOC,FREE}_DEFAULT_ON`, `RANDOMIZE_KSTACK_OFFSET_DEFAULT`, `SLAB_MERGE_DEFAULT=n`, `IOMMU_DEFAULT_DMA_STRICT`, `KFENCE_SAMPLE_INTERVAL=100`, `X86_VSYSCALL_EMULATION=n` + `LEGACY_VSYSCALL_NONE`, `PROC_MEM_FORCE_PTRACE`), so the defaults are already the hardened values and the parameters would be no-ops. The one cmdline flag that is *not* redundant, `page_alloc.shuffle=1`, **is** set in `mkosi/base/mkosi.conf` |
+| cmdline `hash_pointers=always` | Prevent debug options from disabling `%p` pointer hashing and exposing raw kernel addresses | Set explicitly in `mkosi/base/mkosi.conf`; unlike the compile-time-default switches above, this pins runtime behavior against future debug-profile changes |
 
 ---
 
@@ -342,5 +330,6 @@ addresses is closed more completely than the recommendation itself would.
 
 - `kernel/hardening.config` — the KSPP block, with per-option comments and its own "intentionally NOT applied" summary.
 - `mkosi/base/mkosi.extra/etc/sysctl.d/99-kspp-hardening.conf` — applied sysctls.
-- `mkosi/base/mkosi.conf` — image kernel command line (`page_alloc.shuffle=1`).
+- `mkosi/base/mkosi.conf` — image kernel command line
+  (`page_alloc.shuffle=1`, `hash_pointers=always`).
 - `kernel/dev.config` — dev-profile inversions of the hardening baseline (serial console, debugfs); these changes are never shipped in production images.

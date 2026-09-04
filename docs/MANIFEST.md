@@ -26,7 +26,7 @@ shape.
   },
   "inputs": {
     "kernel": {
-      "linux_version": "6.16.12",
+      "linux_version": "6.18.49",
       "vmlinuz_sha256": "…",
       "required_config_sha256": "…",
       "hardening_config_sha256": "…",
