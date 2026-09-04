@@ -1,7 +1,5 @@
-# attestation-api config baked by confos build --profile attest.
-# Override at runtime by mounting / writing /etc/attestation-api/config.toml.
-# Note: /etc lives on the overlay upper, so runtime overrides do persist
-# (when a datadisk is attached) but don't change the IGVM launch measurement.
+# Baked by `confos build --profile attest`. This measured configuration is
+# read-only at runtime; change it at build time.
 
 [server]
 bind = "0.0.0.0:8400"

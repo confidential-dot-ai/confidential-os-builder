@@ -245,15 +245,25 @@ When the init script runs `veritysetup open /dev/vda2 root /dev/vda3 <roothash>`
 
 ### The problem
 
-dm-verity makes the root filesystem **physically read-only**. Not just "please don't write" — the kernel will refuse any write operation to `/dev/mapper/root`. If systemd tries to write to `/var/log/syslog`, it gets an error. If cloud-init tries to write a config file, error. The system can't even boot properly because systemd needs to write to dozens of places during startup.
+dm-verity makes the root filesystem **physically read-only**: the kernel
+rejects writes to `/dev/mapper/root`. A conventional Linux boot still needs
+writable runtime state for logs, temporary files, user homes, and service
+data. The challenge is to provide that state without making measured system
+content writable.
 
-So we need writes to work, but we can't write to the real disk.
+### Writable state, and only state
 
-### The naive solution (and why it's wrong)
+The verity filesystem is the mounted root. Only directories declared in the
+measured image's `/usr/lib/confai/state.d/*.conf` receive writable overlays:
+the base declares `/var`, `/home`, `/root`, and `/tmp`; the ssh profile
+adds `/etc/ssh`. `/run` is a separate tmpfs. Writes elsewhere—especially
+under `/usr` and `/etc`—fail with `EROFS`. This is intentional: content
+installed at runtime cannot be covered by the launch measurement.
 
-You might think: "Just mount a tmpfs at `/var/log` and another at `/tmp` and another at `/run`..."
-
-But that doesn't scale. Cloud-init needs to write to `/etc/`. Package managers write to `/usr/`. Random programs write to random places. You'd need a tmpfs mount for every possible writable path, and you'd miss some.
+The examples below use a conceptual whole-root overlay because it makes
+copy-up and shadowing easy to see. Confidential OS Builder does **not** use
+that layout; it applies the same overlayfs mechanics only to declared state
+directories.
 
 ### What overlayfs actually does
 
@@ -286,11 +296,13 @@ Overlayfs merges two directories into one view:
         log/
 ```
 
-At boot, the upper layer is **empty**. Every file the OS reads comes from the lower layer (dm-verity verified). The system looks and behaves exactly like the image we built.
+In this conceptual layout, the upper layer starts **empty**. Every initial
+read therefore comes from the dm-verity-verified lower layer.
 
 ### What happens on a write (new file)
 
-Say cloud-init runs and writes a new `/etc/myapp.conf`:
+Suppose the conceptual whole-root overlay lets cloud-init write a new
+`/etc/myapp.conf`:
 
 ```
 Write: /sysroot/etc/myapp.conf -> "some config"
@@ -362,7 +374,16 @@ Now `ls /sysroot/usr/bin/vim` returns "no such file". But the original is untouc
 
 The lower layer — the dm-verity verified root — is **never modified**. Not by writes, not by deletes, not by anything. Every block that gets read from the real disk is still verified against the hash tree.
 
-If an attacker somehow got code execution in the VM and modified `/usr/bin/bash` — that modification lives in the tmpfs upper layer (RAM). The real `/usr/bin/bash` on disk is still intact and verified. And on reboot, the tmpfs is gone — the upper layer starts empty again, and the system is back to the exact verified state.
+Under a whole-root overlay, an attacker could write `/usr/bin/bash` or
+`/usr/local/bin/attestation-api`. The verified original would remain intact,
+but the merged view would serve the attacker's copy and systemd could execute
+it after a restart. The launch measurement would still match because the
+lower filesystem had not changed.
+
+This is why Confidential OS Builder does not overlay the whole root. `/usr`
+and most of `/etc` remain on the read-only verity mount, so an ordinary
+write fails with `EROFS`. This does not sandbox a fully privileged root
+process; see [THREAT_MODEL.md](THREAT_MODEL.md) for the remaining boundary.
 
 ```
 Reboot cycle:
@@ -374,9 +395,16 @@ Boot 2:  upper = empty    -> everything from boot 1 is gone
          (fresh start from verified lower)
 ```
 
-The tradeoff: **nothing persists across reboots**. Logs, config changes, installed packages — all gone. That's by design for a confidential VM where you want a known-good state every boot. If you need persistence, you'd attach a separate data disk that isn't part of the verified root.
+All data in the writable state overlays is **ephemeral**. Logs, temporary
+files, and runtime state disappear after shutdown. Persistent workloads need
+a separate data disk with their own confidentiality and integrity protection.
 
-The upper layer doesn't have to be RAM, though. `confos run --scratch 20G` attaches a disk that the initrd detects (by its virtio-blk serial number `confai-scratch`), encrypts with a random per-boot key that never leaves RAM, formats as ext4, and uses as the overlay's upper layer instead of tmpfs. Same ephemerality — the key is gone at shutdown, so the data is unrecoverable — but with disk-sized capacity. See [DEPLOYING.md](DEPLOYING.md#storage).
+The overlays need not consume guest RAM. `confos run --scratch 20G`
+attaches a disk identified by the virtio-block serial `confai-scratch`.
+The initrd encrypts and reformats it with a fresh in-memory key on every
+boot, then uses it to back all state-overlay upper layers. The capacity is
+disk-sized, but the state remains ephemeral because the key disappears at
+shutdown. See [DEPLOYING.md](DEPLOYING.md#storage).
 
 ---
 
@@ -461,8 +489,10 @@ The IGVM and the disk image are separate files. QEMU loads the IGVM (which boots
    a. Parse roothash from kernel cmdline (no module loading — everything is compiled in)
    b. Wait for /dev/vda2 to appear
    c. veritysetup open /dev/vda2 root /dev/vda3 <roothash>
-   d. Mount /dev/mapper/root read-only -> /sysroot-lower
-   e. Mount tmpfs overlay -> /sysroot (writes go to RAM)
+   d. Mount /dev/mapper/root read-only -> /sysroot
+   e. Mount writable overlays on the state.d directories
+      (/var /home /root /tmp, plus /etc/ssh with the ssh profile)
+      and mount tmpfs on /run
    f. Switch root to /sysroot
       |
 6. systemd starts from the verified root
