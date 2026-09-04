@@ -44,19 +44,60 @@ jobs:
           git config user.name "pin-watch"
           git config user.email "actions@github.com"
 
-      # Open (or refresh) a PR carrying whatever the caller changed. Skip an
-      # unchanged open PR, but recover a same-tree orphan branch by opening
-      # its missing PR. A lease prevents overwriting an unexpected writer.
+      # Open a candidate-keyed PR carrying only the paths the caller allows.
+      # Existing review branches are immutable; a same-tree orphan branch can
+      # still recover by opening its missing PR.
       - name: Define open_pr helper
         run: |
           cat > /tmp/open_pr <<'SH'
-          open_pr() { # <branch> <title> <body>
-            local branch="$1" title="$2" body="$3"
-            local open_pr_number remote_oid remote_ref remote_status
+          open_pr() { # <branch> <PR-family prefix> <title> <body> <allowed path>...
+            if (( $# < 5 )); then
+              echo "pin-watch: open_pr requires at least one allowed path" >&2
+              return 2
+            fi
+            local branch="$1" family="$2" title="$3" body="$4"
+            shift 4
+            local -a paths=("$@")
+            local changes line path allowed open_pr_number remote_oid remote_ref remote_status
 
+            changes=$(git status --short --untracked-files=all)
+            [ -n "$changes" ] || {
+              echo "pin-watch: no generated changes for $branch" >&2
+              return 1
+            }
+            while IFS= read -r line; do
+              allowed=false
+              for path in "${paths[@]}"; do
+                if [ "$line" = " M $path" ]; then
+                  allowed=true
+                  break
+                fi
+              done
+              if [ "$allowed" != true ]; then
+                echo "pin-watch: refusing unexpected worktree entry: $line" >&2
+                return 1
+              fi
+            done <<<"$changes"
+
+            open_pr_number=$(
+              gh pr list --state open --limit 100 \
+                --json headRefName,isCrossRepository,number |
+                jq -r --arg prefix "$family" \
+                  '[.[] | select(.isCrossRepository == false and (.headRefName | startswith($prefix)))][0].number // empty'
+            )
+            if [ -n "$open_pr_number" ]; then
+              git restore --worktree -- "${paths[@]}"
+              echo "pin-watch: PR #$open_pr_number is already open; leaving $branch untouched"
+              return 0
+            fi
+
+            git add -- "${paths[@]}"
+            [ -z "$(git diff --name-only)" ] || {
+              echo "pin-watch: an allowed path still has unstaged changes" >&2
+              return 1
+            }
             git checkout -b "$branch"
-            git commit -am "$title"
-            open_pr_number=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')
+            git commit -m "$title"
 
             remote_oid=
             if remote_ref=$(git ls-remote --exit-code --heads origin "refs/heads/$branch"); then
@@ -67,23 +108,25 @@ jobs:
               [ "$remote_status" -eq 2 ] || return "$remote_status"
             fi
 
-            if [ -n "$remote_oid" ] &&
-              [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse "$remote_oid^{tree}")" ]; then
-              git checkout -
-              if [ -n "$open_pr_number" ]; then
-                echo "pin-watch: $branch already has the proposed tree in PR #$open_pr_number"
-                return 0
+            if [ -n "$remote_oid" ]; then
+              if [ "$(git rev-parse 'HEAD^{tree}')" != "$(git rev-parse "$remote_oid^{tree}")" ]; then
+                echo "pin-watch: $branch contains a different tree; refusing to overwrite it" >&2
+                return 1
               fi
             else
-              if [ -n "$remote_oid" ]; then
-                git push --force-with-lease="refs/heads/$branch:$remote_oid" origin "HEAD:refs/heads/$branch"
-              else
-                git push origin "HEAD:refs/heads/$branch"
-              fi
-              git checkout -
+              git push origin "HEAD:refs/heads/$branch"
             fi
+            git checkout -
 
-            if [ -z "$open_pr_number" ]; then
+            open_pr_number=$(
+              gh pr list --state open --limit 100 \
+                --json headRefName,isCrossRepository,number |
+                jq -r --arg prefix "$family" \
+                  '[.[] | select(.isCrossRepository == false and (.headRefName | startswith($prefix)))][0].number // empty'
+            )
+            if [ -n "$open_pr_number" ]; then
+              echo "pin-watch: PR #$open_pr_number was opened concurrently"
+            else
               gh pr create --head "$branch" --title "$title" --body "$body"
             fi
           }
@@ -107,10 +150,15 @@ jobs:
           [ "$age" -gt 35 ] || exit 0
           new=$(date -u -d '1 day ago' +%Y%m%dT000000Z)
           sed -i "s/${cur}/${new}/" mkosi/*/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources
-          moved=$(git diff --name-only | paste -sd' ' -)
-          open_pr "pin-watch/snapshot" \
+          mapfile -t moved < <(git diff --name-only -- \
+            'mkosi/*/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources')
+          (( ${#moved[@]} > 0 ))
+          moved_summary=$(printf '%s ' "${moved[@]}")
+          open_pr "pin-watch/snapshot-${new}" \
+            "pin-watch/snapshot" \
             "mkosi: bump the apt snapshot pin to ${new} — ${age} days of security updates" \
-            "Automated pin-watch bump ${cur} -> ${new} in: ${moved} (the host-deps closure follows the base pin; sources deliberately skewed behind base keep their own timestamps). Rolls measurements — package versions move to the new snapshot; if the kernel-config drift gate trips, regenerate the snapshot lockfile here. Merge deliberately, ideally batched with other pending rolls."
+            "Automated pin-watch bump ${cur} -> ${new} in: ${moved_summary% } (the host-deps closure follows the base pin; sources deliberately skewed behind base keep their own timestamps). Rolls measurements — package versions move to the new snapshot; if the kernel-config drift gate trips, regenerate the snapshot lockfile here. Merge deliberately, ideally batched with other pending rolls." \
+            "${moved[@]}"
       - name: Kernel — patch drift or EOL
         # Patch drift on the pinned branch -> bump PR with the digest taken
         # from a signature-verified kernel.org sha256sums.asc (an independent
@@ -126,26 +174,10 @@ jobs:
           set -euo pipefail
           source /tmp/open_pr
           . kernel/version
-          kernel_version_re='^[1-9][0-9]*\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$'
-          if [[ ! $LINUX_VERSION =~ $kernel_version_re ]]; then
-            echo "::error::invalid pinned kernel version: ${LINUX_VERSION}; expected MAJOR.MINOR[.PATCH]" >&2
-            exit 1
-          fi
-          branch="${LINUX_VERSION%.*}"
-          # A series' first release is two-part (6.17, no .0): it IS its
-          # own branch; stripping past the last dot would yield "6" and
-          # match every 6.x series below.
-          case "$branch" in *.*) ;; *) branch="$LINUX_VERSION";; esac
-          latest=$(curl -fsSL --retry 5 --retry-delay 5 https://www.kernel.org/releases.json |
-            jq -r --arg b "$branch." '[.releases[] | select(.moniker == "stable" or .moniker == "longterm") | .version | select(. + "." | startswith($b))] | first // empty')
-          if [ -z "$latest" ]; then
-            echo "::error::kernel branch ${branch} is EOL on kernel.org — no more backports reach the ${LINUX_VERSION} pin; move to a maintained branch (measurement roll)" >&2
-            exit 1
-          fi
-          if [[ ! $latest =~ $kernel_version_re ]]; then
-            echo "::error::kernel.org returned an invalid stable version: ${latest}; expected MAJOR.MINOR[.PATCH]" >&2
-            exit 1
-          fi
+          releases="$RUNNER_TEMP/kernel-releases.json"
+          curl -fsSL --retry 5 --retry-delay 5 \
+            --output "$releases" https://www.kernel.org/releases.json
+          latest=$(bash .github/scripts/kernel-release "$releases" "$LINUX_VERSION")
           dpkg --compare-versions "$latest" eq "$LINUX_VERSION" && exit 0
           if ! dpkg --compare-versions "$latest" gt "$LINUX_VERSION"; then
             echo "::error::refusing non-forward kernel update ${LINUX_VERSION} -> ${latest}" >&2
@@ -158,6 +190,8 @@ jobs:
             "https://cdn.kernel.org/pub/linux/kernel/v${major}.x/sha256sums.asc"
           sha=$(bash .github/scripts/kernel-checksum "$manifest" "$latest")
           printf 'LINUX_VERSION=%s\nLINUX_TARBALL_SHA256=%s\n' "$latest" "$sha" > kernel/version
-          open_pr "pin-watch/kernel" \
+          open_pr "pin-watch/kernel-${latest}" \
+            "pin-watch/kernel" \
             "kernel: bump to ${latest} — stable backports on the pinned branch" \
-            "Automated pin-watch bump ${LINUX_VERSION} -> ${latest}; the tarball digest comes from a signature-verified kernel.org checksum manifest using the repository-pinned checksum-autosigner key, not from hashing a download. That signature authenticates kernel.org mirror checksum metadata; it is not a developer tarball signature. Rolls measurements; if CI's kernel-config drift gate trips, regenerate the snapshot lockfile in this PR before merging."
+            "Automated pin-watch bump ${LINUX_VERSION} -> ${latest}; the tarball digest comes from a signature-verified kernel.org checksum manifest using the repository-pinned checksum-autosigner key, not from hashing a download. That signature authenticates kernel.org mirror checksum metadata; it is not a developer tarball signature. Rolls measurements; if CI's kernel-config drift gate trips, regenerate the snapshot lockfile in this PR before merging." \
+            kernel/version
