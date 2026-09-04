@@ -63,7 +63,8 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
    from the dm-verity root whose hash is in its compiled-in IPE policy, and
    that policy cannot be changed or switched off from inside the guest.
    Every executable that ever runs is therefore covered by guarantee 2.
-   Holds only for kernels built with IPE, which the measurement shows.
+   Opt-in: holds only for images built with `kernel/ipe.config`, which the
+   measurement and the manifest's `kernel.ipe` show.
 
 ## Explicitly not protected
 
@@ -119,8 +120,8 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   configuration paths on the verity root removes that ordinary-write path,
   which is especially important for the attestation-api that composes
   evidence at runtime.
-- **The kernel executes only the measured root** — the Integrity Policy
-  Enforcement LSM carries a compiled-in policy (`kernel/ipe-boot-policy`
+- **The kernel executes only the measured root (with `kernel/ipe.config`)**
+  — the Integrity Policy Enforcement LSM carries a compiled-in policy (`kernel/ipe-boot-policy`
   plus the image's root hash, which `confos build` seals in by relinking
   the kernel after the root is built). `DEFAULT action=DENY`; `EXECUTE` is
   allowed from the initramfs and from that one dm-verity volume, `KMODULE`
@@ -157,17 +158,21 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   executable mapping with no file behind it matches no rule and is denied,
   so JITs and libffi closure trampolines fail with `EACCES` rather than run
   unmeasured. Workloads that need them (JIT-enabled runtimes such as Node,
-  Java, or .NET) belong on an IPE-off kernel. Run workloads as non-root or in containers without
+  Java, or .NET) stay on the default kernel. Run workloads as non-root or in containers without
   `CAP_SYS_ADMIN`, deny them the TEE device nodes (`DeviceAllow=`
   allowlists, as the attest units do), and remember the attestation report
   itself is signed by the CPU — a compromised workload can request quotes
   with its own `REPORT_DATA` but can neither forge the launch state nor
   rewind an RTMR extend.
-- **IPE is off for images that run code fetched at runtime** — a container
-  host cannot execute only from its root, so the c8s node image's kernel
-  fragment retracts `CONFIG_SECURITY_IPE`. That is a different kernel and a
-  different measurement, and the initrd then keeps `CAP_MAC_ADMIN` (privileged
-  pods request it). Verifiers that need guarantee 5 pin the IPE kernel.
+- **IPE is opt-in** — the default kernel has no IPE, because our main
+  consumers cannot use it: a container host runs code from its scratch disk,
+  and JIT runtimes need anonymous executable memory. Those images rely on
+  the immutable root plus what the workload layer enforces (admission
+  policy, a mandatory access control profile, user namespaces). An image
+  that bakes its workload passes `kernel/ipe.config` and gets guarantee 5;
+  that is a different kernel and a different measurement, and the initrd
+  drops `CAP_MAC_ADMIN` only on that kernel. Verifiers that need guarantee 5
+  pin the IPE kernel or check `kernel.ipe` in the manifest.
 - **`--profile dev` changes the measurement** — this is the feature. A dev
   image can never silently pass verification as a production image.
 

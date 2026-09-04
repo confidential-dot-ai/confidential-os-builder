@@ -9,31 +9,32 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Added
-- **Changes measurements. Breaking for images that execute code from
-  writable state.** The kernel now enforces an Integrity Policy Enforcement
-  (IPE) policy: it executes, maps executable, and loads modules and
-  firmware only from the initramfs and from the dm-verity root of the
-  image it was built for. `confos build` runs mkosi twice — once to learn
-  the root hash, then again with the cached kernel relinked around a policy
-  that pins it (`kernel/ipe-boot-policy` plus the hash). The root partition
-  no longer contains the kernel, so both passes hash the same root and the
-  build fails if they do not. The initrd drops `CAP_MAC_ADMIN` before
-  `switch_root`, which is the capability every IPE control needs, so no
-  process in the guest can switch enforcement off or activate another
-  policy. This closes the residual from the immutable-root change: root
-  with mount control could still shadow a measured binary; now the kernel
+- **Changes measurements.** Opt-in Integrity Policy Enforcement (IPE) via
+  `--kernel-config-fragment kernel/ipe.config`: the kernel executes, maps
+  executable, and loads modules and firmware only from the initramfs and
+  from the dm-verity root of the image it was built for. `confos build`
+  then runs mkosi twice — once to learn the root hash, then again with the
+  cached kernel relinked around a policy that pins it
+  (`kernel/ipe-boot-policy` plus the hash) — and fails if the two passes
+  disagree. The initrd drops `CAP_MAC_ADMIN` before `switch_root` on an IPE
+  kernel, which is the capability every IPE control needs, so no process in
+  the guest can switch enforcement off. This closes the residual from the
+  immutable-root change for images that bake their workload: root with
+  mount control could still shadow a measured binary; the kernel now
   refuses to run the shadow.
 
-  cloud-init `runcmd` no longer works (it executes a script it writes
-  under `/var`); `bootcmd` does. Anonymous executable memory is denied too,
-  so JIT runtimes need an IPE-off kernel. Container hosts must turn IPE off in their
-  kernel fragment (`# CONFIG_SECURITY_IPE is not set`) — the c8s node
-  image needs this before bumping — which builds in one pass and changes
-  the measurement. The manifest records the sealed kernel as
-  `kernel.vmlinuz_sha256`, the cache artifact as `base_vmlinuz_sha256`,
-  whether IPE is built in as `kernel.ipe`, and the committed policy as
-  `ipe_boot_policy_sha256`; the sealed policy text lands in
-  `output/<name>/ipe-boot-policy`.
+  The default kernel has no IPE, and container hosts and JIT runtimes must
+  not opt in: anything written at runtime and any anonymous executable
+  memory is denied. Under IPE, cloud-init `runcmd` does not work (it
+  executes a script it writes under `/var`); `bootcmd` does.
+
+  Measurements change for every image because the root partition no longer
+  contains the kernel (so the root hash cannot depend on the kernel that
+  would seal it) and the initrd probes for IPE. The manifest records the
+  kernel in the UKI as `kernel.vmlinuz_sha256`, the cache artifact as
+  `base_vmlinuz_sha256`, whether IPE is built in as `kernel.ipe`, and the
+  committed policy as `ipe_boot_policy_sha256`; with IPE the sealed policy
+  text lands in `output/<name>/ipe-boot-policy`.
 
 ### Changed
 - **Changes measurements (once).** mkosi is bumped v26 → v27 (#116):

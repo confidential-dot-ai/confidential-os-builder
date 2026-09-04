@@ -38,6 +38,8 @@ pub struct KernelInputs {
     /// Optional kernel config fragment, merged after required + hardening.
     /// Omitted: confos builds only its hardened required + hardening baseline.
     /// Lets a project enable extra kernel symbols without modifying confos.
+    /// `kernel/ipe.config` turns on the IPE execution policy for images
+    /// that bake their workload into the root (docs/THREAT_MODEL.md).
     #[arg(long, value_name = "PATH")]
     pub kernel_config_fragment: Option<PathBuf>,
 
@@ -110,10 +112,11 @@ pub struct BuildArgs {
     pub name: PathBuf,
 
     /// Path to cloud-init user-data file to optionally include in the image.
-    /// Baked into the measured root as the only datasource. The kernel's IPE
-    /// policy refuses to execute files outside the verity root, so `runcmd`
-    /// (which writes a script under /var and executes it) does not work;
-    /// use `bootcmd`, or bake units and scripts with `--extra`.
+    /// Baked into the measured root as the only datasource. With
+    /// `kernel/ipe.config`, the kernel refuses to execute files outside the
+    /// verity root, so `runcmd` (which writes a script under /var and
+    /// executes it) does not work; use `bootcmd`, or bake units and scripts
+    /// with `--extra`.
     #[arg(short, long)]
     pub cloud_init: Option<PathBuf>,
 

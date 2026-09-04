@@ -20,7 +20,8 @@ bin/confos build
    ├─ 2. initrd + DSDT mkosi/initrd/ + iasl early-cpio prepend
    ├─ 3. image         mkosi/base/ via mkosi (reproducible rootfs
    │                   + erofs + verity + ukify)       → roothash
-   ├─ 3b. seal         src/kernel/ipe.rs: roothash → IPE policy → relink kernel
+   ├─ 3b. seal         (kernel/ipe.config only) src/kernel/ipe.rs:
+   │                   roothash → IPE policy → relink kernel
    ├─ 3c. image again  same mkosi run with the sealed kernel
    │                   (roothash must not move)       → disk.raw, uki.efi
    ├─ 4. SNP measure   src/igvm/ → crates/igvm-tools   → guest-smp<N>.igvm + digests

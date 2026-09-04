@@ -12,6 +12,9 @@
 # Env vars:
 #   CONFOS_FIRMWARE   - path to OVMF.fd (required for IGVM + boot tests)
 #   CONFOS_IGVM_TOOLS - path to igvm-tools binary (required for IGVM test)
+#   CONFOS_E2E_IPE=1  - build with kernel/ipe.config and assert the IPE probes
+#                       (denied exec outside the root, locked enforcement);
+#                       without it the probes must report IPE absent
 
 set -euo pipefail
 
@@ -68,8 +71,12 @@ CI_FILE=$(mktemp --suffix=.yaml)
 
 # Everything runs from bootcmd: cloud-init feeds it to /bin/sh as a file, so
 # the interpreter (on the verity root) is what executes. runcmd would write a
-# script and exec it from /var, which IPE denies — that denial is one of the
-# probes below, and the reason user-data must not rely on runcmd.
+# script and exec it from /var, which an IPE kernel denies — that denial is
+# one of the probes below, and the reason user-data must not rely on runcmd.
+IPE_FLAGS=""
+if [ "${CONFOS_E2E_IPE:-0}" = 1 ]; then
+    IPE_FLAGS="--kernel-config-fragment kernel/ipe.config"
+fi
 cat > "$CI_FILE" <<USERDATA
 #cloud-config
 bootcmd:
@@ -82,15 +89,20 @@ bootcmd:
     findmnt -T /etc -no TARGET,FSTYPE; findmnt -T /var -no TARGET,FSTYPE
     [ "\$(findmnt -T /etc -no FSTYPE)" = erofs ] && [ "\$(findmnt -T /var -no FSTYPE)" = overlay ] \
         && echo CONFOS_E2E_ROOT_IMMUTABLE || echo CONFOS_E2E_ROOT_MUTABLE
-    # IPE: a binary copied to writable state and a script written to /run
-    # must not execute; enforcement must be locked (CAP_MAC_ADMIN dropped).
-    mountpoint -q /sys/kernel/security || mount -t securityfs securityfs /sys/kernel/security
-    cp /usr/bin/true /var/tmp/confos-e2e-true && chmod 0755 /var/tmp/confos-e2e-true
-    /var/tmp/confos-e2e-true && echo CONFOS_E2E_IPE_BINARY_RAN || echo CONFOS_E2E_IPE_BINARY_DENIED
-    printf '#!/bin/sh\ntrue\n' > /run/confos-e2e.sh && chmod 0755 /run/confos-e2e.sh
-    /run/confos-e2e.sh && echo CONFOS_E2E_IPE_SCRIPT_RAN || echo CONFOS_E2E_IPE_SCRIPT_DENIED
-    echo 0 > /sys/kernel/security/ipe/enforce && echo CONFOS_E2E_IPE_UNLOCKED || echo CONFOS_E2E_IPE_LOCKED
-    echo "CONFOS_E2E_IPE enforce=\$(cat /sys/kernel/security/ipe/enforce) active=\$(cat /sys/kernel/security/ipe/policies/confos/active)"
+    # IPE (only with kernel/ipe.config): a binary copied to writable state
+    # and a script written to /run must not execute; enforcement must be
+    # locked (CAP_MAC_ADMIN dropped). Without IPE, say so.
+    mountpoint -q /sys/kernel/security || mount -t securityfs securityfs /sys/kernel/security 2>/dev/null || true
+    if [ -d /sys/kernel/security/ipe ]; then
+        cp /usr/bin/true /var/tmp/confos-e2e-true && chmod 0755 /var/tmp/confos-e2e-true
+        /var/tmp/confos-e2e-true && echo CONFOS_E2E_IPE_BINARY_RAN || echo CONFOS_E2E_IPE_BINARY_DENIED
+        printf '#!/bin/sh\ntrue\n' > /run/confos-e2e.sh && chmod 0755 /run/confos-e2e.sh
+        /run/confos-e2e.sh && echo CONFOS_E2E_IPE_SCRIPT_RAN || echo CONFOS_E2E_IPE_SCRIPT_DENIED
+        echo 0 > /sys/kernel/security/ipe/enforce && echo CONFOS_E2E_IPE_UNLOCKED || echo CONFOS_E2E_IPE_LOCKED
+        echo "CONFOS_E2E_IPE enforce=\$(cat /sys/kernel/security/ipe/enforce) active=\$(cat /sys/kernel/security/ipe/policies/confos/active)"
+    else
+        echo CONFOS_E2E_IPE_ABSENT
+    fi
     python3 -c "
     from http.server import HTTPServer, BaseHTTPRequestHandler
     class H(BaseHTTPRequestHandler):
@@ -108,7 +120,8 @@ OUT="$REPO_DIR/output/e2e-test"
 rm -rf "$OUT"
 
 echo -e "\n${BOLD}Test 1: Build (boot-time cloud-init, --skip-igvm)${NC}"
-$CONFOS build --skip-igvm --cloud-init "$CI_FILE" "$(basename "$OUT")" 2>&1 | tail -20
+# shellcheck disable=SC2086
+$CONFOS build --skip-igvm $IPE_FLAGS --cloud-init "$CI_FILE" "$(basename "$OUT")" 2>&1 | tail -20
 
 # ── Test 2: Artifact checks ──────────────────────────────────────────────────
 echo -e "\n${BOLD}Test 2: Artifact checks${NC}"
@@ -126,6 +139,8 @@ ok = True
 if m['version'] != 1: print('bad version'); ok = False
 if m['build']['platform'] != 'generic': print('bad platform'); ok = False
 if 'measurement' in m and m['measurement'] is not None: print('unexpected measurement'); ok = False
+want_ipe = '${CONFOS_E2E_IPE:-0}' == '1'
+if m['inputs']['kernel']['ipe'] != want_ipe: print(f'kernel.ipe should be {want_ipe}'); ok = False
 for section in ['inputs', 'outputs']:
     for key, entry in m[section].items():
         if entry is None or key == 'kernel': continue
@@ -288,11 +303,17 @@ else
     }
     probe CONFOS_E2E_ROOT_IMMUTABLE CONFOS_E2E_ROOT_MUTABLE \
         "immutable root layout (/etc erofs, /var overlay)"
-    probe CONFOS_E2E_IPE_BINARY_DENIED CONFOS_E2E_IPE_BINARY_RAN \
-        "IPE denies executing a binary outside the verity root"
-    probe CONFOS_E2E_IPE_SCRIPT_DENIED CONFOS_E2E_IPE_SCRIPT_RAN \
-        "IPE denies executing a script outside the verity root"
-    if grep -q "CONFOS_E2E_IPE_LOCKED" "$SERIAL_LOG" 2>/dev/null \
+    if [ "${CONFOS_E2E_IPE:-0}" = 1 ]; then
+        probe CONFOS_E2E_IPE_BINARY_DENIED CONFOS_E2E_IPE_BINARY_RAN \
+            "IPE denies executing a binary outside the verity root"
+        probe CONFOS_E2E_IPE_SCRIPT_DENIED CONFOS_E2E_IPE_SCRIPT_RAN \
+            "IPE denies executing a script outside the verity root"
+    else
+        probe CONFOS_E2E_IPE_ABSENT CONFOS_E2E_IPE_BINARY_ "IPE absent on the default kernel"
+    fi
+    if [ "${CONFOS_E2E_IPE:-0}" != 1 ]; then
+        :
+    elif grep -q "CONFOS_E2E_IPE_LOCKED" "$SERIAL_LOG" 2>/dev/null \
         && grep -q "CONFOS_E2E_IPE enforce=1 active=1" "$SERIAL_LOG" 2>/dev/null; then
         pass "e2e: IPE enforcing the confos policy and root cannot switch it off"
     else

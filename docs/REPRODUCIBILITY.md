@@ -91,8 +91,8 @@ artifact bytes the way a package-set change would.
 
 ### Sealing the kernel
 
-The kernel's IPE policy names the root hash, so `confos build` runs mkosi
-twice: once with the cached kernel to learn the hash, then again with the
+With `kernel/ipe.config`, the kernel's IPE policy names the root hash, so
+`confos build` runs mkosi twice: once with the cached kernel to learn the hash, then again with the
 kernel relinked around a policy that pins it. Two things keep that
 reproducible. The root partition excludes the kernel
 (`ExcludeFiles=` in `mkosi.repart/10-root.conf`), so the hash cannot

@@ -189,7 +189,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     fs_err::copy(&kernel.vmlinuz_path, &staged_vmlinuz)?;
     let ipe_enabled = kernel.manifest.outputs.ipe;
     if !ipe_enabled {
-        println!("kernel built without IPE: the image will run code from any filesystem");
+        println!(
+            "kernel has no IPE (opt in with --kernel-config-fragment {}): the image \
+             will run code from any filesystem",
+            ipe::FRAGMENT
+        );
     }
 
     // Step 2: Build the verity initrd via mkosi (declarative)

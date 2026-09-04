@@ -1,5 +1,7 @@
 //! Integrity Policy Enforcement: the kernel executes code only from the
 //! initramfs and from the dm-verity root whose hash its policy names.
+//! Opt-in: images that bake their workload pass `kernel/ipe.config` as the
+//! kernel fragment (or merge it into theirs); the default kernel has no IPE.
 //!
 //! The policy is compiled into the kernel (`CONFIG_IPE_BOOT_POLICY`), and the
 //! root hash is only known once the root partition exists, so `confos build`
@@ -15,10 +17,12 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::kernel::config;
 
-/// Committed policy every kernel is built with; sealing appends to it.
+/// The fragment that turns IPE on. Points `CONFIG_IPE_BOOT_POLICY` at
+/// `STAGED_BOOT_POLICY`, so it is part of the interface.
+pub const FRAGMENT: &str = "kernel/ipe.config";
+/// Committed policy staged into every kernel tree; sealing appends to it.
 pub const BOOT_POLICY: &str = "kernel/ipe-boot-policy";
-/// Where the policy is staged in the kernel tree. `kernel/hardening.config`
-/// points `CONFIG_IPE_BOOT_POLICY` here, so it is part of the interface.
+/// Where the policy is staged in the kernel tree (see `FRAGMENT`).
 pub const STAGED_BOOT_POLICY: &str = "security/ipe/confos-boot-policy";
 /// The repart definition that keeps the kernel out of the root partition.
 pub const ROOT_REPART: &str = "mkosi/base/mkosi.repart/10-root.conf";
@@ -137,10 +141,15 @@ mod tests {
     }
 
     #[test]
-    fn hardening_config_stages_the_policy_where_confos_writes_it() {
-        let config = fs_err::read_to_string(repo("kernel/hardening.config")).unwrap();
+    fn fragment_stages_the_policy_where_confos_writes_it() {
+        let config = fs_err::read_to_string(repo(FRAGMENT)).unwrap();
         assert!(config.contains(&format!("CONFIG_IPE_BOOT_POLICY=\"{STAGED_BOOT_POLICY}\"")));
         assert!(config.contains("CONFIG_SECURITY_IPE=y"));
+        let hardening = fs_err::read_to_string(repo("kernel/hardening.config")).unwrap();
+        assert!(
+            !hardening.contains("CONFIG_SECURITY_IPE"),
+            "IPE is opt-in; the default fragments must not mention it"
+        );
     }
 
     #[test]
