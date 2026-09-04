@@ -9,6 +9,11 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Changed
+- **Changes measurements.** The guest kernel moves from the EOL 6.16.12 line
+  to the maintained 6.18.49 LTS release. The kernel.org checksum is verified
+  through the repository-pinned autosigner key. The roll also adopts 6.18's
+  `CONFIG_KSTACK_ERASE` control without runtime disablement and pins
+  `hash_pointers=always` on the measured command line.
 - **Changes measurements (once).** mkosi is bumped v26 → v27 (#116):
   `bin/setup` and CI install exactly `mkosi.git@v27`, and `MinimumVersion=27`
   fails stale hosts closed. mkosi's own behavior shapes measured bytes, so
