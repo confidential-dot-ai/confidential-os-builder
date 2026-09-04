@@ -119,6 +119,13 @@ pub fn run_configure_phase(
     verify_builder_invariants(&resolved)
 }
 
+/// Whether a resolved `.config` sets `symbol` to `y`.
+pub fn symbol_enabled(config: &str, symbol: &str) -> bool {
+    config
+        .lines()
+        .any(|line| line.trim().strip_prefix(symbol) == Some("=y"))
+}
+
 /// Assertions confos makes about every resolved `.config`, whatever the
 /// fragments asked for. Unlike `verify_fragment_options` — which checks that
 /// each fragment got what it requested — these hold even when a fragment
@@ -134,7 +141,7 @@ fn verify_builder_invariants(resolved: &Path) -> Result<()> {
     // The default MODULE_SIG_KEY ("certs/signing_key.pem") makes certs/Makefile
     // GENKEY a per-build keypair whose cert lands in the system keyring —
     // nonreproducible regardless of MODULE_SIG_ALL (#85).
-    if config.lines().any(|l| l.trim() == "CONFIG_MODULE_SIG=y")
+    if symbol_enabled(&config, "CONFIG_MODULE_SIG")
         && !config
             .lines()
             .any(|l| l.trim() == "CONFIG_MODULE_SIG_KEY=\"\"")
@@ -145,10 +152,7 @@ fn verify_builder_invariants(resolved: &Path) -> Result<()> {
              into the keyring, so vmlinuz would not be reproducible (#85)."
         );
     }
-    if config
-        .lines()
-        .any(|l| l.trim() == "CONFIG_MODULE_SIG_ALL=y")
-    {
+    if symbol_enabled(&config, "CONFIG_MODULE_SIG_ALL") {
         anyhow::bail!(
             "resolved .config has CONFIG_MODULE_SIG_ALL=y: the kernel build would \
              generate a per-build signing key and vmlinuz would stop being \

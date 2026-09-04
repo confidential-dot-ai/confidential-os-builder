@@ -28,6 +28,9 @@ shape.
     "kernel": {
       "linux_version": "6.16.12",
       "vmlinuz_sha256": "…",
+      "base_vmlinuz_sha256": "…",
+      "ipe": true,
+      "ipe_boot_policy_sha256": "…",
       "required_config_sha256": "…",
       "hardening_config_sha256": "…",
       "kernel_extra_config_sha256": "",
@@ -102,7 +105,10 @@ intermediate files).
 | Field | Meaning |
 |---|---|
 | `kernel.linux_version` | Upstream kernel version compiled (from `kernel/version`) |
-| `kernel.vmlinuz_sha256` | Hash of the compiled kernel binary embedded in the UKI |
+| `kernel.vmlinuz_sha256` | Hash of the kernel binary embedded in the UKI. With IPE on, this is the kernel *after* the image's root hash was sealed into its policy, so it is unique to this image (`output/<name>/vmlinuz`) |
+| `kernel.base_vmlinuz_sha256` | Hash of the kernel-cache artifact (`output/kernel/vmlinuz`) the sealed kernel was relinked from; the value shared by every image built from the same kernel inputs. Equals `vmlinuz_sha256` when IPE is off |
+| `kernel.ipe` | Whether the kernel was built with `CONFIG_SECURITY_IPE`, i.e. whether guarantee 5 of the threat model holds for this image |
+| `kernel.ipe_boot_policy_sha256` | Hash of the committed `kernel/ipe-boot-policy` compiled into the kernel; when `ipe` is set, the sealed policy extending it is written to `output/<name>/ipe-boot-policy` |
 | `kernel.required_config_sha256` / `hardening_config_sha256` | Hashes of two of confos's three always-applied config fragments. The third, `confidential.config`, has no field of its own — its effect is pinned transitively via `snapshot_config_sha256` (the fully-resolved config) |
 | `kernel.kernel_extra_config_sha256` | Hash of the caller's `--kernel-config-fragment`; empty string when none was passed |
 | `kernel.snapshot_config_sha256` | Hash of the lineage's fully-resolved `.config` lockfile: `kernel/config-x86_64.snapshot` for the bare baseline, `config-x86_64-<stem>.snapshot` beside the fragment otherwise |

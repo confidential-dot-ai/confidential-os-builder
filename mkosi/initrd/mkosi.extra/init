@@ -282,5 +282,21 @@ else
     echo "initrd: no opkeydata disk — node boots unbound"
 fi
 
-echo "initrd: switching root..."
+# --- IPE: make the exec policy final -----------------------------------------
+# The kernel's compiled-in IPE policy lets only the initramfs and this image's
+# dm-verity root execute (docs/THREAT_MODEL.md). Every securityfs control that
+# could change that — enforce, success_audit, new_policy, policies/*/active —
+# requires CAP_MAC_ADMIN, so drop it from the bounding set before switch_root:
+# PID 1 and everything it spawns inherit the reduced set, and no process in
+# the booted guest can switch enforcement off or activate another policy.
+# Nothing the base image runs needs CAP_MAC_ADMIN. Skipped when the kernel was
+# built without IPE, because privileged containers request every capability.
+mount -t securityfs securityfs /sys/kernel/security 2>/dev/null || true
+if [ -d /sys/kernel/security/ipe ]; then
+    umount /sys/kernel/security
+    echo "initrd: IPE active — dropping CAP_MAC_ADMIN, switching root..."
+    exec setpriv --bounding-set -mac_admin switch_root /sysroot /sbin/init
+fi
+umount /sys/kernel/security 2>/dev/null || true
+echo "initrd: kernel has no IPE — exec policy not enforced; switching root..."
 exec switch_root /sysroot /sbin/init

@@ -91,7 +91,7 @@ confos build [OPTIONS] [NAME]
 | Arg / flag | Default | Purpose |
 |---|---|---|
 | `NAME` | `base` | Subdirectory under `output/` for build artifacts. |
-| `-c, --cloud-init <PATH>` | (none) | Standard NoCloud `#cloud-config` user-data, baked into the measured root at `/var/lib/cloud/seed/nocloud/user-data`. That seed is the only datasource: an attached `cidata` disk is ignored, so no unmeasured user-data reaches the guest. At runtime it can write under `/var`, `/home`, `/root`, and `/tmp`, but the immutable root prevents writes to undeclared paths under `/etc` and `/usr`. Bake packages and configuration with `--package` and `--extra` instead (see the [tutorial](docs/TUTORIAL.md)). |
+| `-c, --cloud-init <PATH>` | (none) | Standard NoCloud `#cloud-config` user-data, baked into the measured root at `/var/lib/cloud/seed/nocloud/user-data`. That seed is the only datasource: an attached `cidata` disk is ignored, so no unmeasured user-data reaches the guest. At runtime it can write under `/var`, `/home`, `/root`, and `/tmp`, but the immutable root prevents writes to undeclared paths under `/etc` and `/usr`. With `kernel/ipe.config` the kernel also refuses to execute anything outside the verity root, so `runcmd` (a script written under `/var` and executed) does not work there; `bootcmd` does, because cloud-init hands it to `/bin/sh`. Bake packages, configuration, units, and scripts with `--package` and `--extra` instead (see the [tutorial](docs/TUTORIAL.md)). |
 | `-e, --extra <DIR>` | (none) | Directory whose contents are recursively copied **on top of** mkosi's base image filesystem. File modes and symlinks are preserved. Use this to bake binaries, systemd units, configuration files, etc. into the verity root. Measured. |
 | `-p, --package <PKG>` | (none) | Extra apt package to install in the base image. Repeatable, also accepts comma-separated lists (`-p curl,jq,iproute2` or `-p curl -p jq`). Passed through to mkosi as `--package=`. |
 | `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after confos's three always-applied fragments (`required.config` + `hardening.config` + `confidential.config`). Omitted → confos's hardened baseline kernel. Lets a project enable extra kernel symbols without modifying confos. The build rewrites its lineage's snapshot, `config-x86_64-<fragment stem>.snapshot` beside the fragment, in the caller's own tree (see [Snapshots](#snapshots)). |
@@ -261,7 +261,8 @@ Confidential OS Builder ships a hardened guest kernel built from `kernel/version
 | `kernel/required.config` | Filesystems, dm-verity, SEV-SNP guest support, devtmpfs | Always |
 | `kernel/hardening.config` | Lockdown LSM, KASLR, stack protector, attack-surface trims (USB / PCI hotplug / DRM off, etc.) | Always |
 | `kernel/confidential.config` | Intel TDX guest support, `ACPI_TABLE_UPGRADE` for the trusted-DSDT override | Always, after hardening |
-| `--kernel-config-fragment <PATH>` | Whatever the caller's fragment enables — confos ships none | Only when the flag is passed |
+| `kernel/ipe.config` | IPE execution policy: the kernel runs code only from the initramfs and this image's verity root, whose hash `confos build` seals in. For images that bake their workload; not for container hosts or JIT runtimes | Only when passed as the fragment (or merged into yours) |
+| `--kernel-config-fragment <PATH>` | Whatever the caller's fragment enables — confos ships only `kernel/ipe.config` | Only when the flag is passed |
 
 Confidential OS Builder itself builds only `required + hardening + confidential` — a minimal hardened confidential-microVM kernel, and **confos carries no project-specific kernel config**. A project that needs extra kernel symbols (a wider networking stack, additional filesystems, cgroup features, …) keeps its own fragment file in its own repo and passes it via `--kernel-config-fragment`. The builder merges it last; nothing else about the build changes.
 
@@ -327,7 +328,8 @@ erofs root filesystem
     |  dm-verity hash tree
     v
 roothash (SHA-256)
-    |  embedded in kernel cmdline
+    |  embedded in kernel cmdline (and, with kernel/ipe.config,
+    |  sealed into the kernel's IPE policy)
     v
 UKI (kernel + initrd + cmdline as one EFI binary)
     |  bundled with OVMF firmware
@@ -340,6 +342,8 @@ SNP launch digest (hardware-signed, unforgeable)
 
 Change one file in `--extra`, one byte of the cloud-init payload, the kernel cmdline, or the kernel binary — and the roothash changes, which changes the UKI, which changes the IGVM measurement. A remote verifier checks the launch digest against a published expected value and can trust the entire stack.
 
+Images that bake their workload can go one step further with `--kernel-config-fragment kernel/ipe.config`: the kernel is then sealed to the root it boots. `confos build` runs mkosi once to learn the roothash, appends it to the committed `kernel/ipe-boot-policy`, relinks the cached kernel with that policy, and runs mkosi again with the sealed kernel (the root partition never contains the kernel, so the roothash is the same both times, and the build fails if it is not). At runtime the Integrity Policy Enforcement LSM refuses to `exec`, `mmap` executable, or load modules and firmware from anything but the initramfs and that one dm-verity volume, and the initrd drops `CAP_MAC_ADMIN` before `switch_root` so no process in the guest can switch enforcement off. Anything written at runtime, and anonymous executable memory, is denied, so container hosts and JIT runtimes stay on the default kernel; the manifest's `kernel.ipe` and the measurement tell the two apart. See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+
 ## Output Artifacts
 
 ```
@@ -347,6 +351,11 @@ output/<name>/
 ├── disk.raw         GPT disk image (ESP + erofs root + verity hash partitions)
 ├── uki.efi          Unified Kernel Image (kernel + initrd + cmdline)
 ├── roothash         SHA-256 hex string of the verity root
+├── vmlinuz          (kernel/ipe.config only) the kernel inside the UKI: the
+│                    cached kernel relinked with this image's roothash sealed
+│                    into its IPE policy
+├── ipe-boot-policy  (kernel/ipe.config only) that sealed policy
+├── kernel-seal.log  (kernel/ipe.config only) build log of the relink
 ├── manifest.json    Build metadata: input hashes, output hashes, smp/memory,
 │                    per-fragment shas, optional SNP measurement
 ├── OVMF.fd          Firmware (copy of the --firmware input; bundled here so the
