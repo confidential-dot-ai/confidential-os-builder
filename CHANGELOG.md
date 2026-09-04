@@ -42,8 +42,7 @@ build configs, since those invalidate published reference values.
   explained where it is hit. cloud-init now reads only the baked seed:
   NoCloud's probe for an attached `cidata` disk is off, closing the one
   path by which a host could hand any image unmeasured user-data
-  (measured runtime user-data is
-  confidential-os-builder-workspace#5). The dev profile now appends to
+  (measured runtime user-data is future work). The dev profile now appends to
   the base kernel command line instead of replacing it.
 
 ### Fixed
