@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+kernel_release_error() {
+  echo "kernel-release: $*" >&2
+}
+
+latest_kernel_release() (
+  set -euo pipefail
+
+  if [ "$#" -ne 2 ]; then
+    kernel_release_error "internal usage: latest_kernel_release RELEASES_JSON PINNED_VERSION"
+    exit 2
+  fi
+
+  local releases=$1 pinned=$2 branch matches count latest iseol_type
+  local version_re='^[1-9][0-9]*\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$'
+
+  [ -f "$releases" ] || {
+    kernel_release_error "release metadata not found: $releases"
+    exit 1
+  }
+  [[ "$pinned" =~ $version_re ]] || {
+    kernel_release_error "invalid pinned kernel version: $pinned"
+    exit 1
+  }
+
+  branch=${pinned%.*}
+  # A series' first release is two-part (for example 6.17, not 6.17.0).
+  # In that case stripping the last component would produce only the major.
+  case "$branch" in
+    *.*) ;;
+    *) branch=$pinned ;;
+  esac
+
+  if ! matches=$(jq -ce --arg prefix "$branch." '
+    if (.releases | type) != "array" then
+      error("releases must be an array")
+    else
+      [
+        .releases[]
+        | select(
+            ((.moniker == "stable") or (.moniker == "longterm"))
+            and (.version | type == "string")
+            and ((.version + ".") | startswith($prefix))
+          )
+      ]
+    end
+  ' "$releases"); then
+    kernel_release_error "invalid kernel.org release metadata"
+    exit 1
+  fi
+
+  count=$(jq -r length <<<"$matches")
+  if [ "$count" -eq 0 ]; then
+    kernel_release_error "kernel branch $branch is EOL or absent from kernel.org"
+    exit 1
+  fi
+  if [ "$count" -ne 1 ]; then
+    kernel_release_error "kernel.org returned $count stable records for branch $branch"
+    exit 1
+  fi
+
+  iseol_type=$(jq -r '.[0] | if has("iseol") then (.iseol | type) else "missing" end' <<<"$matches")
+  if [ "$iseol_type" != boolean ]; then
+    kernel_release_error "kernel.org returned invalid iseol metadata for branch $branch"
+    exit 1
+  fi
+  if jq -e '.[0].iseol' <<<"$matches" >/dev/null; then
+    kernel_release_error "kernel branch $branch is EOL on kernel.org"
+    exit 1
+  fi
+
+  latest=$(jq -er '.[0].version' <<<"$matches")
+  [[ "$latest" =~ $version_re ]] || {
+    kernel_release_error "kernel.org returned an invalid stable version: $latest"
+    exit 1
+  }
+  printf '%s\n' "$latest"
+)
+
+main() {
+  if [ "$#" -ne 2 ]; then
+    echo "usage: kernel-release RELEASES_JSON PINNED_VERSION" >&2
+    return 2
+  fi
+  latest_kernel_release "$1" "$2"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
