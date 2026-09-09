@@ -126,6 +126,7 @@ mount_overlay() {
 }
 
 STATE_DIRS=""
+STATE_INDEX=0
 for conf in /sysroot/usr/lib/confai/state.d/*.conf; do
     [ -e "$conf" ] || fail_state "no /usr/lib/confai/state.d/*.conf in the image"
     # Preserve a final unterminated line and strip CR from CRLF input.
@@ -134,7 +135,9 @@ for conf in /sysroot/usr/lib/confai/state.d/*.conf; do
         case "$dir" in "" | \#*) continue ;; esac
         case " $STATE_DIRS " in *" $dir "*) continue ;; esac
         [ -d "/sysroot/$dir" ] || fail_state "$dir listed in ${conf##*/} but not a directory in the image"
-        mount_overlay "/sysroot/$dir" "${dir//\//-}"
+        # Distinct paths must never share upper/work directories.
+        STATE_INDEX=$((STATE_INDEX + 1))
+        mount_overlay "/sysroot/$dir" "$STATE_INDEX"
         STATE_DIRS="$STATE_DIRS $dir"
     done < "$conf"
 done

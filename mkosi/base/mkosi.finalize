@@ -14,6 +14,15 @@ fi
 # already placed a file, directory, or symlink there instead of hiding it.
 ln -sT ../run/confai "$BUILDROOT/etc/confai"
 
+# A singleton datasource list enables discovery even without a seed.
+# Disable those images at build time. Preserve any profile-owned disable
+# marker when a complete seed exists; empty seed files are valid.
+seed="$BUILDROOT/var/lib/cloud/seed/nocloud"
+if [ ! -f "$seed/user-data" ] || [ ! -f "$seed/meta-data" ]; then
+    mkdir -p "$BUILDROOT/etc/cloud"
+    touch "$BUILDROOT/etc/cloud/cloud-init.disabled"
+fi
+
 # Remove timestamped log content
 rm -f "$BUILDROOT/var/log/dpkg.log"
 rm -f "$BUILDROOT/var/log/alternatives.log"

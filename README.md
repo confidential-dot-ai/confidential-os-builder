@@ -57,6 +57,22 @@ rustfmt (rewriting files in place) and runs clippy over all targets. CI runs bot
 dependency licenses and advisories (`deny.toml`) — if your change touches
 `Cargo.toml`/`Cargo.lock`, run that too before opening a PR.
 
+On Linux, run the cloud-init and writable-state regressions with:
+
+```bash
+bin/host-deps cloud-init
+sudo tests/immutable-root.sh
+```
+
+The suite uses the installed cloud-init package and executes the complete
+finalization and init scripts in a disposable chroot and private mount
+namespace. Hardware setup and `switch_root` use test shims; filesystem
+isolation checks use real OverlayFS mounts. This requires root and mount
+namespace support, and does not replace a full image boot test. CI installs
+cloud-init from the committed snapshot for the runner's Ubuntu release,
+which can differ from the image's release. For image-package coverage, run
+the suite in an environment matching the image's Ubuntu release and snapshot.
+
 ## Scope
 
 Confidential OS Builder builds **confidential VM images for AMD SEV-SNP and Intel TDX** —
@@ -91,7 +107,7 @@ confos build [OPTIONS] [NAME]
 | Arg / flag | Default | Purpose |
 |---|---|---|
 | `NAME` | `base` | Subdirectory under `output/` for build artifacts. |
-| `-c, --cloud-init <PATH>` | (none) | Standard NoCloud `#cloud-config` user-data, baked into the measured root at `/var/lib/cloud/seed/nocloud/user-data`. That seed is the only datasource: an attached `cidata` disk is ignored, so no unmeasured user-data reaches the guest. At runtime it can write under `/var`, `/home`, `/root`, and `/tmp`, but the immutable root prevents writes to undeclared paths under `/etc` and `/usr`. Bake packages and configuration with `--package` and `--extra` instead (see the [tutorial](docs/TUTORIAL.md)). |
+| `-c, --cloud-init <PATH>` | (none) | Standard NoCloud `#cloud-config` user-data, baked into the measured root at `/var/lib/cloud/seed/nocloud/user-data`. Only NoCloud is enabled, its payload source is pinned to this directory, and attached `cidata` disks are ignored. Cloud-init is disabled if either seed file is missing; an existing profile disable marker is preserved. SMBIOS metadata remains host-controlled (see the [threat model](docs/THREAT_MODEL.md#design-decisions-with-security-implications)). At runtime it can write under `/var`, `/home`, `/root`, and `/tmp`, but the immutable root prevents writes to undeclared paths under `/etc` and `/usr`. Bake packages and configuration with `--package` and `--extra` instead (see the [tutorial](docs/TUTORIAL.md)). |
 | `-e, --extra <DIR>` | (none) | Directory whose contents are recursively copied **on top of** mkosi's base image filesystem. File modes and symlinks are preserved. Use this to bake binaries, systemd units, configuration files, etc. into the verity root. Measured. |
 | `-p, --package <PKG>` | (none) | Extra apt package to install in the base image. Repeatable, also accepts comma-separated lists (`-p curl,jq,iproute2` or `-p curl -p jq`). Passed through to mkosi as `--package=`. |
 | `--kernel-config-fragment <PATH>` | (none) | Extra kernel config fragment (kconfig `merge_config.sh` format) merged after confos's three always-applied fragments (`required.config` + `hardening.config` + `confidential.config`). Omitted → confos's hardened baseline kernel. Lets a project enable extra kernel symbols without modifying confos. The build rewrites its lineage's snapshot, `config-x86_64-<fragment stem>.snapshot` beside the fragment, in the caller's own tree (see [Snapshots](#snapshots)). |

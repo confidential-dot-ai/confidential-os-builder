@@ -27,7 +27,9 @@ build configs, since those invalidate published reference values.
   in `/usr/lib/confai/state.d/`: the base declares `/var`, `/home`, `/root`,
   and `/tmp`; the ssh profile adds `/etc/ssh`; external profiles can add
   their own files. `/run` remains a tmpfs. Missing declared directories fail
-  the boot instead of being silently skipped.
+  the boot instead of being silently skipped. Each distinct path receives
+  separate overlay backing, so names such as `opt/a-b` and `opt/a/b` cannot
+  accidentally share writable data.
 
   There is no mutable-root opt-out, including for `--profile dev`. Runtime
   `apt install` and cloud-init writes to undeclared `/etc` paths no longer
@@ -39,10 +41,14 @@ build configs, since those invalidate published reference values.
   Supporting changes adapt cloud-init, hostname handling, DNS, machine-id, and
   operator-key staging to a read-only `/etc`. A login shell prints the
   writable set and points at `state.d`, so "Read-only file system" is
-  explained where it is hit. cloud-init now reads only the baked seed:
-  NoCloud's probe for an attached `cidata` disk is off, closing the one
-  path by which a host could hand any image unmeasured user-data
-  (measured runtime user-data is future work). The dev profile now appends to
+  explained where it is hit. Cloud-init's user-data source is restricted to
+  the baked seed: only NoCloud is enabled, its `seedfrom` is pinned to the
+  local seed directory, and probing for attached `cidata` disks is disabled.
+  Host-supplied SMBIOS URLs and other datasources cannot replace the payload.
+  Missing or incomplete seed files disable cloud-init, while an existing
+  profile disable marker is preserved. NoCloud still parses SMBIOS metadata,
+  including instance ID and datasource mode; those values remain untrusted.
+  Measured runtime user-data is future work. The dev profile now appends to
   the base kernel command line instead of replacing it.
 
 ### Fixed

@@ -122,8 +122,16 @@ The ways to get content into an image:
 - `--script setup.sh` — a post-install script run during the image build,
   with network access.
 - `--cloud-init user-data` — a NoCloud `#cloud-config` baked into the
-  image and run at first boot, for the things that genuinely are runtime
+  image and run at first boot, for runtime tasks
   (writing under `/var`, starting a workload with boot-time parameters).
+
+Cloud-init uses only NoCloud, with `seedfrom` pinned to
+`/var/lib/cloud/seed/nocloud/` and attached `cidata` disk probing disabled.
+If either `user-data` or `meta-data` is missing, finalization disables
+cloud-init. A profile's `/etc/cloud/cloud-init.disabled` marker is preserved
+even when `--cloud-init` supplies a complete seed. The payload source is
+fixed, but SMBIOS metadata such as instance ID and datasource mode remains
+host-controlled; see the [threat model](THREAT_MODEL.md#design-decisions-with-security-implications).
 
 Each option changes the measured image. For cloud-init, the measurement
 covers the baked user-data file—not the changes it makes after boot. The

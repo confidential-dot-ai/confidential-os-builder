@@ -50,9 +50,8 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
 2. **Root filesystem integrity** — every block of the root filesystem the
    guest ever reads matches the dm-verity root hash embedded in the measured
    cmdline. This transitively covers everything baked in at build time:
-   packages, `--extra` files, cloud-init user-data (the baked seed is the
-   only datasource; an attached `cidata` disk is ignored), post-install
-   script effects.
+   packages, `--extra` files, cloud-init user-data (its payload source is
+   pinned to the baked local seed), post-install script effects.
 3. **Runtime memory confidentiality** — guest RAM is encrypted with a key
    the host does not have (hardware guarantee, not confos's).
 4. **Scratch confidentiality** — the optional scratch disk is encrypted with
@@ -106,6 +105,17 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   `/etc/ssh`; `/run` is a fresh tmpfs. No profile enables a mutable root;
   `--profile dev` retains the same immutable layout because content installed
   at runtime cannot be covered by the launch measurement.
+- **Cloud-init payloads come from the baked seed** — `datasource_list`
+  permits only NoCloud, `seedfrom` is fixed to
+  `/var/lib/cloud/seed/nocloud/`, and `fs_label: null` disables attached
+  `cidata` disk probing. Together these prevent SMBIOS URLs or another
+  datasource from replacing the baked user-data. Finalization creates
+  `/etc/cloud/cloud-init.disabled` if either `user-data` or `meta-data` is
+  missing. A profile's existing disable marker remains effective even with
+  a complete seed. NoCloud still parses host-supplied SMBIOS metadata,
+  including `instance-id` and `dsmode`. The payload-source restriction does
+  not authenticate those values; user-data templates and workloads must
+  treat them as untrusted input.
 - **Whole-root shadowing is prevented** — with the former whole-root overlay,
   one root-owned write could replace the merged view of a measured binary,
   configuration file, or unit. Systemd could then execute the replacement
@@ -121,7 +131,9 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   binding. `/etc/resolv.conf` points to systemd-resolved's stub under `/run`.
 - **Writable state is ephemeral** — with no scratch disk, writes go to a RAM
   tmpfs; the scratch disk is re-keyed and reformatted every boot, so nothing
-  survives shutdown either way.
+  survives shutdown either way. Each distinct declared directory receives
+  its own overlay upper/work directories; names such as `opt/a-b` and
+  `opt/a/b` cannot alias the same writable backing.
 - **The immutable layout is not a root-process sandbox** — a guest process
   with full root (`CAP_SYS_ADMIN` and systemd control) can still mount its own
   tmpfs over a path or drop unit overrides under `/run/systemd/system`. The
