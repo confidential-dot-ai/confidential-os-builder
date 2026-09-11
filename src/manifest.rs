@@ -129,6 +129,19 @@ pub struct KernelInputs {
     /// kernels built before the patch, which have no measurement registers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snp_mr_patch_sha256: Option<String>,
+    // The kernel-cache artifact (`output/kernel/vmlinuz`), before `confos
+    // build` sealed this image's root hash into its IPE policy. Equal to
+    // `vmlinuz_sha256` when the kernel was built without IPE.
+    #[serde(default)]
+    pub base_vmlinuz_sha256: String,
+    // Whether the kernel enforces the IPE policy (built with
+    // CONFIG_SECURITY_IPE). `default` for older manifests.
+    #[serde(default)]
+    pub ipe: bool,
+    // Committed IPE boot policy compiled into the kernel and, when `ipe` is
+    // set, extended by the sealed policy. `default` for older manifests.
+    #[serde(default)]
+    pub ipe_boot_policy_sha256: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

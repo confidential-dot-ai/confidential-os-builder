@@ -27,6 +27,32 @@ build configs, since those invalidate published reference values.
   changes; rebuild images and re-pin.
 
 ### Added
+- **Changes measurements.** Opt-in Integrity Policy Enforcement (IPE) via
+  `--kernel-config-fragment kernel/ipe.config`: the kernel executes, maps
+  executable, and loads modules and firmware only from the initramfs and
+  from the dm-verity root of the image it was built for. `confos build`
+  then runs mkosi twice — once to learn the root hash, then again with the
+  cached kernel relinked around a policy that pins it
+  (`kernel/ipe-boot-policy` plus the hash) — and fails if the two passes
+  disagree. The initrd drops `CAP_MAC_ADMIN` before `switch_root` on an IPE
+  kernel, which is the capability every IPE control needs, so no process in
+  the guest can switch enforcement off. This closes the residual left by
+  0.5.0's immutable root for images that bake their workload: root with
+  mount control could still shadow a measured binary; the kernel now
+  refuses to run the shadow.
+
+  The default kernel has no IPE, and container hosts and JIT runtimes must
+  not opt in: anything written at runtime and any anonymous executable
+  memory is denied. Under IPE, cloud-init `runcmd` does not work (it
+  executes a script it writes under `/var`); `bootcmd` does.
+
+  Measurements change for every image because the root partition no longer
+  contains the kernel (so the root hash cannot depend on the kernel that
+  would seal it) and the initrd probes for IPE. The manifest records the
+  kernel in the UKI as `kernel.vmlinuz_sha256`, the cache artifact as
+  `base_vmlinuz_sha256`, whether IPE is built in as `kernel.ipe`, and the
+  committed policy as `ipe_boot_policy_sha256`; with IPE the sealed policy
+  text lands in `output/<name>/ipe-boot-policy`.
 - Local CPU metrics and a digest-pinned OpenTelemetry Collector in the
   general-purpose TDX and SNP recipes. The GPU recipe also aggregates its
   native DCGM exporter. All telemetry listeners bind to loopback, with no

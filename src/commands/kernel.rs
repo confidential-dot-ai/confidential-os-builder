@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Result};
 
-use crate::kernel::{aml, compile, config, fetch, manifest as km, snp_mr, version::KernelVersion};
+use crate::kernel::{
+    aml, compile, config, fetch, ipe, manifest as km, snp_mr, version::KernelVersion,
+};
 use crate::tools;
-use crate::{KernelArgs, KernelSourceArgs};
+use crate::{KernelArgs, KernelInputs, KernelSourceArgs};
 
 mod tools_tree;
 use tools_tree::{
@@ -44,28 +46,32 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     run_with_tools(args, ensure_tools_tree)
 }
 
-fn run_with_tools(
-    args: &KernelArgs,
-    ensure_tools: impl FnOnce(bool, &[String], &Path) -> Result<PathBuf>,
-) -> Result<()> {
-    let version = pinned_version()?;
-    tracing::info!(linux_version = %version.linux_version, "building hardened kernel");
+/// Resolved inputs and output paths of one kernel build.
+struct Layout {
+    version: KernelVersion,
+    /// Caller's certificate, else the committed default (see
+    /// DEFAULT_SIGNING_CERT). Always resolves to something, so every build
+    /// that enables module signing has a trust anchor without the caller
+    /// arranging one.
+    signing_cert: PathBuf,
+    snapshot: PathBuf,
+    cache_dir: PathBuf,
+    build_dir: PathBuf,
+    kernel_src: PathBuf,
+    log_path: PathBuf,
+    vmlinuz_path: PathBuf,
+    manifest_path: PathBuf,
+}
 
-    // Optional caller-supplied config fragment merged after required +
-    // hardening. No flag = confos's bare required + hardening baseline.
-    let fragment = args.kernel_inputs.kernel_config_fragment.as_deref();
-    // Caller's certificate, else the committed default (see
-    // DEFAULT_SIGNING_CERT). Always resolves to something, so every build
-    // that enables module signing has a trust anchor without the caller
-    // arranging one.
-    let default_cert = PathBuf::from(DEFAULT_SIGNING_CERT);
-    let signing_cert = args
-        .kernel_inputs
+/// Resolve and check the inputs of a build into `output`.
+fn layout(output: &Path, inputs: &KernelInputs) -> Result<Layout> {
+    let version = pinned_version()?;
+    let fragment = inputs.kernel_config_fragment.as_deref();
+    let signing_cert = inputs
         .module_signing_cert
-        .as_deref()
-        .unwrap_or(&default_cert);
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_SIGNING_CERT));
     let snapshot = snapshot_path(fragment)?;
-    let snapshot = snapshot.as_path();
 
     // Consumer inputs get their own messages before the fingerprint reads them.
     if let Some(f) = fragment {
@@ -76,28 +82,45 @@ fn run_with_tools(
             ));
         }
     }
-    verify_signing_cert(signing_cert)?;
+    verify_signing_cert(&signing_cert)?;
 
-    fs_err::create_dir_all(&args.output)?;
-    let out_dir = args.output.canonicalize()?;
-    let cache_dir = out_dir.join("cache");
-    let build_dir = out_dir.join("build");
-    let log_path = out_dir.join("build.log");
-    let vmlinuz_path = out_dir.join("vmlinuz");
-    let manifest_path = out_dir.join("manifest.json");
+    fs_err::create_dir_all(output)?;
+    let out_dir = output.canonicalize()?;
+    Ok(Layout {
+        signing_cert,
+        snapshot,
+        cache_dir: out_dir.join("cache"),
+        build_dir: out_dir.join("build"),
+        kernel_src: kernel_src_dir(&out_dir, &version.linux_version),
+        log_path: out_dir.join("build.log"),
+        vmlinuz_path: out_dir.join("vmlinuz"),
+        manifest_path: out_dir.join("manifest.json"),
+        version,
+    })
+}
+
+fn run_with_tools(
+    args: &KernelArgs,
+    ensure_tools: impl FnOnce(bool, &[String], &Path) -> Result<PathBuf>,
+) -> Result<()> {
+    let l = layout(&args.output, &args.kernel_inputs)?;
+    tracing::info!(linux_version = %l.version.linux_version, "building hardened kernel");
+    // Optional caller-supplied config fragment merged after required +
+    // hardening. No flag = confos's bare required + hardening baseline.
+    let fragment = args.kernel_inputs.kernel_config_fragment.as_deref();
 
     // Every input is hashed once here, before anything is staged, and once
     // more after the compile: an edit during the build fails it instead of
     // labelling the old bytes with the new hashes.
-    let staged = compute_fingerprint(&version, fragment, signing_cert, snapshot)?;
+    let staged = compute_fingerprint(&l.version, fragment, &l.signing_cert, &l.snapshot)?;
 
     // Cache short-circuit: skip the entire build if all inputs match and the
     // existing vmlinuz still hashes to what the manifest claims. --force
     // bypasses this.
-    if !args.force && manifest_path.exists() && vmlinuz_path.exists() {
-        if let Ok(cached) = km::read(&manifest_path) {
+    if !args.force && l.manifest_path.exists() && l.vmlinuz_path.exists() {
+        if let Ok(cached) = km::read(&l.manifest_path) {
             if cached.inputs == staged {
-                let actual = fetch::sha256_file(&vmlinuz_path)?;
+                let actual = fetch::sha256_file(&l.vmlinuz_path)?;
                 if actual.eq_ignore_ascii_case(&cached.outputs.vmlinuz_sha256) {
                     // Tools and compiled kernels have independent caches. GPU
                     // staging needs tools even when the kernel can be reused.
@@ -127,23 +150,42 @@ fn run_with_tools(
         &args.kernel_inputs.kernel_builder_package,
         Path::new(TOOLS_TREE_OUTPUT),
     )?;
+    build(&l, fragment, &tools_tree, &staged)
+}
+
+/// Build the kernel from scratch into the layout, bypassing the cache.
+/// `staged` is the fingerprint hashed before anything was staged.
+fn build(
+    l: &Layout,
+    fragment: Option<&Path>,
+    tools_tree: &Path,
+    staged: &km::Fingerprint,
+) -> Result<()> {
+    let Layout {
+        version,
+        signing_cert,
+        snapshot,
+        cache_dir,
+        build_dir,
+        log_path,
+        vmlinuz_path,
+        manifest_path,
+        ..
+    } = l;
 
     // Phase 0b + 0c: fetch, extract, stage the trusted AML inputs, configure
     println!("\n=== Step 0b: Fetching + extracting kernel ===");
     // Discard previous versions' source and objects before a fresh build.
-    tools::force_remove_dir_all(&build_dir)?;
-    let kernel_src = extract_pinned_source(&version, &tools_tree, &cache_dir, &build_dir)?;
+    tools::force_remove_dir_all(build_dir)?;
+    let kernel_src = extract_pinned_source(version, tools_tree, cache_dir, build_dir)?;
     println!("\n=== Step 0c: Configuring kernel ===");
 
     // Pin the RANDSTRUCT seed: rewrite gen-randstruct-seed.sh to emit our
     // committed seed instead of reading /dev/urandom. The Makefile rule is
     // FORCE + if_changed, so staging the .seed file alone would be
     // regenerated — the script is the deterministic point.
-    let seed = fs_err::read_to_string(Path::new(RANDSTRUCT_SEED))?;
-    let seed = seed.trim();
-    if seed.len() != 64 || !seed.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(anyhow!("{RANDSTRUCT_SEED} must be 64 hex chars (32 bytes)"));
-    }
+    let seed = randstruct_seed()?;
+    let seed = seed.as_str();
     let gen = kernel_src.join("scripts/gen-randstruct-seed.sh");
     fs_err::write(
         &gen,
@@ -182,9 +224,16 @@ fn run_with_tools(
     // kernel_src is a freshly extracted tarball (wiped above), so a plain copy
     // is enough — no staging guard as for --profile-dir.
     fs_err::copy(signing_cert, certs_dir.join(STAGED_SIGNING_CERT))?;
+    // The IPE boot policy the fragment points CONFIG_IPE_BOOT_POLICY at.
+    // Staged unconditionally: a fragment that turns IPE off leaves the
+    // symbol unset and the file unread. `seal` rewrites it per image.
+    fs_err::copy(
+        Path::new(ipe::BOOT_POLICY),
+        kernel_src.join(ipe::STAGED_BOOT_POLICY),
+    )?;
 
     config::run_configure_phase(
-        &tools_tree,
+        tools_tree,
         &kernel_src,
         Path::new(REQUIRED_FRAGMENT),
         Path::new(HARDENING_FRAGMENT),
@@ -207,15 +256,16 @@ fn run_with_tools(
 
     // Phase 0d: compile
     println!("\n=== Step 0d: Compiling kernel ===");
-    fs_err::write(&log_path, b"")?;
-    compile::run(&tools_tree, &kernel_src, &vmlinuz_path, seed, &log_path)?;
+    fs_err::write(log_path, b"")?;
+    compile::run(tools_tree, &kernel_src, vmlinuz_path, seed, log_path)?;
 
     // Phase 0e: finalize manifest
     println!("\n=== Step 0e: Writing manifest ===");
-    let inputs = compute_fingerprint(&version, fragment, signing_cert, snapshot)?;
-    verify_inputs_unchanged(&staged, &inputs)?;
+    let inputs = compute_fingerprint(version, fragment, signing_cert, snapshot)?;
+    verify_inputs_unchanged(staged, &inputs)?;
     let outputs = km::Outputs {
-        vmlinuz_sha256: fetch::sha256_file(&vmlinuz_path)?,
+        vmlinuz_sha256: fetch::sha256_file(vmlinuz_path)?,
+        ipe: ipe::enabled(&resolved)?,
     };
     let manifest = km::KernelManifest {
         version: 1,
@@ -224,10 +274,76 @@ fn run_with_tools(
         outputs,
         built_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
     };
-    km::write(&manifest_path, &manifest)?;
+    km::write(manifest_path, &manifest)?;
     println!("kernel: {}", vmlinuz_path.display());
     println!("manifest: {}", manifest_path.display());
     Ok(())
+}
+
+/// Committed RANDSTRUCT seed, validated. Read by the base build and again by
+/// `seal`, whose relink must pass the same KCFLAGS or kbuild rebuilds
+/// everything (and the latent_entropy plugin reseeds).
+fn randstruct_seed() -> Result<String> {
+    let seed = fs_err::read_to_string(Path::new(RANDSTRUCT_SEED))?;
+    let seed = seed.trim();
+    if seed.len() != 64 || !seed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(anyhow!("{RANDSTRUCT_SEED} must be 64 hex chars (32 bytes)"));
+    }
+    Ok(seed.to_string())
+}
+
+/// The extracted kernel source tree under a kernel output directory.
+fn kernel_src_dir(out_dir: &Path, linux_version: &str) -> PathBuf {
+    out_dir.join("build").join(format!("linux-{linux_version}"))
+}
+
+/// Seal `roothash` into the IPE policy of the kernel built into `cache_dir`:
+/// rewrite the staged policy in the build tree and relink. Only the policy
+/// object changes, so this is a relink, not a rebuild; if the tree is gone
+/// (a cache restored without it), the base kernel is rebuilt first,
+/// reproducibly.
+///
+/// Writes `vmlinuz`, `ipe-boot-policy`, and `kernel-seal.log` into
+/// `out_dir` and returns the `vmlinuz` path. The cache artifact is left
+/// alone so its manifest stays true.
+pub fn seal(
+    cache_dir: &Path,
+    inputs: &KernelInputs,
+    roothash: &str,
+    out_dir: &Path,
+) -> Result<PathBuf> {
+    let l = layout(cache_dir, inputs)?;
+    let tools_tree = ensure_tools_tree(
+        false,
+        &inputs.kernel_builder_package,
+        Path::new(TOOLS_TREE_OUTPUT),
+    )?;
+    let kernel_src = &l.kernel_src;
+    if !kernel_src.join("vmlinux").is_file() || !kernel_src.join(".config").is_file() {
+        println!(
+            "kernel build tree {} is incomplete; rebuilding the kernel before sealing",
+            kernel_src.display()
+        );
+        let fragment = inputs.kernel_config_fragment.as_deref();
+        let staged = compute_fingerprint(&l.version, fragment, &l.signing_cert, &l.snapshot)?;
+        build(&l, fragment, &tools_tree, &staged)?;
+    }
+    let base = fs_err::read_to_string(Path::new(ipe::BOOT_POLICY))?;
+    let policy = ipe::seal(&base, roothash)?;
+    fs_err::write(kernel_src.join(ipe::STAGED_BOOT_POLICY), &policy)?;
+    fs_err::write(out_dir.join("ipe-boot-policy"), &policy)?;
+
+    let vmlinuz = out_dir.join("vmlinuz");
+    let log_path = out_dir.join("kernel-seal.log");
+    fs_err::write(&log_path, b"")?;
+    compile::run(
+        &tools_tree,
+        kernel_src,
+        &vmlinuz,
+        &randstruct_seed()?,
+        &log_path,
+    )?;
+    Ok(vmlinuz)
 }
 
 /// `confos kernel-source`: the same pinned, checksum-verified, patched tree
@@ -403,6 +519,7 @@ pub fn compute_fingerprint(
         trusted_dsdt_sha256: fetch::sha256_file(Path::new(aml::DSDT_SOURCE))?,
         trusted_aml_patch_sha256: fetch::sha256_file(Path::new(aml::PATCH))?,
         snp_mr_patch_sha256: fetch::sha256_file(Path::new(snp_mr::PATCH))?,
+        ipe_boot_policy_sha256: fetch::sha256_file(Path::new(ipe::BOOT_POLICY))?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
         kernel_extra_config_sha256: match fragment {
@@ -463,6 +580,7 @@ mod tests {
                 .unwrap(),
                 outputs: km::Outputs {
                     vmlinuz_sha256: fetch::sha256_file(&kernel).unwrap(),
+                    ipe: false,
                 },
                 built_at: "cached-build".into(),
             },
@@ -538,6 +656,7 @@ mod tests {
             trusted_dsdt_sha256: "2".repeat(64),
             trusted_aml_patch_sha256: "3".repeat(64),
             snp_mr_patch_sha256: "5".repeat(64),
+            ipe_boot_policy_sha256: "6".repeat(64),
             tools_tree_digest: "4".repeat(64),
         };
         verify_inputs_unchanged(&staged, &staged).unwrap();
