@@ -17,6 +17,39 @@ build configs, since those invalidate published reference values.
   `Snapshot:` field, so the sandbox-tree URI pinning (#96) stays the only
   mechanism. Existing installs don't self-upgrade: run
   `uv tool install --force git+https://github.com/systemd/mkosi.git@v27`.
+- **Changes measurements. Breaking for images that mutate the root at
+  runtime.** The initrd now runs directly from the read-only dm-verity root.
+  The previous whole-root overlay allowed a root-owned write to shadow a
+  measured binary, configuration file, or unit—including attestation-api—
+  while the launch measurement remained valid.
+
+  Writable state is now limited to directories declared by the measured image
+  in `/usr/lib/confai/state.d/`: the base declares `/var`, `/home`, `/root`,
+  and `/tmp`; the ssh profile adds `/etc/ssh`; external profiles can add
+  their own files. `/run` remains a tmpfs. Missing declared directories fail
+  the boot instead of being silently skipped. Each distinct path receives
+  separate overlay backing, so names such as `opt/a-b` and `opt/a/b` cannot
+  accidentally share writable data.
+
+  There is no mutable-root opt-out, including for `--profile dev`. Runtime
+  `apt install` and cloud-init writes to undeclared `/etc` paths no longer
+  work. Bake packages, configuration, and accounts with `--package` and
+  `--extra`. The Caddy tutorial now follows this model. Before upgrading, the
+  c8s node-image profile
+  must declare `/etc/rancher`, which rke2 writes at runtime.
+
+  Supporting changes adapt cloud-init, hostname handling, DNS, machine-id, and
+  operator-key staging to a read-only `/etc`. A login shell prints the
+  writable set and points at `state.d`, so "Read-only file system" is
+  explained where it is hit. Cloud-init's user-data source is restricted to
+  the baked seed: only NoCloud is enabled, its `seedfrom` is pinned to the
+  local seed directory, and probing for attached `cidata` disks is disabled.
+  Host-supplied SMBIOS URLs and other datasources cannot replace the payload.
+  Missing or incomplete seed files disable cloud-init, while an existing
+  profile disable marker is preserved. NoCloud still parses SMBIOS metadata,
+  including instance ID and datasource mode; those values remain untrusted.
+  Measured runtime user-data is future work. The dev profile now appends to
+  the base kernel command line instead of replacing it.
 
 ### Fixed
 - **Changes measurements (once).** Host build deps are snapshot-pinned

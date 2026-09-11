@@ -66,10 +66,12 @@ echo -e "${BOLD}Using $CONFOS${NC}"
 # ── Cloud-init test config ────────────────────────────────────────────────────
 CI_FILE=$(mktemp --suffix=.yaml)
 
+# Store the marker under the writable /var state overlay; /etc remains on
+# the read-only verity root.
 cat > "$CI_FILE" <<USERDATA
 #cloud-config
 write_files:
-  - path: /etc/confos-e2e-marker
+  - path: /var/lib/confos-e2e-marker
     permissions: '0644'
     content: |
       ${MARKER}
@@ -79,7 +81,11 @@ runcmd:
     exec > /dev/hvc0 2>&1
     set -ex
     echo "=== confos e2e: starting ==="
-    cat /etc/confos-e2e-marker
+    cat /var/lib/confos-e2e-marker
+    # Emit the root-layout invariant: /etc is erofs and /var is overlayfs.
+    findmnt -T /etc -no TARGET,FSTYPE; findmnt -T /var -no TARGET,FSTYPE
+    [ "\$(findmnt -T /etc -no FSTYPE)" = erofs ] && [ "\$(findmnt -T /var -no FSTYPE)" = overlay ] \
+        && echo CONFOS_E2E_ROOT_IMMUTABLE || echo CONFOS_E2E_ROOT_MUTABLE
     python3 -c "
     from http.server import HTTPServer, BaseHTTPRequestHandler
     class H(BaseHTTPRequestHandler):
@@ -257,6 +263,19 @@ else
     else
         fail "e2e: cloud-init did not complete"
         tail -30 "$SERIAL_LOG"
+    fi
+
+    # The layout probe is printed by runcmd, so it is only checked once the
+    # HTTP/marker wait above has given cloud-final time to run. A missing
+    # token here is a failure, not a skip: it means the default build did
+    # not come up immutable, or the probe never ran.
+    if grep -q "CONFOS_E2E_ROOT_IMMUTABLE" "$SERIAL_LOG" 2>/dev/null; then
+        pass "e2e: immutable root layout (/etc erofs, /var overlay)"
+    elif grep -q "CONFOS_E2E_ROOT_MUTABLE" "$SERIAL_LOG" 2>/dev/null; then
+        fail "e2e: default build did not come up with the immutable layout"
+        grep -A2 "confos e2e: starting" "$SERIAL_LOG" | tail -5
+    else
+        fail "e2e: layout probe never reported"
     fi
 
     kill "$QEMU_PID" 2>/dev/null || true
