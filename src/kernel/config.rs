@@ -62,7 +62,7 @@ pub fn run_configure_phase(
     kernel_dir: &Path,
     required_fragment: &Path,
     hardening_fragment: &Path,
-    confidential_fragment: &Path,
+    cvm_fragment: &Path,
     extra_fragment: Option<&Path>,
     prelude: &str,
 ) -> Result<()> {
@@ -71,7 +71,7 @@ pub fn run_configure_phase(
         .with_context(|| format!("canonicalizing {}", kernel_dir.display()))?;
     let required_abs = required_fragment.canonicalize()?;
     let hardening_abs = hardening_fragment.canonicalize()?;
-    let confidential_abs = confidential_fragment.canonicalize()?;
+    let cvm_abs = cvm_fragment.canonicalize()?;
     let extra_abs = extra_fragment.map(|p| p.canonicalize()).transpose()?;
 
     // Stage fragments inside the kernel dir so merge_config can find them
@@ -80,10 +80,7 @@ pub fn run_configure_phase(
     fs_err::create_dir_all(&frag_dir_in_kernel)?;
     fs_err::copy(&required_abs, frag_dir_in_kernel.join("required.config"))?;
     fs_err::copy(&hardening_abs, frag_dir_in_kernel.join("hardening.config"))?;
-    fs_err::copy(
-        &confidential_abs,
-        frag_dir_in_kernel.join("confidential.config"),
-    )?;
+    fs_err::copy(&cvm_abs, frag_dir_in_kernel.join("confidential.config"))?;
     if let Some(ref e) = extra_abs {
         fs_err::copy(e, frag_dir_in_kernel.join("extra.config"))?;
     }
@@ -115,7 +112,7 @@ pub fn run_configure_phase(
     )?;
     fs_err::remove_dir_all(&frag_dir_in_kernel)?;
 
-    let mut fragments: Vec<&Path> = vec![&required_abs, &hardening_abs, &confidential_abs];
+    let mut fragments: Vec<&Path> = vec![&required_abs, &hardening_abs, &cvm_abs];
     if let Some(ref e) = extra_abs {
         fragments.push(e);
     }
