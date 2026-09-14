@@ -1,6 +1,6 @@
 # Plan: admit only measured AML in confidential guests
 
-Date: 2026-09-14. Status: approved and implemented on `fix/trusted-aml`, stacked on kernel update #129 (Linux 6.18.49). Validation procedures are recorded in `docs/VERIFYING.md`; consumer rollout and hardware acceptance remain separate.
+Date: 2026-09-14. Status: approved and implemented on `fix/trusted-aml`, rebased onto `main` after kernel update #129 (Linux 6.18.49) merged. Validation procedures are recorded in `docs/VERIFYING.md`; consumer rollout and hardware acceptance remain separate.
 
 ## Objective and priority
 

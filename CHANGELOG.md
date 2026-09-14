@@ -9,6 +9,13 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Changed
+- **Changes measurements.** The trusted DSDT is compiled into the measured
+  kernel with the pinned kernel tools tree. A mandatory kernel gate admits
+  only that table before AML namespace parsing and rejects secondary tables,
+  dynamic loads, method installation and table unloading. Missing trusted
+  AML stops boot before init. The early-initrd DSDT archive is removed;
+  consumer fragments cannot disable the policy. Rebuild consumer kernels
+  and images and approve new reference values after hardware acceptance.
 - **Changes measurements.** The guest kernel moves from the EOL 6.16.12 line
   to the maintained 6.18.49 LTS release. The kernel.org checksum is verified
   through the repository-pinned autosigner key. The roll also adopts 6.18's
