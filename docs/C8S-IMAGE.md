@@ -17,3 +17,8 @@ declare any additional runtime state directory in its profile's
 For example, rke2 requires `/etc/rancher`. Each declared directory must
 already exist in the built image; the initrd gives it an ephemeral writable
 overlay and fails the boot if it is missing.
+
+The IPE execution policy (`kernel/ipe.config`) is opt-in and a node image
+must not opt in: it runs containers from the scratch disk, which the policy
+would deny. The default kernel has no IPE and the initrd leaves the
+capability set alone.

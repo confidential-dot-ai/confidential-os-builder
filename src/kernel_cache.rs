@@ -2,7 +2,8 @@
 //!
 //! The cache check lives in `commands::kernel::run`. This module is a thin
 //! wrapper that calls the builder, reads the resulting manifest, and returns
-//! a `KernelArtifact` shaped for use by `commands::build`.
+//! a `KernelArtifact` shaped for use by `commands::build`; `seal` relinks
+//! that artifact with an image's root hash in its IPE policy.
 
 use std::path::{Path, PathBuf};
 
@@ -18,6 +19,7 @@ pub struct KernelArtifact {
     pub vmlinuz_path: PathBuf,
     pub linux_version: String,
     pub manifest: km::KernelManifest,
+    inputs: KernelInputs,
 }
 
 /// Ensure a current kernel artifact exists at output/kernel/.
@@ -31,7 +33,7 @@ pub fn ensure_kernel(force: bool, inputs: KernelInputs) -> Result<KernelArtifact
     commands::kernel::run(&KernelArgs {
         force,
         output: PathBuf::from(KERNEL_OUT_DIR),
-        kernel_inputs: inputs,
+        kernel_inputs: inputs.clone(),
     })?;
 
     let manifest_path = Path::new(KERNEL_OUT_DIR).join("manifest.json");
@@ -41,7 +43,19 @@ pub fn ensure_kernel(force: bool, inputs: KernelInputs) -> Result<KernelArtifact
         vmlinuz_path,
         linux_version: manifest.linux_version.clone(),
         manifest,
+        inputs,
     })
+}
+
+/// Relink the cached kernel with `roothash` sealed into its IPE policy,
+/// writing the sealed `vmlinuz` (plus the policy and log) into `out_dir`.
+/// Re-reads the cache manifest afterwards: sealing rebuilds the base kernel
+/// when its build tree is missing, and the artifact must describe that.
+pub fn seal(kernel: &mut KernelArtifact, roothash: &str, out_dir: &Path) -> Result<PathBuf> {
+    let cache_dir = Path::new(KERNEL_OUT_DIR);
+    let sealed = commands::kernel::seal(cache_dir, &kernel.inputs, roothash, out_dir)?;
+    kernel.manifest = km::read(&cache_dir.join("manifest.json"))?;
+    Ok(sealed)
 }
 
 fn require_inputs_exist(inputs: &KernelInputs) -> Result<()> {
