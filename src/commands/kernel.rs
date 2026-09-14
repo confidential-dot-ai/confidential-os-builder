@@ -26,7 +26,7 @@ const HARDENING_FRAGMENT: &str = "kernel/hardening.config";
 /// Confidential VM overrides. Merged after `hardening.config` so the last
 /// fragment wins. Resolved trusted-AML requirements are additionally enforced
 /// after consumer overrides, so a later fragment cannot weaken the boundary.
-const CONFIDENTIAL_FRAGMENT: &str = "kernel/confidential.config";
+const CVM_FRAGMENT: &str = "kernel/confidential.config";
 /// Bare-baseline snapshot lockfile (committed). Fragment builds write
 /// `config-x86_64-<stem>.snapshot` beside their fragment, so lineages don't
 /// clobber it and consumers can commit theirs in their own repo (#66).
@@ -168,7 +168,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
         &kernel_src,
         Path::new(REQUIRED_FRAGMENT),
         Path::new(HARDENING_FRAGMENT),
-        Path::new(CONFIDENTIAL_FRAGMENT),
+        Path::new(CVM_FRAGMENT),
         fragment,
         &aml_script,
     )?;
@@ -384,7 +384,7 @@ pub fn compute_fingerprint(
         tarball_sha256: version.tarball_sha256.clone(),
         required_config_sha256: fetch::sha256_file(Path::new(REQUIRED_FRAGMENT))?,
         hardening_config_sha256: fetch::sha256_file(Path::new(HARDENING_FRAGMENT))?,
-        confidential_config_sha256: fetch::sha256_file(Path::new(CONFIDENTIAL_FRAGMENT))?,
+        confidential_config_sha256: fetch::sha256_file(Path::new(CVM_FRAGMENT))?,
         module_signing_cert_sha256: fetch::sha256_file(signing_cert)?,
         randstruct_seed_sha256: fetch::sha256_file(Path::new(RANDSTRUCT_SEED))?,
         trusted_dsdt_sha256: fetch::sha256_file(Path::new(aml::DSDT_SOURCE))?,
