@@ -75,6 +75,16 @@ pub struct KernelArgs {
     pub kernel_inputs: KernelInputs,
 }
 
+/// `confos kernel-source`: the pinned, patched kernel tree the build
+/// compiles, prepared the same way but left as source. The ACPI harness
+/// tests it under QEMU.
+#[derive(clap::Args)]
+pub struct KernelSourceArgs {
+    /// Output directory; the tree lands at `<output>/linux-<version>`.
+    #[arg(short, long, default_value = "output/kernel-source")]
+    pub output: PathBuf,
+}
+
 #[derive(clap::Args)]
 pub struct RunArgs {
     /// Output directory from confos build

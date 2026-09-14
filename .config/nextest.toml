@@ -1,10 +1,9 @@
 # Kernel integration tests share `mkosi/kernel-builder/` (rebuilt with
 # `mkosi --force`) and `kernel/config-x86_64.snapshot` (rewritten by every
-# kernel build), so they cannot run in parallel. The committed-snapshot
-# policy check shares that file too. Serialize these tests together;
-# everything else still parallelises.
+# kernel build), so they cannot run in parallel. Force this binary onto a
+# single thread; everything else still parallelises.
 [[profile.default.overrides]]
-filter = 'binary(=kernel) | test(=kernel::config::tests::committed_snapshot_matches_kernel_policy)'
+filter = 'binary(=kernel)'
 test-group = 'kernel-integration'
 
 [test-groups]

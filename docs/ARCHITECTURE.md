@@ -8,7 +8,8 @@ assumes them.
 ## Bird's eye view
 
 Confidential OS Builder is a Rust CLI that orchestrates external tools (mkosi,
-QEMU, iasl, oras, systemd's ukify/repart machinery via mkosi) plus two in-repo
+QEMU, oras, systemd's ukify/repart machinery via mkosi; iasl runs inside the
+pinned kernel tools tree) plus two in-repo
 Rust crates that do the measurement math. The CLI's job is deterministic
 assembly; the crates' job is predicting, offline, exactly what the TEE
 hardware will measure at launch.

@@ -312,9 +312,9 @@ Their safety and the supported CPU, memory and PCI/GPU layouts require
 separate review and boot validation; this policy does not establish
 compatibility with every topology.
 
-Kernel and image manifests record `trusted_aml`, `trusted_dsdt_sha256`
-(the ASL source hash) and `trusted_aml_patch_sha256`. These are build
-provenance, not an independent attestation. Deploying the policy requires
+Kernel and image manifests record `trusted_dsdt_sha256` (the ASL source
+hash) and `trusted_aml_patch_sha256`. These are build provenance, not an
+independent attestation. Deploying the policy requires
 updating consumer builder pins, rebuilding kernels and images, and deriving
 and approving new SNP/TDX reference values. Hardware acceptance remains a
 release requirement; see [VERIFYING.md](docs/VERIFYING.md).

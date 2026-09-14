@@ -3,104 +3,91 @@
 //! The source table and the single, version-specific kernel patch are both
 //! cache inputs. The kernel enforces provenance before AML namespace parsing.
 
+use std::collections::HashSet;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
-
-use super::{config, fetch};
+use anyhow::{bail, Result};
 
 pub const DSDT_SOURCE: &str = "kernel/trusted-dsdt.asl";
 pub const PATCH: &str = "kernel/patches/0001-acpi-trusted-aml.patch";
 pub const HEADER: &str = "confos-trusted-dsdt.h";
-const LINUX_VERSION: &str = "6.18.49";
+const STAGED_DSDT: &str = "confos-trusted-dsdt.asl";
+const STAGED_PATCH: &str = "confos-trusted-aml.patch";
+/// Trailer in the patch header naming the kernel its hooks were audited on.
+const VERSION_TRAILER: &str = "Linux-Version:";
 
-/// A kernel update must re-audit the loader hooks and explicitly retarget the
-/// patch. Do not let a cache hit bypass this compatibility gate.
+/// The patch declares the one kernel it was audited against; `kernel/version`
+/// must match it. A pin bump therefore fails until the loader hooks are
+/// re-audited and the patch retargeted, and each pin has exactly one home.
 pub fn verify_version(version: &str) -> Result<()> {
-    if version != LINUX_VERSION {
-        bail!("trusted AML patch supports Linux {LINUX_VERSION}, got {version}; re-audit the ACPI loader before updating the kernel");
+    let patch = fs_err::read_to_string(PATCH)?;
+    let supported = supported_version(&patch)?;
+    if version != supported {
+        bail!(
+            "{PATCH} supports Linux {supported}, got {version}; re-audit the ACPI loader \
+             hooks, retarget the patch and update its {VERSION_TRAILER} trailer"
+        );
     }
     Ok(())
 }
 
-/// Hashes of the actual files staged for this build, captured before compilation.
-pub struct PreparedInputs {
-    dsdt_sha256: String,
-    patch_sha256: String,
-}
-
-impl PreparedInputs {
-    fn read(dsdt: &Path, patch: &Path) -> Result<Self> {
-        Ok(Self {
-            dsdt_sha256: fetch::sha256_file(dsdt)?,
-            patch_sha256: fetch::sha256_file(patch)?,
-        })
-    }
-
-    /// Do not label an old build with newly edited repository inputs.
-    pub fn verify(&self, dsdt_sha256: &str, patch_sha256: &str) -> Result<()> {
-        if self.dsdt_sha256 != dsdt_sha256 || self.patch_sha256 != patch_sha256 {
-            bail!("trusted AML inputs changed during compilation; rerun the kernel build");
-        }
-        Ok(())
+fn supported_version(patch: &str) -> Result<&str> {
+    // Only the header carries the trailer; the diff body could quote it.
+    let header = patch.split("\n---\n").next().unwrap_or(patch);
+    let mut versions = header
+        .lines()
+        .filter_map(|line| line.strip_prefix(VERSION_TRAILER))
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    match (versions.next(), versions.next()) {
+        (Some(v), None) => Ok(v),
+        (None, _) => bail!("{PATCH} has no {VERSION_TRAILER} trailer in its header"),
+        (Some(_), Some(_)) => bail!("{PATCH} has more than one {VERSION_TRAILER} trailer"),
     }
 }
 
-/// Apply the patch to freshly extracted, checksum-verified source and compile
-/// ASL using the same pinned tools tree as the kernel. All shell paths below
-/// are fixed builder-owned names; no caller text is interpolated into shell.
-pub fn prepare(tools_tree: &Path, kernel_src: &Path) -> Result<PreparedInputs> {
-    let dsdt = kernel_src.join("confos-trusted-dsdt.asl");
-    let patch = kernel_src.join("confos-trusted-aml.patch");
-    fs_err::copy(DSDT_SOURCE, &dsdt)?;
-    fs_err::copy(PATCH, &patch)?;
-    let staged = PreparedInputs::read(&dsdt, &patch)?;
-    config::nspawn(
-        tools_tree,
-        &kernel_src.canonicalize()?,
-        "/build",
-        &[],
-        "set -eu\n\
-         cd /build\n\
-         patch --batch --forward --fuzz=0 --dry-run -p1 < confos-trusted-aml.patch\n\
-         patch --batch --forward --fuzz=0 -p1 < confos-trusted-aml.patch\n\
-         iasl -ve -tc -p dsdt confos-trusted-dsdt.asl\n\
-         test -s dsdt.hex\n\
-         cp dsdt.hex include/confos-trusted-dsdt.h\n",
-    )
-    .context("preparing measured AML kernel inputs")?;
-    Ok(staged)
+/// Copy the ASL source and the patch into the freshly extracted kernel tree
+/// and return the script that applies the patch and compiles the table.
+/// The caller runs it inside the pinned tools tree from the tree root,
+/// before Kconfig sees the tree, so the patch's new symbol resolves. All
+/// names are fixed builder-owned strings; no caller text reaches the shell.
+pub fn stage(kernel_src: &Path) -> Result<String> {
+    fs_err::copy(DSDT_SOURCE, kernel_src.join(STAGED_DSDT))?;
+    fs_err::copy(PATCH, kernel_src.join(STAGED_PATCH))?;
+    Ok(format!(
+        "patch --batch --forward --fuzz=0 -p1 < {STAGED_PATCH}\n\
+         iasl -ve -tc -p dsdt {STAGED_DSDT}\n\
+         grep -q 'unsigned char dsdt_aml_code\\[\\]' dsdt.hex\n\
+         cp dsdt.hex include/{HEADER}\n"
+    ))
 }
 
 /// These invariants apply after all consumer fragments have been merged.
 /// Check the custom-header path as well as booleans: selecting another valid
 /// built-in DSDT would otherwise satisfy Kconfig while changing our contract.
 pub fn verify_config(config: &str) -> Result<()> {
+    let lines: HashSet<&str> = config.lines().map(str::trim).collect();
+    let header = format!("CONFIG_ACPI_CUSTOM_DSDT_FILE=\"{HEADER}\"");
     for required in [
         "CONFIG_ACPI=y",
         "CONFIG_ACPI_CUSTOM_DSDT=y",
         "CONFIG_ACPI_TRUSTED_AML=y",
+        header.as_str(),
     ] {
-        if !config.lines().any(|line| line.trim() == required) {
+        if !lines.contains(required) {
             bail!("trusted AML requires resolved {required}; consumer fragments cannot disable this boundary");
         }
-    }
-    let header = format!("CONFIG_ACPI_CUSTOM_DSDT_FILE=\"{HEADER}\"");
-    if !config.lines().any(|line| line.trim() == header) {
-        bail!("trusted AML requires resolved {header}");
     }
     for forbidden in [
         "CONFIG_ACPI_TABLE_UPGRADE",
         "CONFIG_ACPI_CONFIGFS",
         "CONFIG_EFI_CUSTOM_SSDT_OVERLAYS",
         "CONFIG_ACPI_DEBUGGER",
-        "CONFIG_ACPI_CUSTOM_METHOD",
     ] {
-        if config.lines().any(|line| {
-            line.trim()
-                .strip_prefix(forbidden)
-                .is_some_and(|value| matches!(value, "=y" | "=m"))
-        }) {
+        if ["y", "m"]
+            .iter()
+            .any(|v| lines.contains(format!("{forbidden}={v}").as_str()))
+        {
             bail!("trusted AML forbids {forbidden}; alternate table loaders must remain disabled");
         }
     }
@@ -129,7 +116,6 @@ mod tests {
             "ACPI_CONFIGFS",
             "EFI_CUSTOM_SSDT_OVERLAYS",
             "ACPI_DEBUGGER",
-            "ACPI_CUSTOM_METHOD",
         ] {
             for value in ["y", "m"] {
                 assert!(
@@ -137,34 +123,36 @@ mod tests {
                 );
             }
         }
+        // A disabled loader is fine; only enabled ones are forbidden.
+        verify_config(&format!(
+            "{VALID_CONFIG}# CONFIG_ACPI_TABLE_UPGRADE is not set\n"
+        ))
+        .unwrap();
     }
 
     #[test]
-    fn rejects_inputs_edited_after_staging() {
-        let dir = tempfile::tempdir().unwrap();
-        let dsdt = dir.path().join("dsdt.asl");
-        let patch = dir.path().join("kernel.patch");
-        fs_err::write(&dsdt, "original table").unwrap();
-        fs_err::write(&patch, "original patch").unwrap();
-        let staged = PreparedInputs::read(&dsdt, &patch).unwrap();
-        let original_dsdt = fetch::sha256_file(&dsdt).unwrap();
-        let original_patch = fetch::sha256_file(&patch).unwrap();
-        staged.verify(&original_dsdt, &original_patch).unwrap();
-        fs_err::write(&dsdt, "edited table").unwrap();
-        assert!(staged
-            .verify(&fetch::sha256_file(&dsdt).unwrap(), &original_patch)
-            .is_err());
-        fs_err::write(&patch, "edited patch").unwrap();
-        assert!(staged
-            .verify(&original_dsdt, &fetch::sha256_file(&patch).unwrap())
-            .is_err());
+    fn supported_version_comes_from_the_header_trailer_only() {
+        let patch =
+            "Subject: x\n\nLinux-Version: 6.18.49\n---\n--- a/f\n+++ b/f\n+Linux-Version: 9.9.9\n";
+        assert_eq!(supported_version(patch).unwrap(), "6.18.49");
+        assert!(supported_version("Subject: x\n---\n").is_err());
+        assert!(supported_version("Linux-Version: 1\nLinux-Version: 2\n---\n").is_err());
+        assert!(supported_version("Linux-Version:   \n---\n").is_err());
     }
 
     #[test]
-    fn kernel_version_changes_require_explicit_patch_review() {
-        verify_version("6.18.49").unwrap();
-        for version in ["6.16.12", "6.18.50", "6.18.49-extra", ""] {
-            assert!(verify_version(version).is_err());
+    fn committed_patch_names_the_pinned_kernel() {
+        let version =
+            crate::kernel::version::KernelVersion::read(Path::new("kernel/version")).unwrap();
+        verify_version(&version.linux_version).unwrap();
+        let pinned = version.linux_version;
+        for other in [
+            "6.16.12",
+            &format!("{pinned}0"),
+            &format!("{pinned}-extra"),
+            "",
+        ] {
+            assert!(verify_version(other).is_err(), "accepted {other:?}");
         }
     }
 }

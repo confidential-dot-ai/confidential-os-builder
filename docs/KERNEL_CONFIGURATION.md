@@ -19,6 +19,17 @@ The kernel tools tree compiles `kernel/trusted-dsdt.asl` into
 loading boundary, rejects dynamic AML additions and requires successful
 primary-table initialization before userspace starts.
 
+Earlier builds shipped the same table through an early initrd archive and
+`CONFIG_ACPI_TABLE_UPGRADE`. That mechanism is a firmware repair path: it
+matches host-controlled OEM identifiers and only replaces a table whose
+revision is older, so a host could keep its own DSDT in play, and it does
+not exclude secondary SSDT/PSDT/OSDT tables at all. `acpi_no_static_ssdt`
+is likewise insufficient on its own, since it covers only static SSDTs and
+leaves dynamic loading open. Linux's built-in custom-DSDT support selects
+the compiled table by signature without those comparisons, so the trusted
+table is compiled into the measured kernel and the patch closes the
+remaining loading paths.
+
 `verify_builder_invariants` checks the resolved configuration after all
 consumer fragments have been applied:
 
@@ -33,17 +44,26 @@ patch participate in the kernel cache fingerprint. Snapshot regeneration
 must use the patched source tree so the added configuration symbol is
 resolved by Kconfig.
 
-The patch is specific to Linux 6.18.49; the builder refuses another version
-until these enforcement points have been reviewed and the patch retargeted:
+The patch header's `Linux-Version:` trailer names the kernel its hooks were
+audited on. `kernel/version` must match it, so a pin bump fails the build
+until these enforcement points have been reviewed on the new source and
+the patch retargeted:
 
 | Kernel boundary | Enforcement |
 |---|---|
 | `acpi_ns_load_table` | Before namespace parsing, require the canonical DSDT index and the actual compiled `dsdt_aml_code[]` array. Reject a second load |
-| `acpi_os_prepare_trusted_aml` | Validate the built-in array's signature, exact length and checksum; keep the bytes resident |
+| `acpi_os_prepare_trusted_aml` | Re-check the built-in array's signature, exact length and checksum (ACPICA's override verification and `acpi_tb_load_namespace` reject a bad table first, so these are defense in depth); keep the bytes resident |
 | `acpi_tb_load_namespace` | Skip optional DSDT copying so pointer identity continues to identify the compiled array |
-| `acpi_tb_load_table` / `acpi_tb_install_and_load_table` | Deny `LoadTable`, `Load` and `acpi_load_table()` before dynamic namespace loading |
+| `acpi_tb_install_and_load_table` | Deny `Load` and `acpi_load_table()` before the table is installed: `acpi_ns_load_table` would reject it anyway, but only after installation, and callers free the buffer on failure. `LoadTable` reaches `acpi_ns_load_table` directly and needs no extra hook |
 | `acpi_install_method` / `acpi_tb_unload_table` | Deny direct method replacement and namespace unloading |
 | `kernel_init_freeable` | After initcalls, require successful trusted DSDT loading and enabled ACPI before launching init; this check is not an initcall that can be blacklisted |
+
+Rejecting a firmware SSDT is not silent: ACPICA logs `ACPI Error: AE_ACCESS,
+(SSDT:...) while loading table` and `N table load failures` for each one,
+and boot continues only because `acpi_load_tables` masks the per-table
+status. Those lines are expected on any host that emits secondary tables
+(vmgenid, NVDIMM, hotplug); the masking is part of what a kernel update
+must re-audit.
 
 The AML namespace parser has one table-loading caller in this kernel;
 method evaluation operates on the admitted namespace. The separate method

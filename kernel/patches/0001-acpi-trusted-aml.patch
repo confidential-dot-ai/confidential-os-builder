@@ -6,10 +6,12 @@ namespace parser boundary. Reject table and method injection, retain the
 built-in table instead of copying it, and require successful ACPI setup
 before starting userspace.
 
-Applies to the checksum-pinned Linux 6.18.49 source. The custom DSDT header
-must define dsdt_aml_code[]; the builder fingerprints this patch and that
-source.
+The custom DSDT header must define dsdt_aml_code[]; the builder
+fingerprints this patch and that source. The Linux-Version trailer names
+the source the hooks below were audited against; the builder refuses any
+other kernel/version until the patch is retargeted.
 
+Linux-Version: 6.18.49
 ---
 --- a/drivers/acpi/Kconfig
 +++ b/drivers/acpi/Kconfig
@@ -47,7 +49,7 @@ source.
   */
 --- a/drivers/acpi/tables.c
 +++ b/drivers/acpi/tables.c
-@@ -678,6 +678,56 @@
+@@ -678,6 +678,59 @@
  static void *dsdt_amlcode __attribute__ ((weakref("dsdt_aml_code")));
  #endif
  
@@ -58,6 +60,9 @@ source.
 +/*
 + * Headers and physical origins are supplied by the host. Only the actual
 + * built-in array is trusted. Keep that array resident and do not copy it.
++ * ACPICA already verifies the override's checksum and acpi_tb_load_namespace
++ * its signature before this runs; the header checks below are defense in
++ * depth against changes to those paths, not the first line.
 + */
 +acpi_status acpi_os_prepare_trusted_aml(struct acpi_table_header *table)
 +{
@@ -70,8 +75,8 @@ source.
 +	if (trusted_aml_started)
 +		return AE_ACCESS;
 +
-+	if (sizeof(dsdt_aml_code) < sizeof(*table) ||
-+	    memcmp(table->signature, ACPI_SIG_DSDT, ACPI_NAMESEG_SIZE) ||
++	BUILD_BUG_ON(sizeof(dsdt_aml_code) < sizeof(*table));
++	if (memcmp(table->signature, ACPI_SIG_DSDT, ACPI_NAMESEG_SIZE) ||
 +	    table->length != sizeof(dsdt_aml_code))
 +		panic("Trusted AML: invalid built-in DSDT header");
 +
@@ -162,25 +167,16 @@ source.
  			acpi_gbl_DSDT = new_dsdt;
 --- a/drivers/acpi/acpica/tbdata.c
 +++ b/drivers/acpi/acpica/tbdata.c
-@@ -951,6 +951,12 @@
- 
- 	ACPI_FUNCTION_TRACE(tb_load_table);
- 
-+#ifdef CONFIG_ACPI_TRUSTED_AML
-+	/* LoadTable must not load even an already-installed firmware table. */
-+	ACPI_WARNING((AE_INFO, "Trusted AML: dynamic table load denied"));
-+	return_ACPI_STATUS(AE_ACCESS);
-+#endif
-+
- 	/*
- 	 * Note: Now table is "INSTALLED", it must be validated before
- 	 * using.
-@@ -1010,6 +1016,12 @@
+@@ -1010,6 +1010,16 @@
  
  	ACPI_FUNCTION_TRACE(tb_install_and_load_table);
  
 +#ifdef CONFIG_ACPI_TRUSTED_AML
-+	/* Load and acpi_load_table() must fail before installation. */
++	/*
++	 * acpi_ns_load_table() would reject this table, but only after it is
++	 * installed, and callers free the buffer on failure while the
++	 * descriptor keeps pointing at it. Fail before installation instead.
++	 */
 +	ACPI_WARNING((AE_INFO, "Trusted AML: dynamic table load denied"));
 +	return_ACPI_STATUS(AE_ACCESS);
 +#endif
@@ -188,7 +184,7 @@ source.
  	/* Install the table and load it into the namespace */
  
  	status = acpi_tb_install_standard_table(address, flags, table, TRUE,
-@@ -1046,6 +1058,12 @@
+@@ -1046,6 +1056,12 @@
  
  	ACPI_FUNCTION_TRACE(tb_unload_table);
  

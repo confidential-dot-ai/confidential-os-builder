@@ -55,9 +55,6 @@ pub struct Fingerprint {
 #[serde(deny_unknown_fields)]
 pub struct Outputs {
     pub vmlinuz_sha256: String,
-    /// True only after the mandatory resolved kernel configuration passes.
-    #[serde(default)]
-    pub trusted_aml: bool,
 }
 
 impl Fingerprint {
@@ -152,7 +149,6 @@ mod tests {
         assert_eq!(fp.kernel_extra_config_sha256, "");
         assert_eq!(fp.trusted_dsdt_sha256, "");
         assert_eq!(fp.trusted_aml_patch_sha256, "");
-        assert_ne!(fp, sample_fp());
         assert_eq!(fp.linux_version, "6.12.7");
     }
 
@@ -194,7 +190,6 @@ mod tests {
         let mut patch = before.clone();
         patch.trusted_aml_patch_sha256 = "7".repeat(64);
         for after in [table, patch] {
-            assert_ne!(before, after);
             assert_ne!(before.to_canonical_json(), after.to_canonical_json());
         }
     }

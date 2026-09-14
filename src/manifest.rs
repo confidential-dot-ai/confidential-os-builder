@@ -124,9 +124,6 @@ pub struct KernelInputs {
     /// SHA-256 of the version-specific kernel enforcement patch.
     #[serde(default)]
     pub trusted_aml_patch_sha256: String,
-    /// Compiled-in DSDT and mandatory kernel namespace-load authorization.
-    #[serde(default)]
-    pub trusted_aml: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use sha2::{Digest, Sha256};
 
 use crate::kernel::{aml, compile, config, fetch, manifest as km, version::KernelVersion};
 use crate::tools;
-use crate::KernelArgs;
+use crate::{KernelArgs, KernelSourceArgs};
 
 const REQUIRED_FRAGMENT: &str = "kernel/required.config";
 /// Committed, public RANDSTRUCT/latent_entropy seed — pins per-build struct
@@ -59,64 +59,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     let snapshot = snapshot_path(fragment)?;
     let snapshot = snapshot.as_path();
 
-    fs_err::create_dir_all(&args.output)?;
-    let out_dir = args.output.canonicalize()?;
-    let cache_dir = out_dir.join("cache");
-    let build_dir = out_dir.join("build");
-    let log_path = out_dir.join("build.log");
-    let vmlinuz_path = out_dir.join("vmlinuz");
-    let manifest_path = out_dir.join("manifest.json");
-
-    // Cache short-circuit: skip the entire build if all inputs match and the
-    // existing vmlinuz still hashes to what the manifest claims. --force
-    // bypasses this.
-    if !args.force && manifest_path.exists() && vmlinuz_path.exists() {
-        if let Ok(cached) = km::read(&manifest_path) {
-            let tools_tree_path = Path::new(TOOLS_TREE_IMAGE);
-            if let Ok(live) =
-                compute_fingerprint(&version, tools_tree_path, fragment, signing_cert, snapshot)
-            {
-                if cached.inputs == live && cached.outputs.trusted_aml {
-                    let actual = fetch::sha256_file(&vmlinuz_path)?;
-                    if actual.eq_ignore_ascii_case(&cached.outputs.vmlinuz_sha256) {
-                        println!(
-                            "kernel cache HIT (linux {}, sha256 {})",
-                            cached.linux_version, actual
-                        );
-                        return Ok(());
-                    }
-                    return Err(anyhow!(
-                        "kernel artifact corrupted (sha256 mismatch). Re-run with --force."
-                    ));
-                }
-            }
-        }
-    }
-
-    // Phase 0a: ensure tools tree
-    println!("\n=== Step 0a: Ensuring kernel-builder tools tree (mkosi) ===");
-    let tools_tree = ensure_tools_tree(args.force, &args.kernel_inputs.kernel_builder_package)?;
-
-    // Phase 0b: fetch tarball
-    println!("\n=== Step 0b: Fetching kernel tarball ===");
-    let tarball = fetch::fetch(&version.linux_version, &version.tarball_sha256, &cache_dir)?;
-
-    // Phase 0c: extract + configure
-    println!("\n=== Step 0c: Extracting + configuring kernel ===");
-    // The compile/configure phases write into this tree as root via nspawn,
-    // so a previous run can leave root-owned files here. force_remove_dir_all
-    // falls back to `sudo rm -rf` on EPERM so re-builds always succeed.
-    tools::force_remove_dir_all(&build_dir)?;
-    fs_err::create_dir_all(&build_dir)?;
-    extract_tarball(&tarball, &build_dir)?;
-    let kernel_src = build_dir.join(format!("linux-{}", version.linux_version));
-    if !kernel_src.exists() {
-        return Err(anyhow!(
-            "expected extracted dir {} not found",
-            kernel_src.display()
-        ));
-    }
-
+    // Consumer inputs get their own messages before the fingerprint reads them.
     if let Some(f) = fragment {
         if !f.exists() {
             return Err(anyhow!(
@@ -125,8 +68,50 @@ pub fn run(args: &KernelArgs) -> Result<()> {
             ));
         }
     }
+    verify_signing_cert(signing_cert)?;
 
-    let staged_aml = aml::prepare(&tools_tree, &kernel_src)?;
+    fs_err::create_dir_all(&args.output)?;
+    let out_dir = args.output.canonicalize()?;
+    let cache_dir = out_dir.join("cache");
+    let build_dir = out_dir.join("build");
+    let log_path = out_dir.join("build.log");
+    let vmlinuz_path = out_dir.join("vmlinuz");
+    let manifest_path = out_dir.join("manifest.json");
+
+    // Every input is hashed once here, before anything is staged, and once
+    // more after the compile: an edit during the build fails it instead of
+    // labelling the old bytes with the new hashes.
+    let staged = compute_fingerprint(&version, fragment, signing_cert, snapshot)?;
+
+    // Cache short-circuit: skip the entire build if all inputs match and the
+    // existing vmlinuz still hashes to what the manifest claims. --force
+    // bypasses this.
+    if !args.force && manifest_path.exists() && vmlinuz_path.exists() {
+        if let Ok(cached) = km::read(&manifest_path) {
+            if cached.inputs == staged {
+                let actual = fetch::sha256_file(&vmlinuz_path)?;
+                if actual.eq_ignore_ascii_case(&cached.outputs.vmlinuz_sha256) {
+                    println!(
+                        "kernel cache HIT (linux {}, sha256 {})",
+                        cached.linux_version, actual
+                    );
+                    return Ok(());
+                }
+                return Err(anyhow!(
+                    "kernel artifact corrupted (sha256 mismatch). Re-run with --force."
+                ));
+            }
+        }
+    }
+
+    // Phase 0a: ensure tools tree
+    println!("\n=== Step 0a: Ensuring kernel-builder tools tree (mkosi) ===");
+    let tools_tree = ensure_tools_tree(args.force, &args.kernel_inputs.kernel_builder_package)?;
+
+    // Phase 0b + 0c: fetch, extract, stage the trusted AML inputs, configure
+    println!("\n=== Step 0b: Fetching + extracting kernel ===");
+    let (kernel_src, aml_script) = extract_pinned_source(&version, &cache_dir, &build_dir)?;
+    println!("\n=== Step 0c: Configuring kernel ===");
 
     // Pin the RANDSTRUCT seed: rewrite gen-randstruct-seed.sh to emit our
     // committed seed instead of reading /dev/urandom. The Makefile rule is
@@ -170,24 +155,6 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // expects it (STAGED_SIGNING_CERT). The certificate is a consumer input,
     // like the config fragment: whoever owns the image owns the trust anchor
     // for the modules it loads, and this repo ships none.
-    if !signing_cert.is_file() {
-        return Err(anyhow!(
-            "module signing certificate not found: {} — pass --module-signing-cert, \
-             or generate the default per docs/module-signing.md",
-            signing_cert.display()
-        ));
-    }
-    // A placeholder (or any non-PEM) would otherwise fail deep in the build at
-    // the .incbin in certs/system_certificates.S; say so here instead.
-    if !fs_err::read_to_string(signing_cert)
-        .unwrap_or_default()
-        .contains("-----BEGIN CERTIFICATE-----")
-    {
-        return Err(anyhow!(
-            "{} is not a PEM certificate (docs/module-signing.md)",
-            signing_cert.display()
-        ));
-    }
     let certs_dir = kernel_src.join("certs");
     fs_err::create_dir_all(&certs_dir)?;
     // kernel_src is a freshly extracted tarball (wiped above), so a plain copy
@@ -201,6 +168,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
         Path::new(HARDENING_FRAGMENT),
         Path::new(CONFIDENTIAL_FRAGMENT),
         fragment,
+        &aml_script,
     )?;
 
     // Phase 0c.5: refresh the snapshot lockfile. The snapshot auto-updates
@@ -223,14 +191,10 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Phase 0e: finalize manifest
     println!("\n=== Step 0e: Writing manifest ===");
-    let inputs = compute_fingerprint(&version, &tools_tree, fragment, signing_cert, snapshot)?;
-    staged_aml.verify(
-        &inputs.trusted_dsdt_sha256,
-        &inputs.trusted_aml_patch_sha256,
-    )?;
+    let inputs = compute_fingerprint(&version, fragment, signing_cert, snapshot)?;
+    verify_inputs_unchanged(&staged, &inputs)?;
     let outputs = km::Outputs {
         vmlinuz_sha256: fetch::sha256_file(&vmlinuz_path)?,
-        trusted_aml: true,
     };
     let manifest = km::KernelManifest {
         version: 1,
@@ -242,6 +206,93 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     km::write(&manifest_path, &manifest)?;
     println!("kernel: {}", vmlinuz_path.display());
     println!("manifest: {}", manifest_path.display());
+    Ok(())
+}
+
+/// `confos kernel-source`: the same pinned, checksum-verified, patched tree
+/// the build compiles, with the trusted DSDT header generated in the pinned
+/// tools tree, but left as source at `<output>/linux-<version>`. The ACPI
+/// harness (tests/acpi) boots kernels built from it, so what it tests is what
+/// the builder ships, prepared by one code path.
+pub fn prepare_source(args: &KernelSourceArgs) -> Result<()> {
+    let version = KernelVersion::read(Path::new(VERSION_PATH))?;
+    aml::verify_version(&version.linux_version)?;
+    let tools_tree = ensure_tools_tree(false, &[])?;
+    fs_err::create_dir_all(&args.output)?;
+    let out_dir = args.output.canonicalize()?;
+    let (kernel_src, aml_script) =
+        extract_pinned_source(&version, &out_dir.join("cache"), &out_dir)?;
+    config::nspawn(
+        &tools_tree,
+        &kernel_src,
+        "/build",
+        &[],
+        &format!("set -eu\ncd /build\n{aml_script}"),
+    )?;
+    println!("kernel source: {}", kernel_src.display());
+    Ok(())
+}
+
+/// Fetch the pinned tarball into `cache_dir`, extract it fresh under `dest`,
+/// and stage the trusted AML inputs into the tree. Returns the tree and the
+/// script that patches it and compiles the table, to run inside the tools
+/// tree from the tree root.
+fn extract_pinned_source(
+    version: &KernelVersion,
+    cache_dir: &Path,
+    dest: &Path,
+) -> Result<(PathBuf, String)> {
+    let tarball = fetch::fetch(&version.linux_version, &version.tarball_sha256, cache_dir)?;
+    let kernel_src = dest.join(format!("linux-{}", version.linux_version));
+    // The tools tree writes into this tree as root via nspawn, so a previous
+    // run can leave root-owned files here. force_remove_dir_all falls back
+    // to `sudo rm -rf` on EPERM so re-runs always succeed.
+    tools::force_remove_dir_all(&kernel_src)?;
+    fs_err::create_dir_all(dest)?;
+    extract_tarball(&tarball, dest)?;
+    if !kernel_src.exists() {
+        return Err(anyhow!(
+            "expected extracted dir {} not found",
+            kernel_src.display()
+        ));
+    }
+    let aml_script = aml::stage(&kernel_src)?;
+    Ok((kernel_src, aml_script))
+}
+
+fn verify_signing_cert(signing_cert: &Path) -> Result<()> {
+    if !signing_cert.is_file() {
+        return Err(anyhow!(
+            "module signing certificate not found: {} — pass --module-signing-cert, \
+             or generate the default per docs/module-signing.md",
+            signing_cert.display()
+        ));
+    }
+    // A placeholder (or any non-PEM) would otherwise fail deep in the build at
+    // the .incbin in certs/system_certificates.S; say so here instead.
+    if !fs_err::read_to_string(signing_cert)
+        .unwrap_or_default()
+        .contains("-----BEGIN CERTIFICATE-----")
+    {
+        return Err(anyhow!(
+            "{} is not a PEM certificate (docs/module-signing.md)",
+            signing_cert.display()
+        ));
+    }
+    Ok(())
+}
+
+/// The snapshot lockfile is the one input the build itself rewrites; every
+/// other field must still hash to what was staged, or the manifest would
+/// describe bytes that were not built.
+fn verify_inputs_unchanged(staged: &km::Fingerprint, finished: &km::Fingerprint) -> Result<()> {
+    let expected = km::Fingerprint {
+        snapshot_config_sha256: finished.snapshot_config_sha256.clone(),
+        ..staged.clone()
+    };
+    if *finished != expected {
+        bail!("kernel inputs changed during the build; rerun `confos kernel`");
+    }
     Ok(())
 }
 
@@ -322,7 +373,6 @@ fn snapshot_path(fragment: Option<&Path>) -> Result<PathBuf> {
 /// snapshot invalidates the cache and forces a rebuild that regenerates it.
 pub fn compute_fingerprint(
     version: &KernelVersion,
-    _tools_tree: &Path,
     fragment: Option<&Path>,
     signing_cert: &Path,
     snapshot: &Path,
@@ -432,6 +482,34 @@ mod tests {
         let with_new_file = hash_tree_inputs(&conf, &sandbox).unwrap();
         fs_err::write(&conf, "Packages=y\n").unwrap();
         assert_ne!(with_new_file, hash_tree_inputs(&conf, &sandbox).unwrap());
+    }
+
+    #[test]
+    fn mid_build_input_edits_fail_except_the_regenerated_snapshot() {
+        let staged = km::Fingerprint {
+            linux_version: "6.18.49".into(),
+            tarball_sha256: "a".repeat(64),
+            required_config_sha256: "b".repeat(64),
+            hardening_config_sha256: "c".repeat(64),
+            confidential_config_sha256: "d".repeat(64),
+            kernel_extra_config_sha256: String::new(),
+            snapshot_config_sha256: "e".repeat(64),
+            module_signing_cert_sha256: "f".repeat(64),
+            randstruct_seed_sha256: "1".repeat(64),
+            trusted_dsdt_sha256: "2".repeat(64),
+            trusted_aml_patch_sha256: "3".repeat(64),
+            tools_tree_digest: "4".repeat(64),
+        };
+        verify_inputs_unchanged(&staged, &staged).unwrap();
+        let mut regenerated = staged.clone();
+        regenerated.snapshot_config_sha256 = "9".repeat(64);
+        verify_inputs_unchanged(&staged, &regenerated).unwrap();
+        let mut edited = staged.clone();
+        edited.trusted_dsdt_sha256 = "9".repeat(64);
+        assert!(verify_inputs_unchanged(&staged, &edited).is_err());
+        let mut edited = staged.clone();
+        edited.hardening_config_sha256 = "9".repeat(64);
+        assert!(verify_inputs_unchanged(&staged, &edited).is_err());
     }
 
     #[test]

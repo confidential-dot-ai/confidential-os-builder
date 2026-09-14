@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Build and boot the patched kernel in disposable QEMU; never needs /dev/kvm."""
+"""Boot kernels built from the builder's patched source under QEMU TCG.
+
+Run through tests/acpi/run.sh: `confos kernel-source` prepares the tree and
+this script runs inside the pinned kernel tools tree. Never needs /dev/kvm.
+"""
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import struct
 import re
@@ -12,6 +17,8 @@ import subprocess
 import sys
 
 HERE = Path(__file__).resolve().parent
+# Native inside the x86-64 tools tree; a cross prefix only elsewhere.
+CROSS = "" if platform.machine() in ("x86_64", "amd64") else "x86_64-linux-gnu-"
 
 
 def command(args, *, cwd=None, log=None):
@@ -36,6 +43,13 @@ def aml(source, output):
     return output.with_suffix(".aml")
 
 
+def checksum(data, at=9):
+    """Rewrite the ACPI checksum byte so the table sums to zero."""
+    data[at] = 0
+    data[at] = -sum(data) & 255
+    return data
+
+
 def variant(source, output, signature=None, revision=None, oem=None):
     data = bytearray(source.read_bytes())
     if signature:
@@ -44,10 +58,21 @@ def variant(source, output, signature=None, revision=None, oem=None):
         data[24:28] = revision.to_bytes(4, "little")
     if oem:
         data[10:16] = oem.encode("ascii")
-    data[9] = 0
-    data[9] = -sum(data) & 255
-    output.write_bytes(data)
+    output.write_bytes(checksum(data))
     return output
+
+
+def corrupt(source, defect, *, signature, length):
+    """Break one header field; a "checksum" defect leaves the sum wrong."""
+    data = bytearray(source.read_bytes())
+    if defect == "signature":
+        data[:4] = signature
+    elif defect == "length":
+        struct.pack_into("<I", data, 4, length(data))
+    if defect == "checksum":
+        data[9] ^= 1
+        return data
+    return checksum(data)
 
 
 def firmware_root(templates, primary, secondary, output):
@@ -59,11 +84,6 @@ def firmware_root(templates, primary, secondary, output):
     base = 0x08000000
     memory = bytearray(65536)
     cursor = 256
-
-    def checksum(data):
-        data[9] = 0
-        data[9] = -sum(data) & 255
-        return data
 
     def store(data):
         nonlocal cursor
@@ -88,7 +108,7 @@ def firmware_root(templates, primary, secondary, output):
     rsdt.extend(struct.pack("<" + "I" * len(pointers), *pointers))
     rsdt_address = store(checksum(rsdt))
     rsdp = bytearray(struct.pack("<8sB6sBI", b"RSD PTR ", 0, b"CONFAI", 0, rsdt_address))
-    rsdp[8] = -sum(rsdp) & 255
+    checksum(rsdp, at=8)
     memory[:len(rsdp)] = rsdp
     output.write_bytes(memory)
     return ["-device", f"loader,file={output},addr={base}"], f" acpi_rsdp={base:x} memmap=64K$0x{base:x}"
@@ -105,21 +125,27 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     if "ACPI_TRUSTED_AML" not in (source / "drivers/acpi/Kconfig").read_text():
         parser.error("source must already contain the repository trusted AML patch")
-    for binary in ("iasl", "x86_64-linux-gnu-gcc", "gcc", "make", "qemu-system-x86_64", "cpio"):
+    builder_header = source / "include/confos-trusted-dsdt.h"
+    if not builder_header.exists():
+        parser.error("source lacks the builder-generated trusted DSDT header; prepare it with tests/acpi/run.sh")
+    for binary in ("iasl", CROSS + "gcc", "make", "qemu-system-x86_64", "cpio"):
         if not shutil.which(binary):
-            parser.error(f"missing {binary}; use tests/acpi/Dockerfile")
+            parser.error(f"missing {binary}; run inside the kernel tools tree via tests/acpi/run.sh")
+    # Test kernels overwrite this header in place; keep the builder's copy.
+    production = output / "production.hex"
+    shutil.copyfile(builder_header, production)
     trusted = aml(HERE / "fixtures/trusted.asl", output / "trusted")
     host = aml(HERE / "fixtures/host.asl", output / "host")
     secondary = aml(HERE / "fixtures/secondary.asl", output / "secondary")
     tables = {sig: variant(secondary, output / f"{sig}.aml", signature=sig) for sig in ("SSDT", "PSDT", "OSDT")}
     initdir = output / "initramfs"
     initdir.mkdir(exist_ok=True)
-    command(["x86_64-linux-gnu-gcc", "-static", "-Os", "-Wall", "-Wextra", "-Werror", HERE / "init.c", "-o", initdir / "init"])
+    command([CROSS + "gcc", "-static", "-Os", "-Wall", "-Wextra", "-Werror", HERE / "init.c", "-o", initdir / "init"])
     with (output / "initramfs.cpio").open("wb") as archive:
         subprocess.run(["cpio", "-o", "-H", "newc", "--quiet"], cwd=initdir, input=b"init\n", stdout=archive, check=True)
     build = output / "build"
     build.mkdir(exist_ok=True)
-    make = ["make", "-C", source, f"O={build}", "ARCH=x86_64", "CROSS_COMPILE=x86_64-linux-gnu-"]
+    make = ["make", "-C", source, f"O={build}", "ARCH=x86_64", f"CROSS_COMPILE={CROSS}"]
     command([*make, "allnoconfig"], log=output / "configure.log")
     config = source / "scripts/config"
     enabled = ["64BIT", "SMP", "KEXEC", "KALLSYMS", "PRINTK", "MULTIUSER", "SYSFS", "PROC_FS", "TMPFS", "PCI", "ACPI", "PM", "TTY", "SERIAL_8250", "SERIAL_8250_CONSOLE", "BLK_DEV_INITRD", "BINFMT_ELF", "DEVTMPFS", "X86_LOCAL_APIC", "X86_IO_APIC"]
@@ -147,10 +173,10 @@ def main():
     results = []
     templates = {}
 
-    def boot(name, image, acpi_tables=(), required=(), forbidden=(), extra=(), cmdline="", fatal=False, primary=None, cpus=1, memory=256):
+    def boot(name, image, acpi_tables=(), required=(), forbidden=(), cmdline="", fatal=False, primary=None, cpus=1, memory=256):
+        extra = []
         if primary is not None:
-            root_args, root_cmdline = firmware_root(templates, primary, acpi_tables, output / f"{name}-firmware.bin")
-            extra = [*extra, *root_args]
+            extra, root_cmdline = firmware_root(templates, primary, acpi_tables, output / f"{name}-firmware.bin")
             cmdline += root_cmdline
             acpi_tables = ()
         qemu = ["qemu-system-x86_64", "-machine", "q35,accel=tcg", "-cpu", "max", "-m", f"{memory}M", "-smp", str(cpus), "-nodefaults", "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot", "-kernel", str(image), "-initrd", str(output / "initramfs.cpio"), "-append", "console=ttyS0 rdinit=/init panic=-1 " + cmdline, *extra]
@@ -203,18 +229,8 @@ def main():
         table = variant(host, output / f"revision-{revision}.aml", revision=revision, oem="CONFAI" if revision == 1 else "OTHERX")
         boot(f"hardened-revision-{revision}", hardened, primary=table, required=accepted, forbidden=denied)
     for defect in ("signature", "length", "checksum"):
-        malformed = bytearray(host.read_bytes())
-        if defect == "signature":
-            malformed[:4] = b"XXXX"
-        elif defect == "length":
-            struct.pack_into("<I", malformed, 4, 20)
-        if defect != "checksum":
-            malformed[9] = 0
-            malformed[9] = -sum(malformed) & 255
-        else:
-            malformed[9] ^= 1
         bad_host = output / f"host-invalid-{defect}.aml"
-        bad_host.write_bytes(malformed)
+        bad_host.write_bytes(corrupt(host, defect, signature=b"XXXX", length=lambda _: 20))
         fatal_host = defect == "signature"
         boot("hardened-host-invalid-" + defect, hardened, primary=bad_host,
              required=["Kernel panic", "Trusted AML:"] if fatal_host else accepted,
@@ -253,22 +269,11 @@ def main():
         probe_data.unlink(missing_ok=True)
     for defect in ("signature", "length", "checksum"):
         invalid_header = output / f"invalid-{defect}.hex"
-        invalid = bytearray(trusted.read_bytes())
-        if defect == "signature":
-            invalid[:4] = b"SSDT"
-        elif defect == "length":
-            struct.pack_into("<I", invalid, 4, len(invalid) + 1)
-        if defect != "checksum":
-            invalid[9] = 0
-            invalid[9] = -sum(invalid) & 255
-        else:
-            invalid[9] ^= 1
+        invalid = corrupt(trusted, defect, signature=b"SSDT", length=lambda data: len(data) + 1)
         invalid_header.write_text("unsigned char dsdt_aml_code[] = {" + ",".join(str(x) for x in invalid) + "};\n")
         invalid_image = kernel("invalid-" + defect, invalid_header, True)
         boot("hardened-invalid-" + defect, invalid_image, required=["Kernel panic", "Trusted AML:"], fatal=True)
-    production_asl = HERE.parents[1] / "kernel/trusted-dsdt.asl"
-    production = aml(production_asl, output / "production")
-    image = kernel("production-dsdt", production.with_suffix(".hex"), True)
+    image = kernel("production-dsdt", production, True)
     boot("production-q35", image, required=["ACPI: Trusted AML: built-in DSDT loaded", "AMLTEST: DEVICE PNP0A08", "AMLTEST: PCI 0000:00:00.0"], forbidden=denied)
     boot("production-q35-smp", image, required=["ACPI: Trusted AML: built-in DSDT loaded", "AMLTEST: DEVICE PNP0A08", "AMLTEST: PCI 0000:00:00.0"], forbidden=denied, cpus=4, memory=4096)
     hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in output.glob("*-bzImage")}

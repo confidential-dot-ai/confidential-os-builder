@@ -53,6 +53,10 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 /// `extra_fragment` is the optional caller-supplied `--kernel-config-fragment`.
 /// When `Some`, it's merged after the confos-controlled fragments so
 /// `mod2yesconfig` still flattens any tristate symbols it introduces.
+///
+/// `prelude` runs first, from the tree root in the same container: the
+/// trusted-AML patch and table compile (see `aml::stage`), which must land
+/// before Kconfig reads the tree.
 pub fn run_configure_phase(
     tools_tree: &Path,
     kernel_dir: &Path,
@@ -60,6 +64,7 @@ pub fn run_configure_phase(
     hardening_fragment: &Path,
     confidential_fragment: &Path,
     extra_fragment: Option<&Path>,
+    prelude: &str,
 ) -> Result<()> {
     let kernel_dir_abs = kernel_dir
         .canonicalize()
@@ -91,6 +96,7 @@ pub fn run_configure_phase(
     let script = format!(
         "set -eux\n\
          cd /build\n\
+         {prelude}\
          make x86_64_defconfig\n\
          scripts/kconfig/merge_config.sh -m .config .fragments/required.config\n\
          scripts/kconfig/merge_config.sh -m .config .fragments/hardening.config\n\
@@ -123,7 +129,10 @@ pub fn run_configure_phase(
 /// each fragment got what it requested — these hold even when a fragment
 /// requested the opposite, so a consumer cannot opt out of them.
 fn verify_builder_invariants(resolved: &Path) -> Result<()> {
-    let config = fs_err::read_to_string(resolved)?;
+    check_builder_invariants(&fs_err::read_to_string(resolved)?)
+}
+
+fn check_builder_invariants(config: &str) -> Result<()> {
     // MODULE_SIG_ALL=y makes the kernel build sign in-tree modules, which
     // requires a private key at build time: with no MODULE_SIG_KEY set the
     // build GENKEYs one per run and embeds its certificate in vmlinux, so
@@ -156,7 +165,7 @@ fn verify_builder_invariants(resolved: &Path) -> Result<()> {
              instead (docs/module-signing.md)."
         );
     }
-    super::aml::verify_config(&config)
+    super::aml::verify_config(config)
 }
 
 /// Fail if the resolved `.config` disagrees with what the fragments
@@ -184,6 +193,23 @@ fn verify_builder_invariants(resolved: &Path) -> Result<()> {
 /// (An actual `=y` pin would keep the symbol on silently, so combining a pin
 /// with an assertion is rejected.)
 fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
+    let fragments = fragments
+        .iter()
+        .map(|frag| {
+            let name = frag.file_name().unwrap_or_default().to_string_lossy();
+            Ok((name.into_owned(), fs_err::read_to_string(frag)?))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let pairs: Vec<(&str, &str)> = fragments
+        .iter()
+        .map(|(name, body)| (name.as_str(), body.as_str()))
+        .collect();
+    check_fragment_options(&pairs, &fs_err::read_to_string(resolved)?)
+}
+
+/// `fragments` are `(name, contents)` in merge order; `config` is the
+/// resolved `.config`.
+fn check_fragment_options(fragments: &[(&str, &str)], config: &str) -> Result<()> {
     /// Final request for a symbol after last-fragment-wins merging; On/Off
     /// carry the requesting fragment's name for the error message.
     enum Request {
@@ -210,7 +236,6 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
         })
     }
 
-    let config = fs_err::read_to_string(resolved)?;
     // symbol -> value from the resolved .config's `CONFIG_X=value` lines.
     let resolved_values: std::collections::HashMap<&str, &str> = config
         .lines()
@@ -224,9 +249,8 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     // pin cannot make a forced assertion pass after its forcing chain vanishes.
     let mut on_pins: std::collections::BTreeMap<String, (String, String)> = Default::default();
     let mut forced: std::collections::BTreeMap<String, String> = Default::default();
-    for frag in fragments {
-        let name = frag.file_name().unwrap_or_default().to_string_lossy();
-        for line in fs_err::read_to_string(frag)?.lines() {
+    for (name, body) in fragments {
+        for line in body.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("CONFIG_") {
                 if line != trimmed {
@@ -468,22 +492,27 @@ mod tests {
         p
     }
 
+    // Compile-time copies: the kernel integration tests rewrite the snapshot
+    // on disk, so reading it here would race them.
     #[test]
     fn committed_snapshot_matches_kernel_policy() {
-        let version =
-            crate::kernel::version::KernelVersion::read(Path::new("kernel/version")).unwrap();
-        crate::kernel::aml::verify_version(&version.linux_version).unwrap();
-        let snapshot = Path::new("kernel/config-x86_64.snapshot");
-        verify_fragment_options(
-            &[
-                Path::new("kernel/required.config"),
-                Path::new("kernel/hardening.config"),
-                Path::new("kernel/confidential.config"),
-            ],
-            snapshot,
-        )
-        .unwrap();
-        verify_builder_invariants(snapshot).unwrap();
+        let fragments = [
+            (
+                "required.config",
+                include_str!("../../kernel/required.config"),
+            ),
+            (
+                "hardening.config",
+                include_str!("../../kernel/hardening.config"),
+            ),
+            (
+                "confidential.config",
+                include_str!("../../kernel/confidential.config"),
+            ),
+        ];
+        let snapshot = include_str!("../../kernel/config-x86_64.snapshot");
+        check_fragment_options(&fragments, snapshot).unwrap();
+        check_builder_invariants(snapshot).unwrap();
     }
 
     #[test]
@@ -545,8 +574,11 @@ mod tests {
             "CONFIG_MODULE_SIG=y\nCONFIG_MODULE_SIG_KEY=\"\"\n# CONFIG_MODULE_SIG_ALL is not set\n",
             "CONFIG_MODULES=y\n",
         ] {
-            let resolved = write(&d, "resolved", body);
-            fs_err::write(&resolved, format!("{body}CONFIG_ACPI=y\nCONFIG_ACPI_CUSTOM_DSDT=y\nCONFIG_ACPI_TRUSTED_AML=y\nCONFIG_ACPI_CUSTOM_DSDT_FILE=\"confos-trusted-dsdt.h\"\n")).unwrap();
+            let resolved = write(
+                &d,
+                "resolved",
+                &format!("{body}CONFIG_ACPI=y\nCONFIG_ACPI_CUSTOM_DSDT=y\nCONFIG_ACPI_TRUSTED_AML=y\nCONFIG_ACPI_CUSTOM_DSDT_FILE=\"confos-trusted-dsdt.h\"\n"),
+            );
             verify_builder_invariants(&resolved).unwrap();
         }
     }

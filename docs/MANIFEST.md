@@ -33,8 +33,7 @@ shape.
       "kernel_extra_config_sha256": "",
       "snapshot_config_sha256": "…",
       "trusted_dsdt_sha256": "…",
-      "trusted_aml_patch_sha256": "…",
-      "trusted_aml": true
+      "trusted_aml_patch_sha256": "…"
     },
     "initrd": { "path": "initrd.img", "sha256": "…" },
     "firmware": { "path": "OVMF.fd", "sha256": "…" },
@@ -110,8 +109,7 @@ intermediate files).
 | `kernel.kernel_extra_config_sha256` | Hash of the caller's `--kernel-config-fragment`; empty string when none was passed |
 | `kernel.snapshot_config_sha256` | Hash of the lineage's fully-resolved `.config` lockfile: `kernel/config-x86_64.snapshot` for the bare baseline, `config-x86_64-<stem>.snapshot` beside the fragment otherwise |
 | `kernel.trusted_dsdt_sha256` | SHA-256 of `kernel/trusted-dsdt.asl`, the source compiled into the kernel; this is not the hash of a table read from guest sysfs. Empty for older manifests |
-| `kernel.trusted_aml_patch_sha256` | SHA-256 of the version-specific kernel enforcement patch. Empty for older manifests |
-| `kernel.trusted_aml` | Whether the build passed mandatory configuration checks for the built-in DSDT and kernel AML loading restriction. Defaults to `false` for older manifests; not a runtime test result or independent attestation |
+| `kernel.trusted_aml_patch_sha256` | SHA-256 of the version-specific kernel enforcement patch. Empty for older manifests. A kernel built by this builder always carries the policy; these two hashes say which table and patch, they are not a runtime test result or an independent attestation |
 | `initrd` | `initrd.img`: the mkosi-built initrd with its gzip timestamp normalized, exactly as embedded in the UKI. The trusted DSDT is in the kernel, not an early initrd archive |
 | `firmware` | The SNP-side, IGVM-aware OVMF (`--firmware`). Absent for `--platform tdx` builds. Note this is *not* the TDX firmware — that lives at `tdx.firmware` |
 | `base_image` | The mkosi-produced base filesystem image before disk assembly |
@@ -170,10 +168,9 @@ compensates.
   empty string). Kernel provenance fields added after v3's introduction
   also default on older manifests: `module_signing_cert_sha256`,
   `randstruct_seed_sha256`, `trusted_dsdt_sha256` and
-  `trusted_aml_patch_sha256` default to empty strings, and `trusted_aml`
-  defaults to `false`.
-- Consumers requiring trusted AML must reject missing/false policy
-  metadata and approve the rebuilt image's actual measurements. A boolean
+  `trusted_aml_patch_sha256` default to empty strings.
+- Consumers requiring trusted AML must reject manifests whose AML hashes
+  are empty and approve the rebuilt image's actual measurements. A field
   in an untrusted manifest cannot establish enforcement. Older strict
   readers may reject the added fields even though the schema number stays
   at v3; upgrade them before rolling out new manifests.

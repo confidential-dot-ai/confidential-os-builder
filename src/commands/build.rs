@@ -484,7 +484,6 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 randstruct_seed_sha256: kernel.manifest.inputs.randstruct_seed_sha256.clone(),
                 trusted_dsdt_sha256: kernel.manifest.inputs.trusted_dsdt_sha256.clone(),
                 trusted_aml_patch_sha256: kernel.manifest.inputs.trusted_aml_patch_sha256.clone(),
-                trusted_aml: kernel.manifest.outputs.trusted_aml,
             }),
             initrd: manifest::FileEntry {
                 path: manifest::basename_of(&initrd_path),
@@ -993,11 +992,11 @@ fn chrono_now() -> String {
 fn prepare_initrd(output: &Path, mkosi_initrd: &Path) -> anyhow::Result<PathBuf> {
     let normalized = output.join("initrd.img");
     fs_err::copy(mkosi_initrd, &normalized)?;
-    zero_gzip_mtime(&normalized, 0)?;
+    zero_gzip_mtime(&normalized)?;
     Ok(normalized.canonicalize()?)
 }
 
-/// Zero the MTIME field of the gzip member that starts at `offset` in `path`.
+/// Zero the MTIME field of the gzip member at the start of `path`.
 ///
 /// mkosi's `CompressOutput=gzip` stamps the compression wall-clock time into
 /// bytes 4..8 of the gzip header (`SourceDateEpoch=0` does not reach gzip,
@@ -1007,26 +1006,24 @@ fn prepare_initrd(output: &Path, mkosi_initrd: &Path) -> anyhow::Result<PathBuf>
 /// consecutive builds of identical content would publish different reference
 /// measurements. MTIME=0 is defined by RFC 1952 as "no timestamp available";
 /// the kernel's initramfs unpacker never reads it.
-fn zero_gzip_mtime(path: &Path, offset: u64) -> anyhow::Result<()> {
+fn zero_gzip_mtime(path: &Path) -> anyhow::Result<()> {
     use std::io::{Read, Seek, SeekFrom, Write};
     let mut file = fs_err::OpenOptions::new()
         .read(true)
         .write(true)
         .open(path)?;
-    file.seek(SeekFrom::Start(offset))?;
     let mut header = [0u8; 4];
     file.read_exact(&mut header)?;
     // ID1=0x1f ID2=0x8b (gzip magic), CM=8 (deflate) per RFC 1952
     if header[0..3] != [0x1f, 0x8b, 0x08] {
         anyhow::bail!(
-            "expected a gzip (deflate) member at offset {} of {}, found {:02x?} — \
+            "expected a gzip (deflate) member at the start of {}, found {:02x?} — \
              cannot normalize initrd MTIME for reproducible builds",
-            offset,
             path.display(),
             &header[0..3],
         );
     }
-    file.seek(SeekFrom::Start(offset + 4))?;
+    file.seek(SeekFrom::Start(4))?;
     file.write_all(&[0u8; 4])?;
     Ok(())
 }
@@ -1096,25 +1093,23 @@ mod tests {
     #[test]
     fn zero_gzip_mtime_zeroes_only_the_mtime_field() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("combined.img");
-        // Exercise gzip-member normalization at a nonzero offset too.
-        let prefix = b"EARLY-CPIO-BYTES";
-        let gz = gzip_with_mtime(b"initrd payload", 0x6a54_4bad);
-        let mut original = prefix.to_vec();
-        original.extend_from_slice(&gz);
+        let path = dir.path().join("initrd.img");
+        let original = gzip_with_mtime(b"initrd payload", 0x6a54_4bad);
         fs_err::write(&path, &original).unwrap();
 
-        zero_gzip_mtime(&path, prefix.len() as u64).unwrap();
+        zero_gzip_mtime(&path).unwrap();
 
         let patched = fs_err::read(&path).unwrap();
-        let off = prefix.len();
         let mut expected = original.clone();
-        expected[off + 4..off + 8].fill(0);
+        expected[4..8].fill(0);
         assert_eq!(patched, expected);
         // the member must still decompress to the same payload
         let mut out = Vec::new();
-        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&patched[off..]), &mut out)
-            .unwrap();
+        std::io::Read::read_to_end(
+            &mut flate2::read::GzDecoder::new(patched.as_slice()),
+            &mut out,
+        )
+        .unwrap();
         assert_eq!(out, b"initrd payload");
     }
 
@@ -1132,8 +1127,8 @@ mod tests {
         let pb = dir.path().join("b");
         fs_err::write(&pa, &a).unwrap();
         fs_err::write(&pb, &b).unwrap();
-        zero_gzip_mtime(&pa, 0).unwrap();
-        zero_gzip_mtime(&pb, 0).unwrap();
+        zero_gzip_mtime(&pa).unwrap();
+        zero_gzip_mtime(&pb).unwrap();
 
         assert_eq!(fs_err::read(&pa).unwrap(), fs_err::read(&pb).unwrap());
     }
@@ -1143,7 +1138,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("not-gzip");
         fs_err::write(&path, b"070701-plain-cpio-not-gzip").unwrap();
-        assert!(zero_gzip_mtime(&path, 0).is_err());
+        assert!(zero_gzip_mtime(&path).is_err());
     }
 
     fn mk_profile(dir: &Path) {
@@ -1653,14 +1648,9 @@ mod tests {
 
     #[test]
     fn prepare_initrd_preserves_payload_and_source() {
-        use std::io::Write;
         let dir = TempDir::new().unwrap();
         let source = dir.path().join("mkosi.cpio.gz");
-        let mut gzip = flate2::GzBuilder::new()
-            .mtime(1234)
-            .write(Vec::new(), flate2::Compression::default());
-        gzip.write_all(b"measured initramfs contents").unwrap();
-        let original = gzip.finish().unwrap();
+        let original = gzip_with_mtime(b"measured initramfs contents", 1234);
         fs_err::write(&source, &original).unwrap();
         let normalized = prepare_initrd(dir.path(), &source).unwrap();
         assert_eq!(fs_err::read(&source).unwrap(), original);

@@ -170,10 +170,9 @@ invalid trusted primary table is fatal before userspace.
 ### Deploying the trusted-AML policy
 
 Update each consumer's builder pin, regenerate its kernel configuration,
-and rebuild its kernel and image. Check `inputs.kernel.trusted_aml` is
-`true`, with populated `trusted_dsdt_sha256` and
-`trusted_aml_patch_sha256`; older manifests default to `false` and empty
-hashes. These fields describe the build and must come from the same
+and rebuild its kernel and image. Check `inputs.kernel.trusted_dsdt_sha256`
+and `trusted_aml_patch_sha256` are populated and match the sources you
+reviewed; older manifests default to empty hashes. These fields describe the build and must come from the same
 trusted provenance channel as the artifact measurements. The ASL source
 hash is not the hash of the compiled table in guest sysfs.
 
@@ -187,22 +186,21 @@ hardware. Source tests or non-TEE QEMU runs do not establish those hardware
 properties. Only retire older measurements once the rebuilt deployment
 passes its acceptance checks.
 
-The disposable [ACPI test harness](../tests/acpi/run.py) builds test kernels
-and exercises table selection under QEMU TCG without `/dev/kvm`. It requires
-a clean, disposable Linux source tree matching `kernel/version`, with
-`kernel/patches/0001-acpi-trusted-aml.patch` already applied. The harness
-writes generated headers into that source tree; do not point it at a
-production build in progress.
+The [ACPI test harness](../tests/acpi/run.py) builds test kernels and
+exercises table selection under QEMU TCG without `/dev/kvm`. Its wrapper
+has the builder prepare the source (`confos kernel-source`: the pinned,
+checksum-verified tarball, the enforcement patch and the compiled trusted
+DSDT header, exactly as `confos kernel` stages them) and then runs the
+harness inside the pinned kernel tools tree, so the tested kernels come
+from the production source and toolchain. It needs the same host setup as
+a kernel build (mkosi, `systemd-nspawn`, sudo).
 
 ```bash
-python3 tests/acpi/run.py --source /path/to/disposable-patched-linux \
-    --output /path/to/acpi-results --jobs 8
+tests/acpi/run.sh --jobs 8
 ```
 
-[tests/acpi/Dockerfile](../tests/acpi/Dockerfile) supplies the test tools.
-This test environment is separate from the pinned production kernel tools
-tree. Results include per-case serial logs, `results.json` and kernel
-hashes. The harness tests the actual patched kernel, but uses a reduced
+Results land in `output/acpi/results`: per-case serial logs,
+`results.json` and kernel hashes. The harness tests the actual patched kernel, but uses a reduced
 test configuration and marker tables; passing it does not certify a
 consumer's production image or TEE isolation. Dynamic API tests add a
 diagnostic kernel probe. The test configuration enables `KEXEC` to supply

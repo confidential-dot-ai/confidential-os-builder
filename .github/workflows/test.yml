@@ -37,42 +37,50 @@ jobs:
     trusted-aml:
         name: Test kernel AML enforcement
         runs-on: ubuntu-latest
-        timeout-minutes: 30
+        timeout-minutes: 45
         permissions:
             contents: read
         steps:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-            - name: Prepare checksum-pinned kernel source
-              run: |
-                  source kernel/version
-                  curl --fail --show-error --location --retry 5 --retry-all-errors \
-                      "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${LINUX_VERSION}.tar.xz" \
-                      --output "$RUNNER_TEMP/linux.tar.xz"
-                  printf '%s  %s\n' "$LINUX_TARBALL_SHA256" "$RUNNER_TEMP/linux.tar.xz" | sha256sum --check --strict
-                  mkdir "$RUNNER_TEMP/acpi-linux" "$RUNNER_TEMP/acpi-results"
-                  tar -xJf "$RUNNER_TEMP/linux.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/acpi-linux"
-                  patch --batch --forward --fuzz=0 --dry-run -p1 -d "$RUNNER_TEMP/acpi-linux" < kernel/patches/0001-acpi-trusted-aml.patch
-                  patch --batch --forward --fuzz=0 -p1 -d "$RUNNER_TEMP/acpi-linux" < kernel/patches/0001-acpi-trusted-aml.patch
-                  # Read stdin so checkpatch does not treat the tracked patch as a source file.
-                  "$RUNNER_TEMP/acpi-linux/scripts/checkpatch.pl" --no-tree --no-signoff - < kernel/patches/0001-acpi-trusted-aml.patch
-            - name: Build isolated test tools
-              run: docker build -t confos-acpi-test -f tests/acpi/Dockerfile .
+            - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+            - name: Setup uv
+              uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+              with:
+                  enable-cache: false
+            - name: Setup mkosi
+              uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
+            - name: Install nspawn
+              run: bin/host-deps systemd-container
+            - name: Cache kernel-builder tools tree
+              # Same key as base.yml: the harness runs in the production tree.
+              uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+              with:
+                  path: mkosi/kernel-builder/mkosi.output
+                  key: ${{ runner.os }}-tools-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
+            - name: Cache kernel tarball
+              uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+              with:
+                  path: output/acpi/cache
+                  key: ${{ runner.os }}-kernel-tarball-${{ hashFiles('kernel/version') }}
             - name: Boot control and enforcing kernels
+              run: tests/acpi/run.sh --jobs 4
+            - name: Lint the kernel patch with upstream checkpatch
               run: |
-                  docker run --rm \
-                      -v "$PWD:/repo:ro" \
-                      -v "$RUNNER_TEMP/acpi-linux:/linux" \
-                      -v "$RUNNER_TEMP/acpi-results:/work" \
-                      confos-acpi-test --source /linux --output /work --jobs 4
+                  . kernel/version
+                  # Read stdin so checkpatch does not treat the tracked patch as a source file.
+                  "output/acpi/linux-${LINUX_VERSION}/scripts/checkpatch.pl" --no-tree --no-signoff - < kernel/patches/0001-acpi-trusted-aml.patch
+            - name: Make root-owned trees cache-safe
+              if: always()
+              run: sudo chown -R "$(id -u):$(id -g)" mkosi/kernel-builder/mkosi.output output/acpi || true
             - name: Upload AML test evidence
               if: always()
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                   name: trusted-aml-results
                   path: |
-                      ${{ runner.temp }}/acpi-results/*.json
-                      ${{ runner.temp }}/acpi-results/*.log
-                      ${{ runner.temp }}/acpi-results/*.config
+                      output/acpi/results/*.json
+                      output/acpi/results/*.log
+                      output/acpi/results/*.config
                   if-no-files-found: warn
 
     cargo-deny:
