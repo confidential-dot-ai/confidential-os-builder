@@ -185,19 +185,68 @@ fn verify_builder_invariants(resolved: &Path) -> Result<()> {
 /// (An actual `=y` pin would keep the symbol on silently, so combining a pin
 /// with an assertion is rejected.)
 fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
-    /// Final request for a symbol after last-fragment-wins merging; On/Off
-    /// carry the requesting fragment's name for the error message.
-    enum Request {
-        /// `=y` (or `=m`: mod2yesconfig collapses it); must resolve `=y`.
-        On(String),
-        /// `# is not set` or `=n`; must resolve off (not-set comment or
-        /// absent).
-        Off(String),
-        /// `# CONFIG_X is forced on`: a symbol wanted off that the enabled
-        /// stack select's anyway. Must have an effective off request and
-        /// resolve `=y`, so the build fails if the forcing goes away.
-        Forced(String),
+    let (requested, _) = collect_requests(fragments)?;
+    compare(&requested, resolved, None)
+}
+
+/// Verify the committed snapshot lockfile against the fragments it was
+/// resolved from, so the artifact reviewers read as evidence cannot
+/// contradict the enforced hardening (#118).
+///
+/// Stricter than [`verify_fragment_options`] in two ways, because a
+/// committed file is not a build product: an off-request must appear in the
+/// snapshot as a literal `# CONFIG_X is not set` unless its symbol is listed
+/// in `expected_absent`, and each fragment must still contribute at least
+/// its floor of requests. Absence is otherwise indistinguishable from a
+/// deleted, misspelled, or upstream-renamed deny-list entry, and an emptied
+/// fragment would make the whole comparison vacuous.
+#[cfg(test)]
+pub(crate) fn verify_snapshot(
+    fragments: &[(&Path, usize)],
+    snapshot: &Path,
+    expected_absent: &[&str],
+) -> Result<()> {
+    let paths: Vec<&Path> = fragments.iter().map(|(p, _)| *p).collect();
+    let (requested, per_fragment) = collect_requests(&paths)?;
+    let gutted: Vec<String> = fragments
+        .iter()
+        .zip(&per_fragment)
+        .filter(|((_, floor), (_, found))| found < floor)
+        .map(|((_, floor), (name, found))| format!("  - {name}: {found} requests, floor {floor}"))
+        .collect();
+    if !gutted.is_empty() {
+        return Err(anyhow!(
+            "config fragment lost requests. The floor is a minimum, not a target: \
+             adding requests needs no edit here, so lower it in the same change \
+             that deliberately removes them:\n{}",
+            gutted.join("\n")
+        ));
     }
+    compare(&requested, snapshot, Some(expected_absent))
+}
+
+/// Final request for a symbol after last-fragment-wins merging; each variant
+/// carries the requesting fragment's name for the error message.
+enum Request {
+    /// `=y` (or `=m`: mod2yesconfig collapses it); must resolve `=y`.
+    On(String),
+    /// `# is not set` or `=n`; must resolve off (not-set comment or absent).
+    Off(String),
+    /// `# CONFIG_X is forced on`: a symbol wanted off that the enabled
+    /// stack select's anyway. Must have an effective off request and
+    /// resolve `=y`, so the build fails if the forcing goes away.
+    Forced(String),
+}
+
+/// Parse the fragments and merge their requests with last-fragment-wins
+/// semantics, validating each request's spelling and every forced-on
+/// assertion along the way. Returns the merged requests and how many
+/// requests each fragment contributed, in argument order.
+type Merged = (
+    std::collections::BTreeMap<String, Request>,
+    Vec<(String, usize)>,
+);
+fn collect_requests(fragments: &[&Path]) -> Result<Merged> {
     /// Last merge-visible request for a symbol. Forced markers are metadata
     /// comments and deliberately do not update this state.
     enum SubmittedRequest {
@@ -211,13 +260,6 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
         })
     }
 
-    let config = fs_err::read_to_string(resolved)?;
-    // symbol -> value from the resolved .config's `CONFIG_X=value` lines.
-    let resolved_values: std::collections::HashMap<&str, &str> = config
-        .lines()
-        .filter(|l| l.starts_with("CONFIG_"))
-        .filter_map(|l| l.split_once('='))
-        .collect();
     let mut requested: std::collections::BTreeMap<String, Request> = Default::default();
     let mut submitted: std::collections::BTreeMap<String, SubmittedRequest> = Default::default();
     // Forced assertions are comments and therefore cannot retract an actual
@@ -225,8 +267,10 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     // pin cannot make a forced assertion pass after its forcing chain vanishes.
     let mut on_pins: std::collections::BTreeMap<String, (String, String)> = Default::default();
     let mut forced: std::collections::BTreeMap<String, String> = Default::default();
+    let mut per_fragment: Vec<(String, usize)> = Vec::new();
     for frag in fragments {
         let name = frag.file_name().unwrap_or_default().to_string_lossy();
+        let mut requests_here = 0usize;
         for line in fs_err::read_to_string(frag)?.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("CONFIG_") {
@@ -250,6 +294,7 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
                 }
                 match value {
                     "y" | "m" => {
+                        requests_here += 1;
                         submitted.insert(symbol.to_string(), SubmittedRequest::On);
                         on_pins
                             .entry(symbol.to_string())
@@ -258,6 +303,7 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
                     }
                     // kconfig treats `=n` exactly like `# is not set`.
                     "n" => {
+                        requests_here += 1;
                         submitted.insert(symbol.to_string(), SubmittedRequest::Off);
                         requested.insert(symbol.to_string(), Request::Off(name.to_string()));
                     }
@@ -324,10 +370,12 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
                     .entry(symbol.to_string())
                     .or_insert_with(|| name.to_string());
             } else {
+                requests_here += 1;
                 submitted.insert(symbol.to_string(), SubmittedRequest::Off);
                 requested.insert(symbol.to_string(), Request::Off(name.to_string()));
             }
         }
+        per_fragment.push((name.to_string(), requests_here));
     }
     let pin_conflicts: Vec<String> = forced
         .iter()
@@ -370,15 +418,56 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     for (symbol, name) in &forced {
         requested.insert(symbol.clone(), Request::Forced(name.clone()));
     }
+    Ok((requested, per_fragment))
+}
+
+/// Check the merged requests against a config file, reporting every
+/// disagreement at once. `expected_absent` is `None` when an off-request may
+/// be satisfied by the config omitting the symbol, and `Some(list)` when only
+/// those symbols may be missing.
+fn compare(
+    requested: &std::collections::BTreeMap<String, Request>,
+    resolved: &Path,
+    expected_absent: Option<&[&str]>,
+) -> Result<()> {
+    let config = fs_err::read_to_string(resolved)?;
+    // symbol -> value from the resolved .config's `CONFIG_X=value` lines.
+    let resolved_values: std::collections::HashMap<&str, &str> = config
+        .lines()
+        .filter(|l| l.starts_with("CONFIG_"))
+        .filter_map(|l| l.split_once('='))
+        .collect();
+    // Symbols the config states are off. `resolved_values` cannot carry
+    // these — kconfig writes them as comments — and they are what
+    // distinguishes a symbol that resolved off from one that is missing.
+    let explicitly_off: std::collections::HashSet<&str> = config
+        .lines()
+        .filter_map(|l| l.strip_prefix("# "))
+        .filter_map(|l| l.strip_suffix(" is not set"))
+        .filter(|symbol| symbol.starts_with("CONFIG_"))
+        .collect();
 
     let mut mismatches = Vec::new();
-    for (symbol, request) in &requested {
+    let mut absent_seen: std::collections::BTreeSet<&str> = Default::default();
+    for (symbol, request) in requested {
         match (request, resolved_values.get(symbol.as_str())) {
             (Request::On(_), Some(&"y")) => {}
-            // Absent also covers a typo'd or removed symbol, which passes
-            // silently; dependency-hidden symbols are absent too, so
-            // treating absence as an error would false-positive.
-            (Request::Off(_), None) => {}
+            (Request::Off(name), None) => {
+                if explicitly_off.contains(symbol.as_str()) {
+                    continue;
+                }
+                match expected_absent {
+                    None => {}
+                    Some(expected) if expected.contains(&symbol.as_str()) => {
+                        absent_seen.insert(symbol.as_str());
+                    }
+                    Some(_) => mismatches.push(format!(
+                        "  - {name}: {symbol} requested off, but the config neither sets it \
+                         nor carries `# {symbol} is not set` (line deleted, symbol \
+                         misspelled, or renamed upstream)"
+                    )),
+                }
+            }
             (Request::On(name), Some(v)) => {
                 mismatches.push(format!(
                     "  - {name}: {symbol} requested on, got {symbol}={v}"
@@ -404,6 +493,17 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
                      drop the assertion and keep the off request)"
                 ));
             }
+        }
+    }
+    // A listed symbol that is no longer absent has had its dependency
+    // arrive, so the config now states it: drop the entry and let the
+    // literal `is not set` line be the check.
+    if let Some(expected) = expected_absent {
+        for symbol in expected.iter().filter(|s| !absent_seen.contains(*s)) {
+            mismatches.push(format!(
+                "  - expected-absent {symbol} is no longer both absent and off-requested; \
+                 remove it from the expected-absent list"
+            ));
         }
     }
     if mismatches.is_empty() {
@@ -784,6 +884,53 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("extra.config: CONFIG_A"));
+    }
+
+    #[test]
+    fn verify_snapshot_requires_an_explicit_not_set_line_for_off_requests() {
+        let d = TempDir::new().unwrap();
+        let frag = write(&d, "hardening.config", "# CONFIG_IO_URING is not set\n");
+        // Stating the symbol is off is what the gate accepts...
+        let stated = write(&d, "stated", "# CONFIG_IO_URING is not set\n");
+        verify_snapshot(&[(frag.as_path(), 1)], &stated, &[]).unwrap();
+        // ...while omitting it entirely is a deleted or renamed deny-list
+        // entry, which the build-time check tolerates but this must not.
+        let omitted = write(&d, "omitted", "CONFIG_X=y\n");
+        verify_fragment_options(&[frag.as_path()], &omitted).unwrap();
+        let err = verify_snapshot(&[(frag.as_path(), 1)], &omitted, &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CONFIG_IO_URING requested off"), "{err}");
+        // Unless the symbol is a known unbuildable dependency.
+        verify_snapshot(&[(frag.as_path(), 1)], &omitted, &["CONFIG_IO_URING"]).unwrap();
+    }
+
+    #[test]
+    fn verify_snapshot_rejects_a_stale_expected_absent_entry() {
+        let d = TempDir::new().unwrap();
+        let frag = write(&d, "hardening.config", "# CONFIG_VIRTIO_FS is not set\n");
+        let stated = write(&d, "stated", "# CONFIG_VIRTIO_FS is not set\n");
+        let err = verify_snapshot(&[(frag.as_path(), 1)], &stated, &["CONFIG_VIRTIO_FS"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("no longer both absent and off-requested"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn verify_snapshot_rejects_a_gutted_fragment() {
+        let d = TempDir::new().unwrap();
+        let emptied = write(&d, "hardening.config", "");
+        let snapshot = write(&d, "snapshot", "CONFIG_X=y\n");
+        let err = verify_snapshot(&[(emptied.as_path(), 90)], &snapshot, &[])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("hardening.config: 0 requests, floor 90"),
+            "{err}"
+        );
     }
 
     #[test]
