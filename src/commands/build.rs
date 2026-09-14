@@ -171,11 +171,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // Phase 1: ensure custom kernel artifact is current
     println!("\n=== Step 1/4: Ensuring custom kernel ===");
     let kernel = kernel_cache::ensure_kernel(false, args.kernel_inputs.clone())?;
-    println!(
-        "kernel: {} (linux {})",
-        kernel.vmlinuz_path.display(),
-        kernel.linux_version
-    );
+    println!("custom kernel ready");
 
     // Pre-stage the custom kernel into mkosi.extra so mkosi finds it during UKI assembly.
     let staged_kernel_dir = PathBuf::from("mkosi/base/mkosi.local/mkosi.extra/usr/lib/modules")
