@@ -8,7 +8,18 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-14
+
+**Breaking upgrade; changes measurements.** Rebuild images, publish their
+new manifests, and update verifier allowlists. Upgrade build hosts to mkosi
+v27 and declare every required writable state directory before deploying.
+See [Versioning](docs/VERSIONING.md) for the measurement migration policy.
+
 ### Changed
+- **Changes measurements.** Base and initrd apt snapshots advance from
+  `20260430T000000Z` to `20260906T000000Z` (#130), picking up package and
+  security updates. Host build dependencies follow the base pin; the
+  kernel-builder tools tree retains its separate snapshot.
 - **Changes measurements.** The guest kernel moves from the EOL 6.16.12 line
   to the maintained 6.18.49 LTS release. The kernel.org checksum is verified
   through the repository-pinned autosigner key. The roll also adopts 6.18's
@@ -60,6 +71,11 @@ build configs, since those invalidate published reference values.
   the base kernel command line instead of replacing it.
 
 ### Fixed
+- External profiles can use image-relative symlinks inside drop-in-local
+  `mkosi.extra` and `mkosi.skeleton` trees (#117).
+- GPU attestation fetching fails closed when libnvat's dependencies cannot
+  resolve on the build host (#122).
+- Kernel tarball downloads retry on any curl error (#113).
 - `tdx-measure verify` read RTMR[0..3] from the wrong TDREPORT offsets
   (720/768/816/864 instead of 584/632/680/728 — TDINFO begins at byte 256,
   not 512, and the register block follows ten fields, not four), so CCEL
@@ -71,14 +87,23 @@ build configs, since those invalidate published reference values.
 - **Changes measurements (once).** Host build deps are snapshot-pinned
   (#36): `bin/host-deps` installs them from snapshot.ubuntu.com at a
   committed timestamp with a fail-closed live-mirror guard, closing the
-  last unpinned measured input (iasl compiles the trusted DSDT; ovmf is
-  the published SNP firmware). Pinning moves the published OVMF.fd from
-  the live archive's ovmf (2024.02-2ubuntu0.9 today) to the snapshot's
-  (2024.02-2ubuntu0.8), rolling the SNP launch measurement once; the
-  DSDT toolchain (acpica-tools 20230628-1) is unchanged. The host pin
-  is the base image's `mkosi.sources` timestamp, so bumping that one
-  committed value is the deliberate act that picks up image and
-  host-toolchain updates — and can move measurements
+  unpinned host-toolchain input (iasl compiles the trusted DSDT; ovmf
+  supplies the published firmware). The host pin is the base image's
+  `mkosi.sources` timestamp, including this release's September snapshot
+  update. Changes to that pin can change firmware and toolchain bytes
+  and therefore measurements.
+
+### Added
+- Automated kernel and apt snapshot update proposals, with signed kernel
+  checksum verification, plus GitHub Actions dependency updates (#121,
+  #128).
+
+### Known limitations
+- Host-supplied ACPI AML is not fully excluded: the initrd DSDT override
+  depends on host-controlled table identifiers and revision, and does not
+  exclude secondary AML tables. The kernel enforcement proposed in
+  [#132](https://github.com/confidential-dot-ai/confidential-os-builder/pull/132)
+  is deferred to a later release.
 
 ## [0.4.3] — 2026-08-18
 
