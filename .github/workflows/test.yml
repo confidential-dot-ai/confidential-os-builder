@@ -53,7 +53,8 @@ jobs:
                   tar -xJf "$RUNNER_TEMP/linux.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/acpi-linux"
                   patch --batch --forward --fuzz=0 --dry-run -p1 -d "$RUNNER_TEMP/acpi-linux" < kernel/patches/0001-acpi-trusted-aml.patch
                   patch --batch --forward --fuzz=0 -p1 -d "$RUNNER_TEMP/acpi-linux" < kernel/patches/0001-acpi-trusted-aml.patch
-                  "$RUNNER_TEMP/acpi-linux/scripts/checkpatch.pl" --no-tree --no-signoff kernel/patches/0001-acpi-trusted-aml.patch
+                  # Read stdin so checkpatch does not treat the tracked patch as a source file.
+                  "$RUNNER_TEMP/acpi-linux/scripts/checkpatch.pl" --no-tree --no-signoff - < kernel/patches/0001-acpi-trusted-aml.patch
             - name: Build isolated test tools
               run: docker build -t confos-acpi-test -f tests/acpi/Dockerfile .
             - name: Boot control and enforcing kernels
