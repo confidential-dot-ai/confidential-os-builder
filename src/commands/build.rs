@@ -194,18 +194,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         .join("mkosi.output/image.cpio.gz")
         .canonicalize()?;
 
-    // Assemble a trusted-DSDT early-cpio and prepend it to mkosi's initrd.
-    //
-    // The kernel feature CONFIG_ACPI_TABLE_UPGRADE scans the initrd stream
-    // from the start for `kernel/firmware/acpi/*.aml` and uses each match to
-    // replace the firmware-supplied ACPI table of the same signature. We
-    // ship our trusted DSDT this way so the kernel runs OUR AML, not the
-    // VMM's — closing the "BadAML" attack surface. The override is invisible
-    // to mkosi: we just feed it a concatenated stream as --initrd.
-    //
-    // Order matters: kernel parses the initrd from the start, so the early
-    // (uncompressed) cpio MUST precede the gzipped main cpio.
-    let initrd_path = assemble_initrd_with_trusted_dsdt(&output, &mkosi_initrd)?;
+    // AML is built into the measured kernel. Normalize only a copy of the
+    // mkosi initrd; its original may be root-owned and must remain untouched.
+    let initrd_path = prepare_initrd(&output, &mkosi_initrd)?;
     println!(
         "Initrd: {} ({})",
         initrd_path.display(),
@@ -491,6 +482,9 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                     .module_signing_cert_sha256
                     .clone(),
                 randstruct_seed_sha256: kernel.manifest.inputs.randstruct_seed_sha256.clone(),
+                trusted_dsdt_sha256: kernel.manifest.inputs.trusted_dsdt_sha256.clone(),
+                trusted_aml_patch_sha256: kernel.manifest.inputs.trusted_aml_patch_sha256.clone(),
+                trusted_aml: kernel.manifest.outputs.trusted_aml,
             }),
             initrd: manifest::FileEntry {
                 path: manifest::basename_of(&initrd_path),
@@ -995,226 +989,12 @@ fn chrono_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
-/// Compile the trusted DSDT (ASL → AML), build a one-file early cpio
-/// containing `kernel/firmware/acpi/dsdt.aml`, and prepend it to the
-/// mkosi-built initrd. Returns the path to the combined initrd, which is
-/// what the rest of the pipeline (UKI assembly, RTMR[2] measurement,
-/// IGVM launch digest) sees as "the initrd."
-///
-/// The kernel parses the initrd stream in order from offset 0. An
-/// uncompressed newc cpio at the start is recognized and consumed, then
-/// the gzipped cpio that follows is decompressed and unpacked normally —
-/// any file path appearing in BOTH is overwritten by the later (main)
-/// cpio. That's fine for us: we only ship one path (`dsdt.aml`) and the
-/// main initrd never contains it, so there's no conflict.
-fn assemble_initrd_with_trusted_dsdt(
-    output: &Path,
-    mkosi_initrd: &Path,
-) -> anyhow::Result<PathBuf> {
-    let dsdt_asl = PathBuf::from("mkosi/base/acpi-tables/dsdt.asl");
-    if !dsdt_asl.exists() {
-        anyhow::bail!("trusted DSDT not found at {}", dsdt_asl.display());
-    }
-
-    // iasl writes both the .aml and a disassembly listing next to its -p
-    // argument. Put it in the per-build output directory so a parallel
-    // build can't race on a shared temp path.
-    let dsdt_aml = output.join("dsdt.aml");
-    if dsdt_aml.exists() {
-        fs_err::remove_file(&dsdt_aml)?;
-    }
-    let dsdt_aml_str = dsdt_aml.to_string_lossy().into_owned();
-    let dsdt_asl_str = dsdt_asl.to_string_lossy().into_owned();
-    tools::run_command_streaming("iasl", &["-p", &dsdt_aml_str, &dsdt_asl_str])
-        .map_err(|e| anyhow::anyhow!("iasl failed compiling {}: {}", dsdt_asl.display(), e))?;
-    if !dsdt_aml.exists() {
-        anyhow::bail!(
-            "iasl reported success but {} is missing",
-            dsdt_aml.display()
-        );
-    }
-
-    // Stage the AML in the path layout CONFIG_ACPI_TABLE_UPGRADE expects:
-    //   kernel/firmware/acpi/<table>.aml
-    // built inside a fresh dir so the cpio archive contains only this entry
-    // (no stray dotfiles or sibling artifacts).
-    let staging = output.join(".early-acpi");
-    if staging.exists() {
-        fs_err::remove_dir_all(&staging)?;
-    }
-    let staged_dir = staging.join("kernel/firmware/acpi");
-    fs_err::create_dir_all(&staged_dir)?;
-    fs_err::copy(&dsdt_aml, staged_dir.join("dsdt.aml"))?;
-
-    // Build the early cpio. GNU cpio reads file paths on stdin; we list
-    // entries relative to the staging dir and run cpio with cwd at that
-    // dir so the archive holds relative paths. Use newc format (the only
-    // format the kernel's CONFIG_INITRAMFS_COMPRESSION supports).
-    let early_cpio = output.join("early.cpio");
-    build_early_cpio(&staging, &early_cpio)?;
-
-    // Concatenate early.cpio || mkosi_initrd. The combined file is what
-    // mkosi receives via --initrd and what RTMR[2] / launch digests
-    // ultimately measure as `.initrd`.
-    let combined = output.join("combined-initrd.img");
-    concat_files(&[&early_cpio, mkosi_initrd], &combined)?;
-
-    // The mkosi initrd's gzip header carries the compression wall-clock
-    // time — the one non-deterministic input to every downstream
-    // measurement. Patch it in the combined copy (mkosi's own output is
-    // root-owned) so consecutive builds are bit-identical.
-    let early_cpio_len = fs_err::metadata(&early_cpio)?.len();
-    zero_gzip_mtime(&combined, early_cpio_len)?;
-
-    // Staging tree and intermediate cpio are throwaway once concatenation
-    // succeeds; leaving them around would just clutter the output dir.
-    fs_err::remove_dir_all(&staging)?;
-    fs_err::remove_file(&early_cpio)?;
-
-    combined.canonicalize().map_err(|e| {
-        anyhow::anyhow!(
-            "canonicalizing combined initrd {}: {}",
-            combined.display(),
-            e
-        )
-    })
-}
-
-/// Build a newc-format cpio archive from every regular file and
-/// directory under `root` (descending), writing the archive to `out`.
-///
-/// Uses GNU cpio in -o (copy-out) mode reading null-terminated paths on
-/// stdin. Cwd is set to `root` so paths inside the archive are relative,
-/// matching what the kernel's initramfs unpacker expects.
-fn build_early_cpio(root: &Path, out: &Path) -> anyhow::Result<()> {
-    use std::process::{Command, Stdio};
-    let root_abs = root.canonicalize()?;
-    let out_abs = if out.is_absolute() {
-        out.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(out)
-    };
-
-    // INVARIANT: This cpio must be byte-reproducible across builds. The
-    // cpio bytes are concatenated into the initrd and feed into RTMR[2]
-    // (TDX) and the SNP launch digest. Two clean checkouts of the same
-    // commit must produce identical cpio bytes — otherwise the manifest's
-    // measurements drift between builds and verifiers can't pin a
-    // reference.
-    //
-    // Three sources of non-determinism in `find | cpio -o -H newc` that we
-    // have to neutralize:
-    //   1. Directory enumeration order. find walks readdir order, which is
-    //      filesystem-dependent (ext4 htree, tmpfs, btrfs, etc.). Pipe
-    //      through `sort -z` so the path list is byte-sorted.
-    //   2. File mtime. newc cpio headers embed mtime per entry. We can't
-    //      rely on touch(1) idempotency in CI, so the easiest fix is to
-    //      hint GNU cpio with SOURCE_DATE_EPOCH=0 (its --reproducible
-    //      flag is too new to require on every host).
-    //   3. uid/gid embedded in headers. We pass --owner=root:root so the
-    //      cpio is built with the same identity regardless of who runs
-    //      the build.
-    let mut find = Command::new("find")
-        .arg(".")
-        .arg("-mindepth")
-        .arg("1")
-        .arg("-print0")
-        .current_dir(&root_abs)
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let find_stdout = find
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("could not capture find stdout"))?;
-
-    // LC_ALL=C forces byte-wise sort. glibc's default locale collation
-    // can reorder Unicode filenames (and even some single-byte
-    // characters depending on UCA tailoring), which would silently
-    // drift RTMR[2] / SNP launch digest between hosts with different
-    // locale settings. ASCII-only filenames today, but lock the order
-    // down so it stays stable if a future contributor adds an
-    // SSDT-from-some-vendor file with non-ASCII bytes.
-    let mut sort = Command::new("sort")
-        .arg("-z")
-        .env("LC_ALL", "C")
-        .stdin(Stdio::from(find_stdout))
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let sort_stdout = sort
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("could not capture sort stdout"))?;
-
-    // Zero mtimes recursively before cpio reads them. GNU cpio's
-    // --reproducible flag only zeros device/inode numbers; mtime in the
-    // newc header still comes from st_mtime. Walking the tree and forcing
-    // mtime to 0 (epoch) is the only way to get bit-identical headers
-    // across builds.
-    zero_mtimes(&root_abs)?;
-
-    let cpio_out = std::fs::File::create(&out_abs)?;
-    let cpio = Command::new("cpio")
-        .args([
-            "-o",
-            "-H",
-            "newc",
-            "--null",
-            "--quiet",
-            "--owner=+0:+0",
-            "--reproducible",
-        ])
-        .current_dir(&root_abs)
-        .stdin(Stdio::from(sort_stdout))
-        .stdout(Stdio::from(cpio_out))
-        .stderr(Stdio::inherit())
-        .spawn()?;
-    let cpio_output = cpio.wait_with_output()?;
-    let find_status = find.wait()?;
-    let sort_status = sort.wait()?;
-    if !find_status.success() {
-        anyhow::bail!(
-            "find failed enumerating {} (exit {:?})",
-            root_abs.display(),
-            find_status.code()
-        );
-    }
-    if !sort_status.success() {
-        anyhow::bail!(
-            "sort failed sorting cpio input (exit {:?})",
-            sort_status.code()
-        );
-    }
-    if !cpio_output.status.success() {
-        anyhow::bail!(
-            "cpio failed building {} (exit {:?})",
-            out_abs.display(),
-            cpio_output.status.code()
-        );
-    }
-    Ok(())
-}
-
-/// Recursively reset access and modification times on every entry under
-/// `root` to the Unix epoch (0). Used to neutralize per-file mtime as a
-/// source of cpio newc header non-determinism — see the comment in
-/// `build_early_cpio` for context.
-fn zero_mtimes(root: &Path) -> anyhow::Result<()> {
-    let epoch = filetime::FileTime::from_unix_time(0, 0);
-    fn walk(p: &Path, epoch: filetime::FileTime) -> std::io::Result<()> {
-        let md = std::fs::symlink_metadata(p)?;
-        // symlink times can't be set portably; the parent's lstat carries
-        // the canonical timestamp for cpio's view of the symlink anyway.
-        if !md.file_type().is_symlink() {
-            filetime::set_file_times(p, epoch, epoch)?;
-        }
-        if md.is_dir() {
-            for entry in std::fs::read_dir(p)? {
-                walk(&entry?.path(), epoch)?;
-            }
-        }
-        Ok(())
-    }
-    walk(root, epoch).map_err(Into::into)
+/// Copy the mkosi initrd and remove its gzip timestamp before measuring it.
+fn prepare_initrd(output: &Path, mkosi_initrd: &Path) -> anyhow::Result<PathBuf> {
+    let normalized = output.join("initrd.img");
+    fs_err::copy(mkosi_initrd, &normalized)?;
+    zero_gzip_mtime(&normalized, 0)?;
+    Ok(normalized.canonicalize()?)
 }
 
 /// Zero the MTIME field of the gzip member that starts at `offset` in `path`.
@@ -1222,7 +1002,7 @@ fn zero_mtimes(root: &Path) -> anyhow::Result<()> {
 /// mkosi's `CompressOutput=gzip` stamps the compression wall-clock time into
 /// bytes 4..8 of the gzip header (`SourceDateEpoch=0` does not reach gzip,
 /// which has no SOURCE_DATE_EPOCH support). Those four bytes are the only
-/// non-deterministic bytes in the combined initrd, and they cascade into the
+/// non-deterministic bytes in the mkosi initrd, and they cascade into the
 /// UKI, the disk image, every SNP launch digest, and RTMR[1]/RTMR[2] — so
 /// consecutive builds of identical content would publish different reference
 /// measurements. MTIME=0 is defined by RFC 1952 as "no timestamp available";
@@ -1248,16 +1028,6 @@ fn zero_gzip_mtime(path: &Path, offset: u64) -> anyhow::Result<()> {
     }
     file.seek(SeekFrom::Start(offset + 4))?;
     file.write_all(&[0u8; 4])?;
-    Ok(())
-}
-
-/// Concatenate the byte streams of `parts` (in order) into `out`.
-fn concat_files(parts: &[&Path], out: &Path) -> anyhow::Result<()> {
-    let mut sink = fs_err::File::create(out)?;
-    for p in parts {
-        let mut src = fs_err::File::open(p)?;
-        std::io::copy(&mut src, &mut sink)?;
-    }
     Ok(())
 }
 
@@ -1327,8 +1097,7 @@ mod tests {
     fn zero_gzip_mtime_zeroes_only_the_mtime_field() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("combined.img");
-        // gzip member preceded by other bytes, as in the combined initrd
-        // (early cpio || gzipped mkosi initrd)
+        // Exercise gzip-member normalization at a nonzero offset too.
         let prefix = b"EARLY-CPIO-BYTES";
         let gz = gzip_with_mtime(b"initrd payload", 0x6a54_4bad);
         let mut original = prefix.to_vec();
@@ -1882,96 +1651,27 @@ mod tests {
         // No panic == pass.
     }
 
-    // Shells out to GNU cpio/sort flags that BSD userland (macOS) rejects.
-    // confos build runs on Linux only (mkosi is Linux-only).
-    #[cfg(target_os = "linux")]
     #[test]
-    fn build_early_cpio_is_reproducible_across_mtime_and_enumeration_order() {
-        // The cpio bytes feed into RTMR[2] / SNP launch digest, so they
-        // must be byte-stable across builds. Two sources of drift we
-        // explicitly defend against: (a) file mtime, (b) readdir-order
-        // dependence on enumeration. This test exercises both.
-        use std::os::unix::fs::OpenOptionsExt;
-
-        let build = |mtimes: &[u64], create_order: &[&str]| -> Vec<u8> {
-            let src = TempDir::new().unwrap();
-            // Create the same logical content but in a different order so
-            // any readdir-order bug surfaces. Use different mtimes per
-            // build so any mtime leak surfaces.
-            for &name in create_order {
-                let p = src.path().join("kernel/firmware/acpi").join(name);
-                fs_err::create_dir_all(p.parent().unwrap()).unwrap();
-                std::fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .mode(0o644)
-                    .open(&p)
-                    .unwrap();
-                fs_err::write(&p, b"payload").unwrap();
-            }
-            // Set distinct mtimes per file (and per build) — these should
-            // be erased by zero_mtimes() before the cpio runs.
-            for (i, name) in create_order.iter().enumerate() {
-                let p = src.path().join("kernel/firmware/acpi").join(name);
-                let t = filetime::FileTime::from_unix_time(mtimes[i] as i64, 0);
-                filetime::set_file_times(&p, t, t).unwrap();
-            }
-            let out_dir = TempDir::new().unwrap();
-            let cpio_path = out_dir.path().join("early.cpio");
-            build_early_cpio(src.path(), &cpio_path).unwrap();
-            fs_err::read(&cpio_path).unwrap()
-        };
-
-        let a = build(&[1_700_000_000, 1_700_000_001], &["a.aml", "b.aml"]);
-        let b = build(&[1_750_000_000, 1_750_000_002], &["b.aml", "a.aml"]);
-        assert_eq!(
-            a, b,
-            "cpio bytes drifted across mtime / enumeration order; this breaks RTMR[2] / SNP launch digest reproducibility"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn build_early_cpio_packs_files_from_root() {
-        // Sanity: build_early_cpio reads a directory and produces a
-        // non-empty newc cpio whose magic ("070701") appears at the start
-        // of the first entry header. This is what
-        // CONFIG_ACPI_TABLE_UPGRADE scans for at offset 0 of the initrd.
-        let src = TempDir::new().unwrap();
-        let nested = src.path().join("kernel/firmware/acpi");
-        fs_err::create_dir_all(&nested).unwrap();
-        fs_err::write(nested.join("dsdt.aml"), b"DSDT-fake-aml").unwrap();
-
-        let out_dir = TempDir::new().unwrap();
-        let cpio_path = out_dir.path().join("early.cpio");
-        build_early_cpio(src.path(), &cpio_path).unwrap();
-
-        let bytes = fs_err::read(&cpio_path).unwrap();
-        assert!(!bytes.is_empty(), "cpio archive should not be empty");
-        assert!(
-            bytes.starts_with(b"070701"),
-            "cpio archive should start with newc magic '070701', got {:?}",
-            &bytes[..6.min(bytes.len())]
-        );
-        // The aml file's bytes should appear verbatim somewhere in the
-        // archive (newc stores file data inline after each header).
-        assert!(
-            bytes
-                .windows(b"DSDT-fake-aml".len())
-                .any(|w| w == b"DSDT-fake-aml"),
-            "cpio archive should embed the staged file data"
-        );
-    }
-
-    #[test]
-    fn concat_files_preserves_order_and_bytes() {
+    fn prepare_initrd_preserves_payload_and_source() {
+        use std::io::Write;
         let dir = TempDir::new().unwrap();
-        let a = dir.path().join("a");
-        let b = dir.path().join("b");
-        let out = dir.path().join("out");
-        fs_err::write(&a, b"AAA").unwrap();
-        fs_err::write(&b, b"BBB").unwrap();
-        concat_files(&[a.as_path(), b.as_path()], &out).unwrap();
-        assert_eq!(fs_err::read(&out).unwrap(), b"AAABBB");
+        let source = dir.path().join("mkosi.cpio.gz");
+        let mut gzip = flate2::GzBuilder::new()
+            .mtime(1234)
+            .write(Vec::new(), flate2::Compression::default());
+        gzip.write_all(b"measured initramfs contents").unwrap();
+        let original = gzip.finish().unwrap();
+        fs_err::write(&source, &original).unwrap();
+        let normalized = prepare_initrd(dir.path(), &source).unwrap();
+        assert_eq!(fs_err::read(&source).unwrap(), original);
+        let data = fs_err::read(normalized).unwrap();
+        assert_eq!(&data[4..8], &[0; 4]);
+        let mut payload = Vec::new();
+        std::io::Read::read_to_end(
+            &mut flate2::read::GzDecoder::new(data.as_slice()),
+            &mut payload,
+        )
+        .unwrap();
+        assert_eq!(payload, b"measured initramfs contents");
     }
 }

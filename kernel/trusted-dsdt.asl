@@ -1,54 +1,10 @@
 /*
- * Trusted DSDT for confos confidential VMs.
- *
- * Shipped in the initrd at /kernel/firmware/acpi/dsdt.aml. The Linux
- * CONFIG_ACPI_TABLE_UPGRADE feature scans the initrd for that path early
- * in boot and replaces the firmware-supplied DSDT with this one. The
- * VMM's DSDT — the highest-leverage attack surface in the ACPI tables,
- * because the kernel executes AML at kernel privilege ("BadAML") — is
- * never trusted.
- *
- * This file is the ONLY AML the kernel executes. Keep it minimal:
- *
- *   - PCI root bridge: required so the kernel enumerates PCI. The window
- *     resources are the standard QEMU q35 layout; the kernel reads the
- *     ECAM base from MCFG separately, so _CRS here is only the resource
- *     map.
- *   - _S5 method: clean shutdown via ACPI PM_CNT writes. QEMU uses
- *     sleep type 0 for S5.
- *
- * Deliberately absent:
- *
- *   - Processor objects: CPU enumeration is via MADT (which we don't
- *     replace). Omitting Processor() here makes the DSDT SMP-invariant
- *     across all vCPU counts at runtime.
- *   - Memory hotplug stubs: memory enumeration is via E820 / TD HOB.
- *     Omitting them makes the DSDT memory-invariant.
- *   - Embedded controller, lid, batteries, thermal zones, GPEs: the
- *     guest is a server, not a laptop.
- *
- * The result is a single AML blob whose hash is constant across all
- * (vCPU, memory) topologies — so the manifest needs one TDX entry, not
- * one per cross product.
+ * The only AML admitted by the confos kernel namespace-load gate.
+ * Compiled with the pinned kernel tools tree and included in vmlinuz.
+ * Host DSDT identifiers and revision do not select this trusted table.
+ * Keep topology windows compatible with supported CPU/memory/GPU shapes.
  */
 
-// Linux's acpi_table_initrd_override (drivers/acpi/tables.c) requires the
-// initrd table to match the firmware DSDT on Signature, OEM_ID, AND
-// OEM_Table_ID, AND have an OEM_Revision STRICTLY GREATER than the
-// firmware's. QEMU emits DSDT with OEM_ID="BOCHS " and OEM_Table_ID="BXPC"
-// at OEM_Revision=1, so we must match those exactly and bump revision to
-// at least 2 for the override path to fire — otherwise the kernel keeps
-// FADT pointing at the VMM-supplied DSDT and our table is installed as
-// an unused second DSDT (the "install" path), leaving BadAML unmitigated.
-//
-// INVARIANT: do not reorder these positional args. The pattern is
-//   DefinitionBlock(filename, signature, compliance_rev, OEM_ID,
-//                   OEM_Table_ID, OEM_Revision).
-// OEM_ID is exactly 6 bytes (space-padded), OEM_Table_ID is 8 bytes.
-// OEM_ID is exactly 6 ASCII bytes, OEM_Table_ID is exactly 8 ASCII bytes.
-// QEMU/SeaBIOS space-pads short strings; iasl null-pads. memcmp on the
-// raw 6/8 bytes is what the kernel match uses, so we must space-pad too
-// or the override match fails on a single trailing byte difference.
 DefinitionBlock ("dsdt.aml", "DSDT", 1, "BOCHS ", "BXPC    ", 0x00000002)
 {
     Scope (\_SB)

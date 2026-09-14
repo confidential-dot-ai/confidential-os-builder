@@ -1,3 +1,4 @@
+pub mod aml;
 pub mod compile;
 pub mod config;
 pub mod fetch;

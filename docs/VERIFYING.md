@@ -140,13 +140,15 @@ client works (e.g. Intel's `trustauthority-cli`, `go-tdx-guest`, or a
 
 **RTMR[0] is deliberately not pinned.** It mixes VMM-supplied data (TD-HOB
 and ACPI tables) that varies with memory size and vCPU topology; pinning it
-would force one manifest entry per (smp × memory) combination. The security
-gap this would normally leave — the VMM controls the ACPI DSDT, whose AML
-bytecode the kernel executes at full privilege — is closed differently: the
-initrd carries a trusted DSDT that *overrides* the VMM's copy at boot, and
-that initrd is itself measured into RTMR[2] (and into the SNP launch digest).
-So verifying RTMR[2] transitively verifies the executable ACPI content. See
-the "Trusted DSDT" section of the [README](../README.md) for the mechanism.
+would force one manifest entry per (smp × memory) combination. The measured
+kernel contains a trusted DSDT and a mandatory policy that admits only that
+built-in table before AML namespace parsing. It rejects secondary host
+tables and dynamic AML additions, and stops boot before userspace if the
+trusted primary table did not load. Verifying the approved kernel through
+RTMR[2] binds that table and policy; SNP binds them through its launch digest.
+Non-AML topology data still reaches guest parsers, so this does not remove
+all host-controlled firmware input or establish arbitrary topology support.
+See the "Trusted DSDT" section of the [README](../README.md).
 
 You can additionally cross-check from inside a booted TDX guest:
 
@@ -155,10 +157,59 @@ You can additionally cross-check from inside a booted TDX guest:
 tdx-measure verify --ccel /sys/firmware/acpi/tables/data/CCEL \
                    --tdreport tdreport.bin --uki uki.efi
 
-# Confirm the trusted-DSDT override actually fired ("override" is the
-# important word — "install" alone means the VMM's DSDT is still live)
-dmesg | grep "Table Upgrade: override"
+# Diagnostic: confirm the built-in DSDT was loaded
+dmesg | grep -F "ACPI: Trusted AML: built-in DSDT loaded"
 ```
+
+The success log is a local diagnostic, not evidence a remote verifier
+should accept in place of a hardware quote. The old `Table Upgrade:
+override` message establishes neither secondary-table exclusion nor the
+new policy. Rejected inputs log `Trusted AML:` messages; a missing or
+invalid trusted primary table is fatal before userspace.
+
+### Deploying the trusted-AML policy
+
+Update each consumer's builder pin, regenerate its kernel configuration,
+and rebuild its kernel and image. Check `inputs.kernel.trusted_aml` is
+`true`, with populated `trusted_dsdt_sha256` and
+`trusted_aml_patch_sha256`; older manifests default to `false` and empty
+hashes. These fields describe the build and must come from the same
+trusted provenance channel as the artifact measurements. The ASL source
+hash is not the hash of the compiled table in guest sysfs.
+
+Before approving the new reference values, validate the actual patched
+kernel against changed host DSDT identifiers/revisions, secondary and
+dynamic AML, and missing/disabled ACPI. Use inert marker fixtures: rejected
+AML must not enter the namespace or execute, and failure to establish the
+trusted primary table must not reach userspace. Then validate supported
+CPU/memory/PCI layouts, RKE2 and GPU operation, and SNP/TDX attestation on
+hardware. Source tests or non-TEE QEMU runs do not establish those hardware
+properties. Only retire older measurements once the rebuilt deployment
+passes its acceptance checks.
+
+The disposable [ACPI test harness](../tests/acpi/run.py) builds test kernels
+and exercises table selection under QEMU TCG without `/dev/kvm`. It requires
+a clean, disposable Linux source tree matching `kernel/version`, with
+`kernel/patches/0001-acpi-trusted-aml.patch` already applied. The harness
+writes generated headers into that source tree; do not point it at a
+production build in progress.
+
+```bash
+python3 tests/acpi/run.py --source /path/to/disposable-patched-linux \
+    --output /path/to/acpi-results --jobs 8
+```
+
+[tests/acpi/Dockerfile](../tests/acpi/Dockerfile) supplies the test tools.
+This test environment is separate from the pinned production kernel tools
+tree. Results include per-case serial logs, `results.json` and kernel
+hashes. The harness tests the actual patched kernel, but uses a reduced
+test configuration and marker tables; passing it does not certify a
+consumer's production image or TEE isolation. Dynamic API tests add a
+diagnostic kernel probe. The test configuration enables `KEXEC` to supply
+a replacement ACPI root through `acpi_rsdp=`; production keeps it disabled.
+The `Test kernel AML enforcement` CI job runs this harness on
+checksum-verified source and uploads its logs,
+resolved test configurations and result files.
 
 ## 3. Build reproduction (audit)
 
@@ -201,4 +252,6 @@ For a production deployment, all of these should hold:
 - [ ] Measurement matches the manifest (correct `smp` variant on SNP)
 - [ ] Debug policy bits are off
 - [ ] Image was **not** built with `--profile dev` (its marker in the measured cmdline: `console=ttyS0`)
-- [ ] (TDX) `dmesg` shows the DSDT `override` fired
+- [ ] Approved artifacts include the mandatory trusted-AML kernel policy
+- [ ] Consumer kernel/image rebuild and supported-topology acceptance are complete
+- [ ] As a local diagnostic, `dmesg` shows `ACPI: Trusted AML: built-in DSDT loaded`

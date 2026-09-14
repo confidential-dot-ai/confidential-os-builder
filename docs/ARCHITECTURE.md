@@ -16,8 +16,8 @@ hardware will measure at launch.
 ```
 bin/confos build
    │
-   ├─ 1. kernel        src/commands/kernel.rs + src/kernel/*    (cached)
-   ├─ 2. initrd + DSDT mkosi/initrd/ + iasl early-cpio prepend
+   ├─ 1. kernel + DSDT src/commands/kernel.rs + src/kernel/*    (cached)
+   ├─ 2. initrd        mkosi/initrd/ + gzip-header normalization
    ├─ 3. image         mkosi/base/ via mkosi (reproducible rootfs
    │                   + erofs + verity + ukify)       → disk.raw, uki.efi, roothash
    ├─ 4. SNP measure   src/igvm/ → crates/igvm-tools   → guest-smp<N>.igvm + digests
@@ -33,8 +33,8 @@ bin/confos build
 |---|---|
 | `main.rs` | clap entry point; subcommand dispatch |
 | `lib.rs` | Shared argument structs and `BuildPlatform` (snp/tdx/both) |
-| `commands/build.rs` | The pipeline above. Per-build file injections (cloud-init, `--extra`, dev-profile console) go into a temporary `mkosi.local/` overlay removed by an RAII guard; the trusted-DSDT step compiles ASL → AML and prepends an uncompressed early cpio to the mkosi initrd, and *that* combined initrd is what the UKI and both measurement paths see |
-| `commands/kernel.rs` | Kernel build orchestration + cache check |
+| `commands/build.rs` | The pipeline above. Per-build file injections (cloud-init, `--extra`, dev-profile console) go into a temporary `mkosi.local/` overlay removed by an RAII guard; the mkosi initrd has its gzip timestamp normalized and is written as `initrd.img`, whose exact bytes feed the UKI and both measurement paths |
+| `commands/kernel.rs` | Kernel build orchestration and cache check; compile the trusted ASL with the pinned tools tree and apply the version-specific AML enforcement patch before kernel configuration/compilation |
 | `commands/run.rs` | Boot an output dir in QEMU |
 | `commands/igvm.rs` | Re-render IGVM SMP variants for an existing build |
 | `commands/push.rs`, `commands/pull.rs` | OCI transfer via `oras` |
@@ -54,13 +54,21 @@ config fragments merged in order:
 x86_64_defconfig → required.config → hardening.config → confidential.config → [caller fragment] → mod2yesconfig → olddefconfig
 ```
 
-Later fragments win, which is how `confidential.config` deliberately
-re-enables options `hardening.config` turned off (e.g.
-`CONFIG_ACPI_TABLE_UPGRADE` for the trusted-DSDT override). The resolved
+Later fragments win during merging, but mandatory builder invariants are
+checked afterward: a consumer cannot disable the built-in DSDT or trusted
+AML gate, change its header path, or enable alternate table loaders. The resolved
 `.config` is written to `kernel/config-x86_64.snapshot`, a committed
 lockfile — every build rewrites it and `git diff` reveals config drift. The
 build fails if `olddefconfig` silently dropped any `=y` a fragment
 requested (unmet dependency), rather than shipping a weaker kernel.
+
+`kernel/trusted-dsdt.asl` is compiled to `include/confos-trusted-dsdt.h`
+inside the kernel source tree. `kernel/patches/` supplies the kernel
+restriction that authorizes only this built-in table before namespace
+parsing, rejects dynamic AML additions, and stops boot if the trusted
+primary table did not load. ASL and patch hashes join the existing kernel
+cache inputs and appear in provenance metadata; legacy cache manifests
+cannot satisfy the new fingerprint.
 
 ### `crates/` — measurement engines
 
@@ -81,7 +89,7 @@ verifiers can `cargo install` just the measurement tool.
 
 | Dir | Produces |
 |---|---|
-| `base/` | Builds the Ubuntu root into an erofs+verity disk and UKI. Its configuration defines the filesystem content, GPT layout, trusted DSDT, and shipped `dev`, `attest`, `attest-gpu`, `gpu`, and `ssh` profiles. |
+| `base/` | Builds the Ubuntu root into an erofs+verity disk and UKI. Its configuration defines the filesystem content, GPT layout, and shipped `dev`, `attest`, `attest-gpu`, `gpu`, and `ssh` profiles. |
 | `initrd/` | Builds the minimal early-boot environment. `mkosi.extra/init` opens the verity root, mounts declared state overlays, and detects and encrypts an optional scratch disk. |
 | `kernel-builder/` | A tools-tree image in which the guest kernel is compiled, isolating the toolchain from the host for reproducibility |
 

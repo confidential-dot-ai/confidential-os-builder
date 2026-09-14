@@ -48,7 +48,7 @@ When it finishes, look at what you got:
 
 ```bash
 ls output/base/
-# OVMF.fd  OVMF.tdx.fd  combined-initrd.img  disk.raw  dsdt.aml
+# OVMF.fd  OVMF.tdx.fd  initrd.img  disk.raw
 # guest-smp2.igvm ...  manifest.json  roothash  uki.efi
 
 jq '{platform: .build.platform,

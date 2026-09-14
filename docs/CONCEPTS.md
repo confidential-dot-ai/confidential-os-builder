@@ -549,33 +549,34 @@ mechanism: a set of measurement registers instead of one digest.
 `tdx-measure` crate) and publishes them in `manifest.json` as the `tdx`
 block. RTMR[0] is deliberately **not** pinned: it contains
 host-configuration-dependent ACPI content that varies with memory size
-and vCPU count. What makes that safe is the trusted DSDT (next section).
-See [THREAT_MODEL.md](THREAT_MODEL.md) for the full argument.
+and vCPU count. The trusted-AML policy (next section) excludes host-supplied
+AML, while non-AML host inputs remain a parser attack surface.
+See [THREAT_MODEL.md](THREAT_MODEL.md) for this tradeoff and its limits.
 
 ---
 
 ## 18. The trusted DSDT
 
-ACPI tables describe the machine's hardware to the OS — and one of them,
-the DSDT, contains *executable* bytecode (AML) that the kernel runs. On
-TDX, ACPI tables are supplied by the untrusted host and land in
-unpinned RTMR[0], so a malicious host could feed the guest malicious AML
-("BadAML" attacks).
+ACPI tables describe the machine's hardware to the OS. The main DSDT and
+secondary tables such as SSDTs can contain *executable* bytecode (AML)
+that Linux interprets inside the guest kernel. The untrusted host supplies
+firmware tables, making their AML a privileged input boundary.
 
-Confidential OS Builder's defense: ship a known-good DSDT inside the **measured** initrd
-and have the kernel prefer it over whatever the host provides.
+Confidential OS Builder compiles its own DSDT into the **measured kernel**
+and restricts which tables the kernel may load into the AML namespace:
 
-1. `mkosi/base/acpi-tables/dsdt.asl` is the audited DSDT source; the
-   build compiles it with `iasl` and prepends it to the initrd as an
-   uncompressed early cpio (the format the kernel's ACPI table-upgrade
-   mechanism expects).
-2. The kernel is built with `CONFIG_ACPI_TABLE_UPGRADE=y`
-   (re-enabled by `kernel/confidential.config` after
-   `hardening.config` turns it off) so at boot it swaps in the DSDT
-   from the initrd — which is measured into RTMR[2] via the UKI.
-3. Result: the executable ACPI content the guest runs is covered by the
-   published measurements even though RTMR[0] is not pinned, and the
-   `tdx` manifest block stays valid for **any** memory/vCPU topology.
+1. `kernel/trusted-dsdt.asl` is the canonical source. `iasl` in the pinned
+   kernel tools tree generates the custom-DSDT header before compilation.
+2. `CONFIG_ACPI_CUSTOM_DSDT` selects the built-in table. Unlike the old
+   initrd-upgrade mechanism, selection does not depend on host OEM IDs or
+   revisions. `CONFIG_ACPI_TRUSTED_AML` authorizes only that built-in
+   table before namespace parsing and rejects dynamic additions.
+3. Boot stops before userspace if the trusted primary table did not load.
+   Consumer fragments cannot disable the policy or enable alternate
+   loaders. The table and gate are measured through the UKI's kernel
+   section on TDX and the launch digest on SNP.
 
-You can confirm the override happened inside a guest with
-`dmesg | grep "Table Upgrade: override"`.
+This controls executable AML, not all ACPI processing. Non-AML topology
+data and virtual devices still reach guest parsers, and supported hardware
+layouts need boot tests. See [VERIFYING.md](VERIFYING.md) for rollout and
+attestation checks; a policy metadata field alone is not proof of enforcement.

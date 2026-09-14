@@ -46,8 +46,7 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 /// force-enabled an off-request (see [`verify_fragment_options`]).
 ///
 /// Merge order is important: `confidential.config` deliberately re-enables
-/// options the `hardening.config` fragment turned off (e.g.
-/// `CONFIG_ACPI_TABLE_UPGRADE=y` overriding the `# is not set` line) — last
+/// options the `hardening.config` fragment turned off — last
 /// fragment wins under `merge_config.sh`, so the confidential fragment MUST
 /// follow hardening.
 ///
@@ -157,7 +156,7 @@ fn verify_builder_invariants(resolved: &Path) -> Result<()> {
              instead (docs/module-signing.md)."
         );
     }
-    Ok(())
+    super::aml::verify_config(&config)
 }
 
 /// Fail if the resolved `.config` disagrees with what the fragments
@@ -470,6 +469,24 @@ mod tests {
     }
 
     #[test]
+    fn committed_snapshot_matches_kernel_policy() {
+        let version =
+            crate::kernel::version::KernelVersion::read(Path::new("kernel/version")).unwrap();
+        crate::kernel::aml::verify_version(&version.linux_version).unwrap();
+        let snapshot = Path::new("kernel/config-x86_64.snapshot");
+        verify_fragment_options(
+            &[
+                Path::new("kernel/required.config"),
+                Path::new("kernel/hardening.config"),
+                Path::new("kernel/confidential.config"),
+            ],
+            snapshot,
+        )
+        .unwrap();
+        verify_builder_invariants(snapshot).unwrap();
+    }
+
+    #[test]
     fn update_snapshot_overwrites_and_reports_change() {
         let d = TempDir::new().unwrap();
         let a = write(&d, "a", "CONFIG_X=y\n");
@@ -529,6 +546,7 @@ mod tests {
             "CONFIG_MODULES=y\n",
         ] {
             let resolved = write(&d, "resolved", body);
+            fs_err::write(&resolved, format!("{body}CONFIG_ACPI=y\nCONFIG_ACPI_CUSTOM_DSDT=y\nCONFIG_ACPI_TRUSTED_AML=y\nCONFIG_ACPI_CUSTOM_DSDT_FILE=\"confos-trusted-dsdt.h\"\n")).unwrap();
             verify_builder_invariants(&resolved).unwrap();
         }
     }

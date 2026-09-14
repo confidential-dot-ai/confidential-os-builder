@@ -66,6 +66,18 @@ fn kernel_build_succeeds() {
         .success();
     assert!(out.join("vmlinuz").exists());
     assert!(out.join("manifest.json").exists());
+    let manifest = confos::kernel::manifest::read(&out.join("manifest.json")).unwrap();
+    assert!(manifest.outputs.trusted_aml);
+    assert_eq!(
+        manifest.inputs.trusted_dsdt_sha256,
+        sha256(Path::new("kernel/trusted-dsdt.asl"))
+    );
+    assert_eq!(
+        manifest.inputs.trusted_aml_patch_sha256,
+        sha256(Path::new("kernel/patches/0001-acpi-trusted-aml.patch"))
+    );
+    let config = std::fs::read_to_string("kernel/config-x86_64.snapshot").unwrap();
+    confos::kernel::aml::verify_config(&config).unwrap();
 }
 
 #[test]

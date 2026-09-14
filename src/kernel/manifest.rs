@@ -42,6 +42,12 @@ pub struct Fingerprint {
     // rotating it changes vmlinuz. `default` for pre-field manifests.
     #[serde(default)]
     pub randstruct_seed_sha256: String,
+    /// SHA-256 of the canonical trusted ASL source; empty in legacy manifests.
+    #[serde(default)]
+    pub trusted_dsdt_sha256: String,
+    /// SHA-256 of the version-specific kernel enforcement patch.
+    #[serde(default)]
+    pub trusted_aml_patch_sha256: String,
     pub tools_tree_digest: String,
 }
 
@@ -49,6 +55,9 @@ pub struct Fingerprint {
 #[serde(deny_unknown_fields)]
 pub struct Outputs {
     pub vmlinuz_sha256: String,
+    /// True only after the mandatory resolved kernel configuration passes.
+    #[serde(default)]
+    pub trusted_aml: bool,
 }
 
 impl Fingerprint {
@@ -70,6 +79,8 @@ impl Fingerprint {
         );
         m.insert("snapshot_config_sha256", &self.snapshot_config_sha256);
         m.insert("tools_tree_digest", &self.tools_tree_digest);
+        m.insert("trusted_dsdt_sha256", &self.trusted_dsdt_sha256);
+        m.insert("trusted_aml_patch_sha256", &self.trusted_aml_patch_sha256);
         serde_json::to_string(&m).expect("BTreeMap of strings serializes")
     }
 }
@@ -103,6 +114,8 @@ mod tests {
             module_signing_cert_sha256: "1".repeat(64),
             randstruct_seed_sha256: "2".repeat(64),
             tools_tree_digest: "e".repeat(64),
+            trusted_dsdt_sha256: "4".repeat(64),
+            trusted_aml_patch_sha256: "5".repeat(64),
         }
     }
 
@@ -137,6 +150,9 @@ mod tests {
         }"#;
         let fp: Fingerprint = serde_json::from_str(legacy).unwrap();
         assert_eq!(fp.kernel_extra_config_sha256, "");
+        assert_eq!(fp.trusted_dsdt_sha256, "");
+        assert_eq!(fp.trusted_aml_patch_sha256, "");
+        assert_ne!(fp, sample_fp());
         assert_eq!(fp.linux_version, "6.12.7");
     }
 
@@ -168,6 +184,19 @@ mod tests {
         let b = a.clone();
         a.linux_version = "6.12.8".into();
         assert_ne!(a.to_canonical_json(), b.to_canonical_json());
+    }
+
+    #[test]
+    fn trusted_aml_inputs_each_invalidate_fingerprint() {
+        let before = sample_fp();
+        let mut table = before.clone();
+        table.trusted_dsdt_sha256 = "6".repeat(64);
+        let mut patch = before.clone();
+        patch.trusted_aml_patch_sha256 = "7".repeat(64);
+        for after in [table, patch] {
+            assert_ne!(before, after);
+            assert_ne!(before.to_canonical_json(), after.to_canonical_json());
+        }
     }
 
     #[test]

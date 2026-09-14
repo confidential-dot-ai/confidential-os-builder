@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 /// Current manifest schema version. v3 splits SNP measurements (which vary
 /// per vCPU count) into `snp_variants[]` and adds a singleton `tdx` block
 /// of TDX reference measurements. The TDX block is SMP-and-memory-invariant
-/// thanks to the trusted-DSDT override mechanism that strips the only AML
-/// fields that varied per (vCPU, memory) topology. v2 manifests fail to
+/// because this policy excludes topology-dependent RTMR[0]. The kernel admits
+/// only its built-in AML; non-AML host inputs remain a residual surface. v2 manifests fail to
 /// parse — there is no reader compatibility shim.
 pub const MANIFEST_VERSION: u32 = 3;
 
@@ -24,8 +24,7 @@ pub struct BuildManifest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub snp_variants: Vec<SnpVariant>,
     /// TDX reference measurements — single block, SMP-and-memory-invariant
-    /// thanks to the trusted-DSDT override that strips the AML fields that
-    /// varied across topologies. `None` when the build excluded TDX.
+    /// under the policy that excludes RTMR[0]. `None` when the build excluded TDX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tdx: Option<TdxMeasurement>,
 }
@@ -62,8 +61,8 @@ pub struct SnpVariant {
 /// Deliberately absent: `rtmr0`. RTMR[0] mixes TD-HOB (memory-sensitive)
 /// and ACPI tables (memory + SMP-sensitive) coming from the VMM. Pinning
 /// it would force a per-`(smp × memory)` matrix of manifest variants.
-/// We avoid that by overriding the VMM-supplied DSDT with our trusted
-/// AML via the initrd, then attesting the override through RTMR[2] /
+/// The measured kernel admits only its built-in DSDT before AML parsing.
+/// Non-AML host data remains outside this policy. Kernel identity is in RTMR[2] /
 /// the IGVM launch digest.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -119,6 +118,15 @@ pub struct KernelInputs {
     // RANDSTRUCT seed — a reproduction input (#85). `default` for older manifests.
     #[serde(default)]
     pub randstruct_seed_sha256: String,
+    /// SHA-256 of the canonical trusted ASL source; empty in legacy manifests.
+    #[serde(default)]
+    pub trusted_dsdt_sha256: String,
+    /// SHA-256 of the version-specific kernel enforcement patch.
+    #[serde(default)]
+    pub trusted_aml_patch_sha256: String,
+    /// Compiled-in DSDT and mandatory kernel namespace-load authorization.
+    #[serde(default)]
+    pub trusted_aml: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

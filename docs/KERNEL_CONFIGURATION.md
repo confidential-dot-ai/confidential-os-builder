@@ -11,6 +11,53 @@ Our kernel configuration (fragments plus the pinned version) lives in the
 in `mkosi/kernel-builder/`, so the toolchain used to compile the kernel is
 reproducibly installed and isolated from the host.
 
+## Mandatory trusted-AML policy
+
+The kernel tools tree compiles `kernel/trusted-dsdt.asl` into
+`include/confos-trusted-dsdt.h`. The version-specific patch in
+`kernel/patches/` admits only this built-in DSDT at the AML namespace
+loading boundary, rejects dynamic AML additions and requires successful
+primary-table initialization before userspace starts.
+
+`verify_builder_invariants` checks the resolved configuration after all
+consumer fragments have been applied:
+
+- `CONFIG_ACPI_CUSTOM_DSDT=y` and `CONFIG_ACPI_TRUSTED_AML=y` are required.
+- `CONFIG_ACPI_CUSTOM_DSDT_FILE` must name the expected generated header.
+- Initrd table upgrade, configfs table injection and EFI SSDT overlays
+  must remain disabled.
+
+These checks are stronger than ordinary last-fragment-wins validation:
+a downstream fragment cannot opt out. Both the ASL source and enforcement
+patch participate in the kernel cache fingerprint. Snapshot regeneration
+must use the patched source tree so the added configuration symbol is
+resolved by Kconfig.
+
+The patch is specific to Linux 6.18.49; the builder refuses another version
+until these enforcement points have been reviewed and the patch retargeted:
+
+| Kernel boundary | Enforcement |
+|---|---|
+| `acpi_ns_load_table` | Before namespace parsing, require the canonical DSDT index and the actual compiled `dsdt_aml_code[]` array. Reject a second load |
+| `acpi_os_prepare_trusted_aml` | Validate the built-in array's signature, exact length and checksum; keep the bytes resident |
+| `acpi_tb_load_namespace` | Skip optional DSDT copying so pointer identity continues to identify the compiled array |
+| `acpi_tb_load_table` / `acpi_tb_install_and_load_table` | Deny `LoadTable`, `Load` and `acpi_load_table()` before dynamic namespace loading |
+| `acpi_install_method` / `acpi_tb_unload_table` | Deny direct method replacement and namespace unloading |
+| `kernel_init_freeable` | After initcalls, require successful trusted DSDT loading and enabled ACPI before launching init; this check is not an initcall that can be blacklisted |
+
+The AML namespace parser has one table-loading caller in this kernel;
+method evaluation operates on the admitted namespace. The separate method
+installation API is denied explicitly, and the ACPI debugger is disabled.
+These are properties to recheck when updating the kernel, not assumptions
+that the version-specific patch can establish for future releases.
+
+The policy restricts AML execution; non-AML ACPI topology data and device
+drivers remain part of the attack surface. Kernel build/config tests do
+not establish RKE2/GPU compatibility or SNP/TDX launch acceptance. See
+[VERIFYING.md](VERIFYING.md) for consumer rollout requirements.
+
+## KSPP comparison
+
 Below, you can find a list of every suggestion from the [Kernel Self-Protection
 Program's Recommended Settings
 page](https://kspp.github.io/Recommended_Settings) (as of 2026-07-12) that we do

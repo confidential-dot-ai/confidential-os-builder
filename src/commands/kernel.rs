@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use sha2::{Digest, Sha256};
 
-use crate::kernel::{compile, config, fetch, manifest as km, version::KernelVersion};
+use crate::kernel::{aml, compile, config, fetch, manifest as km, version::KernelVersion};
 use crate::tools;
 use crate::KernelArgs;
 
@@ -24,9 +24,8 @@ const STAGED_SIGNING_CERT: &str = "confos-module-signing.crt";
 const DEFAULT_SIGNING_CERT: &str = "kernel/module-signing.crt";
 const HARDENING_FRAGMENT: &str = "kernel/hardening.config";
 /// Confidential VM overrides. Merged after `hardening.config` so the last
-/// fragment wins — `CONFIG_ACPI_TABLE_UPGRADE=y` here intentionally overrides
-/// the `# is not set` line in `hardening.config`. See the file header for the
-/// threat-model justification.
+/// fragment wins. Resolved trusted-AML requirements are additionally enforced
+/// after consumer overrides, so a later fragment cannot weaken the boundary.
 const CONFIDENTIAL_FRAGMENT: &str = "kernel/confidential.config";
 /// Bare-baseline snapshot lockfile (committed). Fragment builds write
 /// `config-x86_64-<stem>.snapshot` beside their fragment, so lineages don't
@@ -41,6 +40,7 @@ const TOOLS_TREE_STAMP: &str = "mkosi/kernel-builder/mkosi.output/.confos-tools-
 
 pub fn run(args: &KernelArgs) -> Result<()> {
     let version = KernelVersion::read(Path::new(VERSION_PATH))?;
+    aml::verify_version(&version.linux_version)?;
     tracing::info!(linux_version = %version.linux_version, "building hardened kernel");
 
     // Optional caller-supplied config fragment merged after required +
@@ -76,7 +76,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
             if let Ok(live) =
                 compute_fingerprint(&version, tools_tree_path, fragment, signing_cert, snapshot)
             {
-                if cached.inputs == live {
+                if cached.inputs == live && cached.outputs.trusted_aml {
                     let actual = fetch::sha256_file(&vmlinuz_path)?;
                     if actual.eq_ignore_ascii_case(&cached.outputs.vmlinuz_sha256) {
                         println!(
@@ -125,6 +125,8 @@ pub fn run(args: &KernelArgs) -> Result<()> {
             ));
         }
     }
+
+    let staged_aml = aml::prepare(&tools_tree, &kernel_src)?;
 
     // Pin the RANDSTRUCT seed: rewrite gen-randstruct-seed.sh to emit our
     // committed seed instead of reading /dev/urandom. The Makefile rule is
@@ -222,8 +224,13 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     // Phase 0e: finalize manifest
     println!("\n=== Step 0e: Writing manifest ===");
     let inputs = compute_fingerprint(&version, &tools_tree, fragment, signing_cert, snapshot)?;
+    staged_aml.verify(
+        &inputs.trusted_dsdt_sha256,
+        &inputs.trusted_aml_patch_sha256,
+    )?;
     let outputs = km::Outputs {
         vmlinuz_sha256: fetch::sha256_file(&vmlinuz_path)?,
+        trusted_aml: true,
     };
     let manifest = km::KernelManifest {
         version: 1,
@@ -328,6 +335,8 @@ pub fn compute_fingerprint(
         confidential_config_sha256: fetch::sha256_file(Path::new(CONFIDENTIAL_FRAGMENT))?,
         module_signing_cert_sha256: fetch::sha256_file(signing_cert)?,
         randstruct_seed_sha256: fetch::sha256_file(Path::new(RANDSTRUCT_SEED))?,
+        trusted_dsdt_sha256: fetch::sha256_file(Path::new(aml::DSDT_SOURCE))?,
+        trusted_aml_patch_sha256: fetch::sha256_file(Path::new(aml::PATCH))?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
         kernel_extra_config_sha256: match fragment {

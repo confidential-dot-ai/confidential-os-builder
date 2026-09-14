@@ -56,6 +56,8 @@ fn require_inputs_exist(inputs: &KernelInputs) -> Result<()> {
         "kernel/required.config",
         "kernel/hardening.config",
         "kernel/confidential.config",
+        crate::kernel::aml::DSDT_SOURCE,
+        crate::kernel::aml::PATCH,
     ] {
         if !Path::new(f).exists() {
             return Err(anyhow!("required file missing: {}", f));

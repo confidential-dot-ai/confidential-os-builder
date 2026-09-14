@@ -31,9 +31,12 @@ shape.
       "required_config_sha256": "…",
       "hardening_config_sha256": "…",
       "kernel_extra_config_sha256": "",
-      "snapshot_config_sha256": "…"
+      "snapshot_config_sha256": "…",
+      "trusted_dsdt_sha256": "…",
+      "trusted_aml_patch_sha256": "…",
+      "trusted_aml": true
     },
-    "initrd": { "path": "combined-initrd.img", "sha256": "…" },
+    "initrd": { "path": "initrd.img", "sha256": "…" },
     "firmware": { "path": "OVMF.fd", "sha256": "…" },
     "base_image": { "path": "image.raw", "sha256": "…" }
   },
@@ -106,7 +109,10 @@ intermediate files).
 | `kernel.required_config_sha256` / `hardening_config_sha256` | Hashes of two of confos's three always-applied config fragments. The third, `confidential.config`, has no field of its own — its effect is pinned transitively via `snapshot_config_sha256` (the fully-resolved config) |
 | `kernel.kernel_extra_config_sha256` | Hash of the caller's `--kernel-config-fragment`; empty string when none was passed |
 | `kernel.snapshot_config_sha256` | Hash of the lineage's fully-resolved `.config` lockfile: `kernel/config-x86_64.snapshot` for the bare baseline, `config-x86_64-<stem>.snapshot` beside the fragment otherwise |
-| `initrd` | The mkosi-built initrd **including** the prepended trusted-DSDT early cpio — i.e. exactly the initrd bytes inside the UKI |
+| `kernel.trusted_dsdt_sha256` | SHA-256 of `kernel/trusted-dsdt.asl`, the source compiled into the kernel; this is not the hash of a table read from guest sysfs. Empty for older manifests |
+| `kernel.trusted_aml_patch_sha256` | SHA-256 of the version-specific kernel enforcement patch. Empty for older manifests |
+| `kernel.trusted_aml` | Whether the build passed mandatory configuration checks for the built-in DSDT and kernel AML loading restriction. Defaults to `false` for older manifests; not a runtime test result or independent attestation |
+| `initrd` | `initrd.img`: the mkosi-built initrd with its gzip timestamp normalized, exactly as embedded in the UKI. The trusted DSDT is in the kernel, not an early initrd archive |
 | `firmware` | The SNP-side, IGVM-aware OVMF (`--firmware`). Absent for `--platform tdx` builds. Note this is *not* the TDX firmware — that lives at `tdx.firmware` |
 | `base_image` | The mkosi-produced base filesystem image before disk assembly |
 
@@ -135,10 +141,12 @@ Omitted entirely for `--platform tdx` builds.
 
 ### `tdx` — Intel TDX reference measurements
 
-A single block, valid for **any** memory size and vCPU count — the
-trusted-DSDT override removes the only topology-sensitive content from the
-measured surface. Omitted for `--platform snp` builds. All register values
-are SHA-384, 96 lowercase hex chars.
+A single block rather than per-topology variants: these reference values
+omit RTMR[0], which includes host-supplied topology data. The kernel's
+trusted-AML policy excludes host AML; non-AML input parsing and supported
+CPU/memory/PCI layouts still require validation. This is not a guarantee
+of compatibility with arbitrary topologies. Omitted for `--platform snp`
+builds. All register values are SHA-384, 96 lowercase hex chars.
 
 | Field | Meaning |
 |---|---|
@@ -159,8 +167,16 @@ compensates.
 - Within a version, the absent-capable fields are: `inputs.kernel`,
   `inputs.firmware`, `snp_variants` (omitted when empty), `tdx`,
   `tdx.firmware`, and `kernel.kernel_extra_config_sha256` (defaults to the
-  empty string). Everything else is always present; consumers should treat
-  absent-vs-empty per the table notes.
+  empty string). Kernel provenance fields added after v3's introduction
+  also default on older manifests: `module_signing_cert_sha256`,
+  `randstruct_seed_sha256`, `trusted_dsdt_sha256` and
+  `trusted_aml_patch_sha256` default to empty strings, and `trusted_aml`
+  defaults to `false`.
+- Consumers requiring trusted AML must reject missing/false policy
+  metadata and approve the rebuilt image's actual measurements. A boolean
+  in an untrusted manifest cannot establish enforcement. Older strict
+  readers may reject the added fields even though the schema number stays
+  at v3; upgrade them before rolling out new manifests.
 - Field semantics never change silently within a version. If you build
   tooling against the manifest, pin the `version` you support and fail
   loudly on others — exactly what confos itself does.
