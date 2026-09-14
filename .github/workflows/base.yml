@@ -14,13 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          # mkosi is the only uv consumer; there is no Python dependency set.
+          enable-cache: false
 
       - name: Setup mkosi
         uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
@@ -73,13 +76,23 @@ jobs:
       - name: Build kernel
         run: bin/confos kernel
 
+      - name: Upload resolved kernel config
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kernel-config-${{ github.sha }}
+          path: kernel/config-x86_64.snapshot
+          if-no-files-found: error
+          overwrite: true
+
       - name: Cache base image tools
+        if: github.ref == 'refs/heads/main'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: mkosi/base/mkosi.tools
           key: ${{ runner.os }}-base-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf', 'mkosi/base/mkosi.sandbox/**') }}
 
       - name: Cache apt package cache
+        if: github.ref == 'refs/heads/main'
         # Keeps the image assembly off snapshot.ubuntu.com. conf-only globs:
         # profile mkosi.extra trees carry dangling systemd enablement
         # symlinks, which hashFiles refuses to hash.
@@ -91,6 +104,7 @@ jobs:
             ${{ runner.os }}-pkgcache-
 
       - name: Build base image
+        if: github.ref == 'refs/heads/main'
         run: bin/confos build
 
       - name: Make root-owned trees cache-safe
@@ -98,14 +112,17 @@ jobs:
         # root, so their saves fail without this. Runs after all use.
         run: |
           sudo chown -R "$(id -u):$(id -g)" \
+            output/kernel \
             mkosi/kernel-builder/mkosi.output \
             mkosi/base/mkosi.tools \
             mkosi/base/mkosi.pkgcache || true
 
       - name: Setup ORAS
+        if: github.ref == 'refs/heads/main'
         uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
 
       - name: Push to GHCR
+        if: github.ref == 'refs/heads/main'
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
           REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
