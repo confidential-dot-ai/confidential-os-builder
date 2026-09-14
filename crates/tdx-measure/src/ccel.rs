@@ -232,9 +232,36 @@ pub fn replay_rtmrs(events: &[CcelEvent]) -> [Vec<u8>; 4] {
 }
 
 /// Extract RTMR[0..3] from a 1024-byte TDREPORT.
+///
+/// TDREPORT_STRUCT layout (Intel TDX Module specification):
+///
+/// ```text
+/// offset  0  REPORTMACSTRUCT (256 bytes): report type, CPUSVN, TEE hashes,
+///            report_data, MAC
+/// offset 256  TDINFO:
+///               TEE_TCB_SVN      16
+///               MRSEAM           48
+///               MRSEAMSIGNER     48
+///               SEAMATTRIBUTES    8
+///               TDATTRIBUTES      8
+///               XFAM              8
+///               MRTD             48
+///               MRCONFIGID       48
+///               MROWNER          48
+///               MROWNERCONFIG    48
+///               RTMR[0..3]      4*48   <- extracted here
+///               SERVTD_HASH      48
+/// ```
+///
+/// So RTMR[0] lives at 256 + 328 = 584, and the four registers span
+/// 584..776. (A previous revision read 720..912, past the end of the
+/// register block, so every real TDREPORT failed verification.)
 pub fn extract_rtmrs_from_tdreport(report: &[u8]) -> Result<[Vec<u8>; 4]> {
-    const TDINFO_OFFSET: usize = 512;
     const TDREPORT_SIZE: usize = 1024;
+    const REPORTMACSTRUCT_SIZE: usize = 256;
+    // Sum of the TDINFO field sizes preceding RTMR[0], in struct order.
+    const TDINFO_RTMR0_OFFSET: usize = 16 + 48 + 48 + 8 + 8 + 8 + 48 + 48 + 48 + 48;
+    const RTMR_SIZE: usize = 48;
 
     if report.len() != TDREPORT_SIZE {
         bail!(
@@ -244,14 +271,15 @@ pub fn extract_rtmrs_from_tdreport(report: &[u8]) -> Result<[Vec<u8>; 4]> {
         );
     }
 
+    let base = REPORTMACSTRUCT_SIZE + TDINFO_RTMR0_OFFSET;
     let offsets = [
-        TDINFO_OFFSET + 208,
-        TDINFO_OFFSET + 256,
-        TDINFO_OFFSET + 304,
-        TDINFO_OFFSET + 352,
+        base,
+        base + RTMR_SIZE,
+        base + 2 * RTMR_SIZE,
+        base + 3 * RTMR_SIZE,
     ];
 
-    Ok(offsets.map(|off| report[off..off + 48].to_vec()))
+    Ok(offsets.map(|off| report[off..off + RTMR_SIZE].to_vec()))
 }
 
 /// Constant-time comparison of two digests.
@@ -532,24 +560,27 @@ mod tests {
 
     #[test]
     fn test_extract_rtmrs_from_tdreport_valid() {
-        let mut report = vec![0u8; 1024];
-        // Write known values at the RTMR offsets within TDINFO
-        let offsets = [
-            512 + 208, // RTMR[0]
-            512 + 256, // RTMR[1]
-            512 + 304, // RTMR[2]
-            512 + 352, // RTMR[3]
-        ];
+        // Fill with a guard pattern: any read outside the true RTMR windows
+        // (e.g. a wrong REPORTMACSTRUCT size or a missing TDINFO field)
+        // returns guard bytes and fails, instead of silently passing on zeros.
+        let mut report = vec![0xEEu8; 1024];
+        // Literal offsets from the TDREPORT_STRUCT layout in the TDX Module
+        // spec — deliberately NOT derived from the constants under test, so
+        // the test is an independent encoding of the ABI. RTMR[i] spans
+        // 584..776 as four consecutive 48-byte registers.
+        let offsets = [584usize, 632, 680, 728];
+        let sentinels: [[u8; 48]; 4] = [[0xA0; 48], [0xB1; 48], [0xC2; 48], [0xD3; 48]];
         for (i, &off) in offsets.iter().enumerate() {
-            for j in 0..48 {
-                report[off + j] = (i + 1) as u8;
-            }
+            report[off..off + 48].copy_from_slice(&sentinels[i]);
         }
         let rtmrs = extract_rtmrs_from_tdreport(&report).unwrap();
-        assert_eq!(rtmrs[0], vec![1u8; 48]);
-        assert_eq!(rtmrs[1], vec![2u8; 48]);
-        assert_eq!(rtmrs[2], vec![3u8; 48]);
-        assert_eq!(rtmrs[3], vec![4u8; 48]);
+        for (i, rtmr) in rtmrs.iter().enumerate() {
+            assert_eq!(
+                rtmr.as_slice(),
+                &sentinels[i][..],
+                "RTMR[{i}] read from the wrong offset"
+            );
+        }
     }
 
     #[test]

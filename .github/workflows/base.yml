@@ -14,13 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           # mkosi is the only uv consumer; there is no Python dependency set.
           enable-cache: false
@@ -42,7 +42,7 @@ jobs:
         # state), the script, and the pin it reads (base mkosi.sources);
         # host-deps validates the cached manifest and falls back to a cold
         # snapshot install on any mismatch, so a stale entry costs time only.
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: apt-debs
           key: ${{ runner.os }}-host-debs-${{ steps.image.outputs.key }}-${{ hashFiles('bin/host-deps', 'mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources') }}
@@ -56,7 +56,7 @@ jobs:
       - name: Cache kernel-builder tools tree
         # mkosi.output (image + stamp) is what ensure_tools_tree consumes;
         # mkosi.tools is only an intermediate for building it.
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: mkosi/kernel-builder/mkosi.output
           key: ${{ runner.os }}-tools-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
@@ -66,7 +66,7 @@ jobs:
         # the resolved config and fingerprints THAT, so restoring
         # output/kernel without it never matches and the kernel rebuilds
         # every run. hashFiles has no brace expansion, so files are listed.
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             output/kernel
@@ -86,7 +86,7 @@ jobs:
 
       - name: Cache base image tools
         if: github.ref == 'refs/heads/main'
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: mkosi/base/mkosi.tools
           key: ${{ runner.os }}-base-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf', 'mkosi/base/mkosi.sandbox/**') }}
@@ -96,7 +96,7 @@ jobs:
         # Keeps the image assembly off snapshot.ubuntu.com. conf-only globs:
         # profile mkosi.extra trees carry dangling systemd enablement
         # symlinks, which hashFiles refuses to hash.
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: mkosi/base/mkosi.pkgcache
           key: ${{ runner.os }}-pkgcache-${{ hashFiles('mkosi/base/mkosi.conf', 'mkosi/base/mkosi.conf.d/*.conf', 'mkosi/base/mkosi.profiles/*/mkosi.conf', 'mkosi/base/mkosi.sandbox/**') }}
@@ -119,7 +119,7 @@ jobs:
 
       - name: Setup ORAS
         if: github.ref == 'refs/heads/main'
-        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
 
       - name: Push to GHCR
         if: github.ref == 'refs/heads/main'

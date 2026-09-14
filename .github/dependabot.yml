@@ -5,7 +5,8 @@
 # that exact `uses: systemd/mkosi@<sha> # v<N>` line to keep its own mkosi
 # install in lockstep — the line's format is load-bearing downstream.
 # (release.yml still carries tag-only pins; dependabot bumps those too but
-# cannot SHA-pin them for you.)
+# cannot SHA-pin them for you. Keep dist-workspace.toml's action overrides
+# aligned with those updates, then run `dist generate --mode=ci`.)
 version: 2
 updates:
   - package-ecosystem: github-actions

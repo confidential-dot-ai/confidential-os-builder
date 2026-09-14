@@ -19,7 +19,7 @@ jobs:
         name: Test kernel.org checksum verification
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
             - run: bash .github/scripts/tests/test-kernel-checksum.sh
             - run: bash .github/scripts/tests/test-kernel-release.sh
 
@@ -28,7 +28,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 15
         steps:
-            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
             - name: Install snapshot-pinned cloud-init
               run: bin/host-deps cloud-init
             - name: Test seed isolation and state overlays
@@ -41,10 +41,10 @@ jobs:
         permissions:
             contents: read
         steps:
-            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-            - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
             - name: Setup uv
-              uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+              uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
               with:
                   enable-cache: false
             - name: Setup mkosi
@@ -53,12 +53,12 @@ jobs:
               run: bin/host-deps systemd-container
             - name: Cache kernel-builder tools tree
               # Same key as base.yml: the harness runs in the production tree.
-              uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
                   path: mkosi/kernel-builder/mkosi.output
                   key: ${{ runner.os }}-tools-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
             - name: Cache kernel tarball
-              uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
                   path: output/acpi/cache
                   key: ${{ runner.os }}-kernel-tarball-${{ hashFiles('kernel/version') }}
@@ -94,7 +94,7 @@ jobs:
         continue-on-error: ${{ matrix.checks == 'advisories' }}
         steps:
             - name: Check out repo
-              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
             - name: Install cargo-deny
               uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
@@ -106,8 +106,8 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
-            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-            - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
               with:
                   components: rustfmt, clippy
             - name: Run linters
@@ -125,9 +125,9 @@ jobs:
                     - ubuntu-24.04-arm # linux-arm
 
         steps:
-            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-            - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-            - uses: taiki-e/install-action@91ddec75689c4c78665b598d188dc821c5a43e5c # v2.85.9
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+            - uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2.87.11
               with:
                 tool: nextest
             - run: ./bin/test
@@ -136,8 +136,8 @@ jobs:
         name: Build Confidential OS Builder
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-            - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
             - run: cargo build --release
             - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
