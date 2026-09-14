@@ -59,11 +59,18 @@ impl Drop for KernelOut {
 fn kernel_build_succeeds() {
     let tmp = KernelOut::new();
     let out = tmp.path().join("kernel");
+    let old_kernel_src = out.join("build/linux-6.1.0");
+    std::fs::create_dir_all(&old_kernel_src).unwrap();
+    std::fs::write(old_kernel_src.join("vmlinux"), b"stale build output").unwrap();
     Command::new(binary())
         .args(["kernel", "--output"])
         .arg(&out)
         .assert()
         .success();
+    assert!(
+        !old_kernel_src.exists(),
+        "build retained a previous kernel version's source and objects"
+    );
     assert!(out.join("vmlinuz").exists());
     assert!(out.join("manifest.json").exists());
     let manifest = confos::kernel::manifest::read(&out.join("manifest.json")).unwrap();

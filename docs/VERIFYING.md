@@ -203,7 +203,15 @@ Results land in `output/acpi/results`: per-case serial logs,
 `results.json` and kernel hashes. The harness tests the actual patched kernel, but uses a reduced
 test configuration and marker tables; passing it does not certify a
 consumer's production image or TEE isolation. Dynamic API tests add a
-diagnostic kernel probe. The test configuration enables `KEXEC` to supply
+diagnostic kernel probe. Its direct-method injection fixture contains a
+single `Method` (`tests/acpi/fixtures/method.asl`), as required by
+`acpi_install_method()`. With enforcement disabled, the positive control
+must install and execute `\TSTI`, returning the marker `0xcfa132`. With
+enforcement enabled, the same installation must return `AE_ACCESS`,
+evaluation must return `AE_NOT_FOUND`, and no method-value marker may
+appear. These assertions check that the method is absent from the namespace
+and that the fixture can execute when enforcement permits it.
+The test configuration enables `KEXEC` to supply
 a replacement ACPI root through `acpi_rsdp=`; production keeps it disabled.
 The `Test kernel AML enforcement` CI job runs this harness on
 checksum-verified source and uploads its logs,

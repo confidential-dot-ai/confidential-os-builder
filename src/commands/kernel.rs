@@ -110,6 +110,8 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Phase 0b + 0c: fetch, extract, stage the trusted AML inputs, configure
     println!("\n=== Step 0b: Fetching + extracting kernel ===");
+    // Discard previous versions' source and objects before a fresh build.
+    tools::force_remove_dir_all(&build_dir)?;
     let (kernel_src, aml_script) = extract_pinned_source(&version, &cache_dir, &build_dir)?;
     println!("\n=== Step 0c: Configuring kernel ===");
 

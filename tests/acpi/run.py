@@ -137,6 +137,7 @@ def main():
     trusted = aml(HERE / "fixtures/trusted.asl", output / "trusted")
     host = aml(HERE / "fixtures/host.asl", output / "host")
     secondary = aml(HERE / "fixtures/secondary.asl", output / "secondary")
+    method = aml(HERE / "fixtures/method.asl", output / "method")
     tables = {sig: variant(secondary, output / f"{sig}.aml", signature=sig) for sig in ("SSDT", "PSDT", "OSDT")}
     initdir = output / "initramfs"
     initdir.mkdir(exist_ok=True)
@@ -245,7 +246,7 @@ def main():
         "    Method (LDBF, 0, NotSerialized) { Load (DYNA, Local0) Return (Local0) }\n"
         '    Method (LDTB, 0, NotSerialized) { Return (LoadTable ("SSDT", "", "", "", "", 0)) }\n    Scope', 1))
     dynamic = aml(dynamic_asl, output / "dynamic")
-    # This one kernel contains explicit diagnostic instrumentation. Every other
+    # These two kernels contain explicit diagnostic instrumentation. Every other
     # kernel is built from the unmodified repository patch and header alone.
     acpi_makefile = source / "drivers/acpi/Makefile"
     original_makefile = acpi_makefile.read_bytes()
@@ -255,14 +256,21 @@ def main():
         raise RuntimeError("diagnostic paths already exist in disposable source")
     try:
         shutil.copyfile(HERE / "api-probe.c", probe)
-        probe_data.write_text("static unsigned char test_aml[] = {" + ",".join(str(x) for x in secondary.read_bytes()) + "};\n")
+        probe_data.write_text("".join(
+            "static unsigned char " + name + "[] = {" + ",".join(str(x) for x in table.read_bytes()) + "};\n"
+            for name, table in (("test_aml", secondary), ("test_method_aml", method))))
         acpi_makefile.write_bytes(original_makefile + b"\nobj-y += confos-aml-probe.o\n")
+        method_control = kernel("diagnostic-method-control", dynamic.with_suffix(".hex"))
+        boot("control-method-install", method_control, required=[
+            "AMLTEST: acpi_install_method=AE_OK", "AMLTEST: installed-method=AE_OK",
+            "AMLTEST: installed-method-value=0xcfa132"])
         dynamic_image = kernel("diagnostic-dynamic", dynamic.with_suffix(".hex"), True)
         boot("hardened-dynamic-load", dynamic_image, [tables["SSDT"]], required=accepted + [
             "AMLTEST: acpi_load_table=AE_ACCESS", "AMLTEST: acpi_install_method=AE_ACCESS",
+            "AMLTEST: installed-method=AE_NOT_FOUND",
             "AMLTEST: Load(buffer)=AE_ACCESS", "AMLTEST: LoadTable=AE_ACCESS",
             "AMLTEST: repeated-primary=AE_ACCESS", "AMLTEST: unload-primary=AE_ACCESS",
-            "AMLTEST: reload-primary=AE_ACCESS"], forbidden=denied)
+            "AMLTEST: reload-primary=AE_ACCESS"], forbidden=denied + ["AMLTEST: installed-method-value="])
     finally:
         acpi_makefile.write_bytes(original_makefile)
         probe.unlink(missing_ok=True)
