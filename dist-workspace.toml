@@ -15,3 +15,8 @@ targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-unkn
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+
+# Keep checkout aligned with release.yml when Dependabot updates the action.
+# Regenerate with cargo-dist 0.32.0: dist generate --mode=ci
+[dist.github-action-commits]
+"actions/checkout" = "v7"
