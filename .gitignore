@@ -26,6 +26,7 @@ PROGRESS*.md
 
 /output/kernel/
 /mkosi/kernel-builder/mkosi.output/
+/mkosi/kernel-builder/mkosi.output-acpi/
 /mkosi/base/mkosi.local
 /mkosi/base/mkosi.extra/usr/lib/modules/
 .claude/

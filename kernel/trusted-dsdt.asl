@@ -5,7 +5,7 @@
  * Keep topology windows compatible with supported CPU/memory/GPU shapes.
  */
 
-DefinitionBlock ("dsdt.aml", "DSDT", 1, "BOCHS ", "BXPC    ", 0x00000002)
+DefinitionBlock ("dsdt.aml", "DSDT", 1, "CONFAI", "TRUSTED ", 0x00000002)
 {
     Scope (\_SB)
     {

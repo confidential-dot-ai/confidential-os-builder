@@ -171,9 +171,10 @@ invalid trusted primary table is fatal before userspace.
 
 Update each consumer's builder pin, regenerate its kernel configuration,
 and rebuild its kernel and image. Check `inputs.kernel.trusted_dsdt_sha256`
-and `trusted_aml_patch_sha256` are populated and match the sources you
-reviewed; older manifests default to empty hashes. These fields describe the build and must come from the same
-trusted provenance channel as the artifact measurements. The ASL source
+and `trusted_aml_patch_sha256` match the sources you reviewed; confos
+refuses a manifest that lacks them, so an image from a pre-gate builder
+cannot pass as gated. These fields describe the build and must come from
+the same trusted provenance channel as the artifact measurements. The ASL source
 hash is not the hash of the compiled table in guest sysfs.
 
 Before approving the new reference values, validate the actual patched
@@ -188,12 +189,16 @@ passes its acceptance checks.
 
 The [ACPI test harness](../tests/acpi/run.py) builds test kernels and
 exercises table selection under QEMU TCG without `/dev/kvm`. Its wrapper
-has the builder prepare the source (`confos kernel-source`: the pinned,
-checksum-verified tarball, the enforcement patch and the compiled trusted
-DSDT header, exactly as `confos kernel` stages them) and then runs the
-harness inside the pinned kernel tools tree, so the tested kernels come
-from the production source and toolchain. It needs the same host setup as
-a kernel build (mkosi, `systemd-nspawn`, sudo).
+runs `confos kernel-source --acpi-harness`: the builder prepares the source
+(the pinned, checksum-verified tarball, the enforcement patch and the
+compiled trusted DSDT header, exactly as `confos kernel` stages them) and
+boots the harness inside a tools tree built beside the production one with
+QEMU and Python added, so the tested kernels come from the production
+source and toolchain while the measured tree stays free of test packages.
+It needs the same host setup as a kernel build (mkosi, `systemd-nspawn`,
+sudo). Enforcing boots must log no `ACPI Error`: host definition blocks
+are dropped while the root table is parsed, in either order relative to
+the FADT, rather than failing at namespace load.
 
 ```bash
 tests/acpi/run.sh --jobs 8

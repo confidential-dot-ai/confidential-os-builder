@@ -35,8 +35,10 @@ consumer fragments have been applied:
 
 - `CONFIG_ACPI_CUSTOM_DSDT=y` and `CONFIG_ACPI_TRUSTED_AML=y` are required.
 - `CONFIG_ACPI_CUSTOM_DSDT_FILE` must name the expected generated header.
-- Initrd table upgrade, configfs table injection and EFI SSDT overlays
-  must remain disabled.
+- Initrd table upgrade, configfs table injection, EFI SSDT overlays and
+  the ACPI debugger must remain disabled. The patch's Kconfig refuses to
+  combine `CONFIG_ACPI_TRUSTED_AML` with any of them as well, so a kernel
+  configured outside the builder cannot pair the gate with a loader.
 
 These checks are stronger than ordinary last-fragment-wins validation:
 a downstream fragment cannot opt out. Both the ASL source and enforcement
@@ -51,19 +53,19 @@ the patch retargeted:
 
 | Kernel boundary | Enforcement |
 |---|---|
-| `acpi_ns_load_table` | Before namespace parsing, require the canonical DSDT index and the actual compiled `dsdt_aml_code[]` array. Reject a second load |
-| `acpi_os_prepare_trusted_aml` | Re-check the built-in array's signature, exact length and checksum (ACPICA's override verification and `acpi_tb_load_namespace` reject a bad table first, so these are defense in depth); keep the bytes resident |
-| `acpi_tb_load_namespace` | Skip optional DSDT copying so pointer identity continues to identify the compiled array |
+| `acpi_tb_parse_root_table` | Drop every RSDT/XSDT entry with a DSDT, SSDT, PSDT or OSDT signature before it is installed. Host definition blocks never reach the root table list, sysfs or the loader, and a host DSDT entry listed ahead of the FADT cannot displace the FADT's slot as its byte-identical duplicate |
+| `acpi_ns_load_table` | Before namespace parsing, require the canonical DSDT index and the built-in bytes. Reject a second load. A backstop: after the root-table filter nothing else reaches it on a healthy boot |
+| `acpi_os_prepare_trusted_aml` | The primary table must have the built-in array's exact length and content, whether ACPICA maps the array in place or copied it locally (ACPICA's override verification and `acpi_tb_load_namespace` reject a bad checksum or signature first) |
+| `acpi_reallocate_root_table` | Skip the "not invalidated during early boot" check for the built-in table: a virtual-origin table is never mapped, so its pointer is not a leaked early mapping and the error would fire on every boot |
 | `acpi_tb_install_and_load_table` | Deny `Load` and `acpi_load_table()` before the table is installed: `acpi_ns_load_table` would reject it anyway, but only after installation, and callers free the buffer on failure. `LoadTable` reaches `acpi_ns_load_table` directly and needs no extra hook |
 | `acpi_install_method` / `acpi_tb_unload_table` | Deny direct method replacement and namespace unloading |
 | `kernel_init_freeable` | After initcalls, require successful trusted DSDT loading and enabled ACPI before launching init; this check is not an initcall that can be blacklisted |
 
-Rejecting a firmware SSDT is not silent: ACPICA logs `ACPI Error: AE_ACCESS,
-(SSDT:...) while loading table` and `N table load failures` for each one,
-and boot continues only because `acpi_load_tables` masks the per-table
-status. Those lines are expected on any host that emits secondary tables
-(vmgenid, NVDIMM, hotplug); the masking is part of what a kernel update
-must re-audit.
+A dropped host table logs one `ACPI: Trusted AML: ignoring host SSDT at
+...` line and nothing else. A healthy enforcing boot therefore logs no
+`ACPI Error`, and the harness fails any enforcing case that does; an error
+line from the namespace-load backstop means the root-table filter was
+bypassed and a kernel update must re-audit both.
 
 The AML namespace parser has one table-loading caller in this kernel;
 method evaluation operates on the admitted namespace. The separate method

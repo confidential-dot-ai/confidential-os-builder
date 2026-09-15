@@ -986,8 +986,11 @@ fn chrono_now() -> String {
 
 /// Copy the mkosi initrd and remove its gzip timestamp before measuring it.
 fn prepare_initrd(output: &Path, mkosi_initrd: &Path) -> anyhow::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
     let normalized = output.join("initrd.img");
     fs_err::copy(mkosi_initrd, &normalized)?;
+    // The copy inherits mkosi's mode, which may be read-only.
+    fs_err::set_permissions(&normalized, std::fs::Permissions::from_mode(0o644))?;
     zero_gzip_mtime(&normalized)?;
     Ok(normalized.canonicalize()?)
 }
@@ -1648,6 +1651,8 @@ mod tests {
         let source = dir.path().join("mkosi.cpio.gz");
         let original = gzip_with_mtime(b"measured initramfs contents", 1234);
         fs_err::write(&source, &original).unwrap();
+        // mkosi may leave its output read-only; the copy must still be patched.
+        fs_err::set_permissions(&source, std::fs::Permissions::from_mode(0o444)).unwrap();
         let normalized = prepare_initrd(dir.path(), &source).unwrap();
         assert_eq!(fs_err::read(&source).unwrap(), original);
         let data = fs_err::read(normalized).unwrap();

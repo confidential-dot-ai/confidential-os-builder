@@ -51,29 +51,34 @@ jobs:
               uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
             - name: Install nspawn
               run: bin/host-deps systemd-container
-            - name: Cache kernel-builder tools tree
-              # Same key as base.yml: the harness runs in the production tree.
+            - name: Cache the harness tools tree
+              # The production tree plus QEMU and Python, built beside it by
+              # `confos kernel-source`; base.yml's production cache stays
+              # free of harness packages.
               uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
-                  path: mkosi/kernel-builder/mkosi.output
-                  key: ${{ runner.os }}-tools-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
+                  path: mkosi/kernel-builder/mkosi.output-acpi
+                  key: ${{ runner.os }}-tools-acpi-v1-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
             - name: Cache kernel tarball
               uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
                   path: output/acpi/cache
                   key: ${{ runner.os }}-kernel-tarball-${{ hashFiles('kernel/version') }}
-            - name: Boot control and enforcing kernels
-              run: tests/acpi/run.sh --jobs 4
+            - name: Prepare the patched kernel source
+              run: bin/confos kernel-source --output output/acpi
             - name: Lint the kernel patch with upstream checkpatch
+              # Before the long boot step so a style failure surfaces first.
               run: |
                   . kernel/version
                   # Read stdin so checkpatch does not treat the tracked patch as a source file.
                   "output/acpi/linux-${LINUX_VERSION}/scripts/checkpatch.pl" --no-tree --no-signoff - < kernel/patches/0001-acpi-trusted-aml.patch
+            - name: Boot control and enforcing kernels
+              run: tests/acpi/run.sh --jobs 4
             - name: Make root-owned trees cache-safe
               # The post-job cache tar runs unprivileged; mkosi builds the
               # tools tree as root. output/acpi/cache is written unprivileged.
               if: always()
-              run: sudo chown -R "$(id -u):$(id -g)" mkosi/kernel-builder/mkosi.output || true
+              run: sudo chown -R "$(id -u):$(id -g)" mkosi/kernel-builder/mkosi.output-acpi || true
             - name: Upload AML test evidence
               if: always()
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

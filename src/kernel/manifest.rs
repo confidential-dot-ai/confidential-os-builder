@@ -1,6 +1,5 @@
 //! `output/kernel/manifest.json` schema and fingerprint helpers.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -61,24 +60,11 @@ impl Fingerprint {
     /// Render this fingerprint as canonical JSON: keys sorted, no whitespace.
     /// Used to compare fingerprints across runs.
     pub fn to_canonical_json(&self) -> String {
-        let mut m: BTreeMap<&str, &str> = BTreeMap::new();
-        m.insert("linux_version", &self.linux_version);
-        m.insert("tarball_sha256", &self.tarball_sha256);
-        m.insert("required_config_sha256", &self.required_config_sha256);
-        m.insert("hardening_config_sha256", &self.hardening_config_sha256);
-        m.insert(
-            "confidential_config_sha256",
-            &self.confidential_config_sha256,
-        );
-        m.insert(
-            "kernel_extra_config_sha256",
-            &self.kernel_extra_config_sha256,
-        );
-        m.insert("snapshot_config_sha256", &self.snapshot_config_sha256);
-        m.insert("tools_tree_digest", &self.tools_tree_digest);
-        m.insert("trusted_dsdt_sha256", &self.trusted_dsdt_sha256);
-        m.insert("trusted_aml_patch_sha256", &self.trusted_aml_patch_sha256);
-        serde_json::to_string(&m).expect("BTreeMap of strings serializes")
+        // serde_json's object is a BTreeMap (no `preserve_order`), so going
+        // through Value sorts the keys and every field takes part without a
+        // second hand-written list.
+        let value = serde_json::to_value(self).expect("string fields serialize");
+        serde_json::to_string(&value).expect("value serializes")
     }
 }
 

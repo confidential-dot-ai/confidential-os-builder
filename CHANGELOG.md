@@ -13,9 +13,18 @@ build configs, since those invalidate published reference values.
   kernel with the pinned kernel tools tree. A mandatory kernel gate admits
   only that table before AML namespace parsing and rejects secondary tables,
   dynamic loads, method installation and table unloading. Missing trusted
-  AML stops boot before init. The early-initrd DSDT archive is removed;
-  consumer fragments cannot disable the policy. Rebuild consumer kernels
-  and images and approve new reference values after hardware acceptance.
+  AML stops boot before init. Host definition blocks are dropped while the
+  root table is parsed, so a healthy boot logs no ACPI errors, and the
+  patch's Kconfig refuses the alternate table loaders. The early-initrd
+  DSDT archive is removed; consumer fragments cannot disable the policy.
+  Rebuild consumer kernels and images and approve new reference values
+  after hardware acceptance.
+- **Breaking for readers of older manifests.** `trusted_dsdt_sha256` and
+  `trusted_aml_patch_sha256` are required in `inputs.kernel`; `confos pull`
+  and `confos run` reject manifests from builders without the gate.
+- The ACPI harness runs in its own tools tree beside the production one
+  (`confos kernel-source --acpi-harness`), so QEMU and Python leave the
+  measured kernel-builder tree and its digest.
 
 ## [0.5.0] — 2026-09-14
 

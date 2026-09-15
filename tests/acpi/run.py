@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Boot kernels built from the builder's patched source under QEMU TCG.
 
-Run through tests/acpi/run.sh: `confos kernel-source` prepares the tree and
-this script runs inside the pinned kernel tools tree. Never needs /dev/kvm.
+Run through tests/acpi/run.sh: `confos kernel-source --acpi-harness`
+prepares the tree and runs this script inside its tools tree. Never needs
+/dev/kvm.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -15,6 +17,7 @@ import struct
 import re
 import subprocess
 import sys
+import threading
 
 HERE = Path(__file__).resolve().parent
 # Native inside the x86-64 tools tree; a cross prefix only elsewhere.
@@ -79,11 +82,13 @@ def corrupt(source, defect, *, signature, length):
     return checksum(data)
 
 
-def firmware_root(templates, primary, secondary, output):
+def firmware_root(templates, primary, secondary, output, secondary_first=False):
     """Build a checksummed root in reserved guest RAM; FADT points at our DSDT.
 
     QEMU -acpitable only appends a DSDT, leaving FADT's original DSDT intact.
     Copy the control boot's non-AML tables and replace that actual pointer.
+    `secondary_first` lists the secondary tables ahead of the FADT, which is
+    the order ACPICA verifies them in.
     """
     base = 0x08000000
     memory = bytearray(65536)
@@ -103,11 +108,13 @@ def firmware_root(templates, primary, secondary, output):
     struct.pack_into("<I", fadt, 40, dsdt_address)
     if len(fadt) >= 148:
         struct.pack_into("<Q", fadt, 140, dsdt_address)
-    pointers = [store(checksum(fadt))]
+    pointers = [store(table.read_bytes()) for table in secondary] if secondary_first else []
+    pointers.append(store(checksum(fadt)))
     for name in ("APIC", "HPET", "MCFG"):
         if name in templates:
             pointers.append(store(templates[name]))
-    pointers.extend(store(table.read_bytes()) for table in secondary)
+    if not secondary_first:
+        pointers.extend(store(table.read_bytes()) for table in secondary)
     rsdt = bytearray(struct.pack("<4sIBB6s8sI4sI", b"RSDT", 36 + 4 * len(pointers), 1, 0, b"CONFAI", b"AMLTEST ", 1, b"TEST", 1))
     rsdt.extend(struct.pack("<" + "I" * len(pointers), *pointers))
     rsdt_address = store(checksum(rsdt))
@@ -154,10 +161,25 @@ def main():
     command([*make, "allnoconfig"], log=output / "configure.log")
     config = source / "scripts/config"
     enabled = ["64BIT", "SMP", "KEXEC", "KALLSYMS", "PRINTK", "MULTIUSER", "SYSFS", "PROC_FS", "TMPFS", "PCI", "ACPI", "PM", "TTY", "SERIAL_8250", "SERIAL_8250_CONSOLE", "BLK_DEV_INITRD", "BINFMT_ELF", "DEVTMPFS", "X86_LOCAL_APIC", "X86_IO_APIC"]
-    command([config, "--file", build / ".config", "--set-val", "NR_CPUS", "8", *[item for name in enabled for item in ("-e", name)]])
+    # The alternate table loaders the gate's Kconfig refuses to coexist with.
+    disabled = ["ACPI_TABLE_UPGRADE", "ACPI_CONFIGFS", "EFI_CUSTOM_SSDT_OVERLAYS", "ACPI_DEBUGGER"]
+    command([config, "--file", build / ".config", "--set-val", "NR_CPUS", "8",
+             *[item for name in enabled for item in ("-e", name)], *[item for name in disabled for item in ("-d", name)]])
     command([*make, "olddefconfig"], log=output / "olddefconfig.log")
 
+    # Boots of a built kernel are independent, so they run concurrently; a
+    # kernel build waits for them first to keep the CPUs and the results.
+    pool = ThreadPoolExecutor(max_workers=args.jobs)
+    pending = []
+    results = []
+    results_lock = threading.Lock()
+
+    def drain():
+        while pending:
+            pending.pop().result()
+
     def kernel(name, header=None, hardened=False):
+        drain()
         switches = ["-d", "STANDALONE", "-e" if header else "-d", "ACPI_CUSTOM_DSDT", "-e" if hardened else "-d", "ACPI_TRUSTED_AML"]
         if header:
             shutil.copyfile(header, source / "include/confos-trusted-dsdt.h")
@@ -175,12 +197,10 @@ def main():
         shutil.copyfile(build / ".config", output / f"{name}.config")
         return image
 
-    results = []
-
-    def boot(name, image, acpi_tables=(), required=(), forbidden=(), cmdline="", fatal=False, primary=None, cpus=1, memory=256):
+    def run_boot(order, name, image, acpi_tables, required, forbidden, cmdline, fatal, primary, cpus, memory, secondary_first):
         extra = []
         if primary is not None:
-            extra, root_cmdline = firmware_root(templates, primary, acpi_tables, output / f"{name}-firmware.bin")
+            extra, root_cmdline = firmware_root(templates, primary, acpi_tables, output / f"{name}-firmware.bin", secondary_first)
             cmdline += root_cmdline
             acpi_tables = ()
         qemu = ["qemu-system-x86_64", "-machine", "q35,accel=tcg", "-cpu", "max", "-m", f"{memory}M", "-smp", str(cpus), "-nodefaults", "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot", "-kernel", str(image), "-initrd", str(output / "initramfs.cpio"), "-append", "console=ttyS0 rdinit=/init panic=-1 " + cmdline, *extra]
@@ -208,28 +228,45 @@ def main():
             found_memory = re.search(r"AMLTEST: MEMORY_MB (\d+)", log)
             if not found_memory or int(found_memory[1]) < memory * 0.7:
                 errors.append("guest did not see expected RAM")
-        results.append({"case": name, "passed": not errors, "errors": errors, "command": qemu})
-        print(f"{'FAIL' if errors else 'PASS'} {name}: {errors}", flush=True)
-        (output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+        with results_lock:
+            results.append({"order": order, "case": name, "passed": not errors, "errors": errors, "command": qemu})
+            results.sort(key=lambda item: item["order"])
+            print(f"{'FAIL' if errors else 'PASS'} {name}: {errors}", flush=True)
+            (output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
         return log
+
+    def boot(name, image, acpi_tables=(), required=(), forbidden=(), cmdline="", fatal=False, primary=None, cpus=1, memory=256, secondary_first=False):
+        """Schedule a boot; the returned future yields the serial log."""
+        future = pool.submit(run_boot, len(pending) + len(results), name, image, tuple(acpi_tables), tuple(required), tuple(forbidden), cmdline, fatal, primary, cpus, memory, secondary_first)
+        pending.append(future)
+        return future
 
     control = kernel("control")
     # The stock boot's exported non-AML tables seed every firmware_root below.
     templates = {sig: bytes.fromhex(data) for sig, data in re.findall(
-        r"AMLTEST: TABLE (\w+) ([0-9a-f]+)", boot("control-stock", control, required=["AMLTEST: DEVICE PNP0A08"]))}
+        r"AMLTEST: TABLE (\w+) ([0-9a-f]+)", boot("control-stock", control, required=["AMLTEST: DEVICE PNP0A08"]).result())}
     if "FACP" not in templates:
         raise RuntimeError("control boot did not export its FADT")
     boot("control-host", control, primary=host, required=["AMLTEST: DEVICE CFA0002"])
     for sig, table in tables.items():
         boot("control-" + sig, control, [table], primary=host, required=["AMLTEST: DEVICE CFA0003"])
     hardened = kernel("hardened", trusted.with_suffix(".hex"), True)
-    denied = ["AMLTEST: DEVICE CFA0002", "AMLTEST: DEVICE CFA0003"]
+    markers = ["AMLTEST: DEVICE CFA0002", "AMLTEST: DEVICE CFA0003"]
+    # A healthy enforcing boot logs no ACPI error: host definition blocks are
+    # dropped while the root table is parsed, not failed at namespace load.
+    denied = markers + ["ACPI Error"]
     accepted = ["ACPI: Trusted AML: built-in DSDT loaded", "AMLTEST: DEVICE CFA0001"]
     boot("hardened-default-firmware", hardened, required=accepted, forbidden=denied)
     for sig, table in tables.items():
-        boot("hardened-" + sig, hardened, [table], primary=host, required=accepted, forbidden=denied)
+        boot("hardened-" + sig, hardened, [table], primary=host, required=accepted + [f"Trusted AML: ignoring host {sig}"], forbidden=denied)
     duplicate = variant(secondary, output / "duplicate-DSDT.aml", signature="DSDT")
-    boot("hardened-duplicate-DSDT", hardened, [duplicate], primary=host, required=accepted, forbidden=denied)
+    # Either order relative to the FADT: ACPICA verifies root entries in
+    # order, and a byte-identical host DSDT listed first would otherwise
+    # displace the FADT's slot as its duplicate.
+    for sig, table in (("DSDT", duplicate), ("SSDT", tables["SSDT"])):
+        for suffix, first in (("", False), ("-first", True)):
+            boot(f"hardened-duplicate-{sig}{suffix}", hardened, [table], primary=host, secondary_first=first,
+                 required=accepted + [f"Trusted AML: ignoring host {sig}"], forbidden=denied)
     for revision in (0, 1, 0xFFFFFFFF):
         table = variant(host, output / f"revision-{revision}.aml", revision=revision, oem="CONFAI" if revision == 1 else "OTHERX")
         boot(f"hardened-revision-{revision}", hardened, primary=table, required=accepted, forbidden=denied)
@@ -239,7 +276,7 @@ def main():
         fatal_host = defect == "signature"
         boot("hardened-host-invalid-" + defect, hardened, primary=bad_host,
              required=["Kernel panic", "Trusted AML:"] if fatal_host else accepted,
-             forbidden=denied, fatal=fatal_host)
+             forbidden=markers if fatal_host else denied, fatal=fatal_host)
     boot("hardened-copy-dsdt", hardened, primary=host, cmdline="acpi=copy_dsdt", required=accepted, forbidden=denied)
     boot("hardened-acpi-disabled", hardened, cmdline="acpi=off", required=["Kernel panic", "Trusted AML:"], fatal=True)
     boot("hardened-acpi-init-skipped", hardened, cmdline="initcall_blacklist=acpi_init", required=["Kernel panic", "Trusted AML: required built-in DSDT unavailable"], fatal=True)
@@ -269,13 +306,17 @@ def main():
             "AMLTEST: acpi_install_method=AE_OK", "AMLTEST: installed-method=AE_OK",
             "AMLTEST: installed-method-value=0xcfa132"])
         dynamic_image = kernel("diagnostic-dynamic", dynamic.with_suffix(".hex"), True)
+        # The probe's rejected Load/LoadTable methods abort with an ACPI error
+        # by design, so only the markers are forbidden here.
         boot("hardened-dynamic-load", dynamic_image, [tables["SSDT"]], required=accepted + [
+            "Trusted AML: ignoring host SSDT",
             "AMLTEST: acpi_load_table=AE_ACCESS", "AMLTEST: acpi_install_method=AE_ACCESS",
             "AMLTEST: installed-method=AE_NOT_FOUND",
             "AMLTEST: Load(buffer)=AE_ACCESS", "AMLTEST: LoadTable=AE_ACCESS",
             "AMLTEST: repeated-primary=AE_ACCESS", "AMLTEST: unload-primary=AE_ACCESS",
-            "AMLTEST: reload-primary=AE_ACCESS"], forbidden=denied + ["AMLTEST: installed-method-value="])
+            "AMLTEST: reload-primary=AE_ACCESS"], forbidden=markers + ["AMLTEST: installed-method-value="])
     finally:
+        drain()
         acpi_makefile.write_bytes(original_makefile)
         probe.unlink(missing_ok=True)
         probe_data.unlink(missing_ok=True)
@@ -289,6 +330,8 @@ def main():
     production_required = accepted[:1] + ["AMLTEST: DEVICE PNP0A08", "AMLTEST: PCI 0000:00:00.0"]
     boot("production-q35", image, required=production_required, forbidden=denied)
     boot("production-q35-smp", image, required=production_required, forbidden=denied, cpus=4, memory=4096)
+    drain()
+    pool.shutdown()
     hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in output.glob("*-bzImage")}
     (output / "kernel-sha256.json").write_text(json.dumps(hashes, indent=2) + "\n")
     if any(not item["passed"] for item in results):

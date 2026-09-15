@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Result};
@@ -35,8 +36,14 @@ const VERSION_PATH: &str = "kernel/version";
 const TOOLS_TREE_DIR: &str = "mkosi/kernel-builder";
 const TOOLS_TREE_CONF: &str = "mkosi/kernel-builder/mkosi.conf";
 const TOOLS_TREE_SANDBOX: &str = "mkosi/kernel-builder/mkosi.sandbox";
-const TOOLS_TREE_IMAGE: &str = "mkosi/kernel-builder/mkosi.output/image";
-const TOOLS_TREE_STAMP: &str = "mkosi/kernel-builder/mkosi.output/.confos-tools-stamp";
+const TOOLS_TREE_OUTPUT: &str = "mkosi/kernel-builder/mkosi.output";
+/// The ACPI harness's tools tree: the production packages plus QEMU, Python
+/// and a static libc. It lives beside the production tree so neither
+/// invalidates the other, and the harness packages never enter the measured
+/// toolchain.
+const HARNESS_TOOLS_TREE_OUTPUT: &str = "mkosi/kernel-builder/mkosi.output-acpi";
+const HARNESS_TOOLS_PACKAGES: [&str; 3] = ["libc6-dev", "python3", "qemu-system-x86"];
+const ACPI_HARNESS_DIR: &str = "tests/acpi";
 
 pub fn run(args: &KernelArgs) -> Result<()> {
     let version = pinned_version()?;
@@ -105,7 +112,11 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 
     // Phase 0a: ensure tools tree
     println!("\n=== Step 0a: Ensuring kernel-builder tools tree (mkosi) ===");
-    let tools_tree = ensure_tools_tree(args.force, &args.kernel_inputs.kernel_builder_package)?;
+    let tools_tree = ensure_tools_tree(
+        args.force,
+        &args.kernel_inputs.kernel_builder_package,
+        Path::new(TOOLS_TREE_OUTPUT),
+    )?;
 
     // Phase 0b + 0c: fetch, extract, stage the trusted AML inputs, configure
     println!("\n=== Step 0b: Fetching + extracting kernel ===");
@@ -213,16 +224,56 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 /// the build compiles, with the trusted DSDT header generated in the pinned
 /// tools tree, but left as source at `<output>/linux-<version>`. The ACPI
 /// harness (tests/acpi) boots kernels built from it, so what it tests is what
-/// the builder ships, prepared by one code path.
+/// the builder ships, prepared by one code path; `--acpi-harness` runs it in
+/// the same tools tree afterwards.
 pub fn prepare_source(args: &KernelSourceArgs) -> Result<()> {
+    if !args.acpi_harness && !args.harness_args.is_empty() {
+        bail!("arguments after `--` go to the harness; pass --acpi-harness");
+    }
     let version = pinned_version()?;
-    let tools_tree = ensure_tools_tree(false, &[])?;
+    let packages: Vec<String> = HARNESS_TOOLS_PACKAGES.map(String::from).to_vec();
+    let tools_tree = ensure_tools_tree(false, &packages, Path::new(HARNESS_TOOLS_TREE_OUTPUT))?;
     fs_err::create_dir_all(&args.output)?;
     let out_dir = args.output.canonicalize()?;
     let kernel_src =
         extract_pinned_source(&version, &tools_tree, &out_dir.join("cache"), &out_dir)?;
     println!("kernel source: {}", kernel_src.display());
+    if args.acpi_harness {
+        run_acpi_harness(&tools_tree, &out_dir, &version, &args.harness_args)?;
+    }
     Ok(())
+}
+
+/// Boot the harness's test kernels inside the tools tree: the output
+/// directory (tree, cache, results) is `/work` and tests/acpi is bound
+/// read-only at `/harness`.
+fn run_acpi_harness(
+    tools_tree: &Path,
+    out_dir: &Path,
+    version: &KernelVersion,
+    extra_args: &[String],
+) -> Result<()> {
+    let harness = Path::new(ACPI_HARNESS_DIR).canonicalize()?;
+    let mut argv: Vec<OsString> = [
+        "python3",
+        "/harness/run.py",
+        "--source",
+        &format!("/work/linux-{}", version.linux_version),
+        "--output",
+        "/work/results",
+    ]
+    .map(OsString::from)
+    .to_vec();
+    argv.extend(extra_args.iter().map(OsString::from));
+    config::nspawn_exec(
+        tools_tree,
+        &[
+            config::Bind::rw(out_dir, "/work"),
+            config::Bind::ro(&harness, "/harness"),
+        ],
+        &[],
+        &argv,
+    )
 }
 
 /// The committed kernel pin, admitted only if the trusted-AML patch was
@@ -296,16 +347,17 @@ fn verify_inputs_unchanged(staged: &km::Fingerprint, finished: &km::Fingerprint)
     Ok(())
 }
 
-/// Build the kernel-builder tools tree if needed, return its path.
+/// Build the kernel-builder tools tree under `output` if needed, return
+/// its image path.
 ///
 /// Skips the (slow, sudo-requiring) `mkosi --force` rebuild when a previous
 /// build's stamp file matches the current `mkosi.conf` hash. `force` bypasses
-/// the skip. The stamp lives under `mkosi.output/`, which `mkosi --force`
+/// the skip. The stamp lives under `output`, which `mkosi --force`
 /// wipes — so a successful rebuild always lands a fresh stamp, and a failed
 /// rebuild leaves no stamp behind to fool a later cache check.
-fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> {
-    let tree = Path::new(TOOLS_TREE_IMAGE);
-    let stamp_path = Path::new(TOOLS_TREE_STAMP);
+fn ensure_tools_tree(force: bool, extra_packages: &[String], output: &Path) -> Result<PathBuf> {
+    let tree = output.join("image");
+    let stamp_path = output.join(".confos-tools-stamp");
     // Cache key = the tools-tree inputs digest + the extra-package list.
     // The packages come via flags, not mkosi.conf, so they must be folded in
     // here or a changed --kernel-builder-package list would silently reuse a
@@ -317,7 +369,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
     );
 
     if !force && tree.exists() {
-        if let Ok(stamped) = fs_err::read_to_string(stamp_path) {
+        if let Ok(stamped) = fs_err::read_to_string(&stamp_path) {
             if stamped.trim() == stamp_key {
                 println!("kernel-builder tools tree cache HIT (mkosi.conf + packages unchanged)");
                 return Ok(tree.canonicalize()?);
@@ -327,11 +379,15 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
 
     // Wipe stale stamp before rebuild so a half-failed `mkosi --force` can't
     // be picked up as a cache hit on the next call.
-    let _ = fs_err::remove_file(stamp_path);
+    let _ = fs_err::remove_file(&stamp_path);
 
+    // mkosi chdirs into --directory before reading paths, so hand it the
+    // output directory absolute.
+    let output_abs = std::env::current_dir()?.join(output);
     let mut args: Vec<String> = vec![
         "--directory".into(),
         TOOLS_TREE_DIR.into(),
+        format!("--output-directory={}", output_abs.display()),
         "--force".into(),
     ];
     for pkg in extra_packages {
@@ -341,7 +397,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String]) -> Result<PathBuf> 
     if !tree.exists() {
         return Err(anyhow!("mkosi did not produce {}", tree.display()));
     }
-    fs_err::write(stamp_path, &stamp_key)?;
+    fs_err::write(&stamp_path, &stamp_key)?;
     Ok(tree.canonicalize()?)
 }
 

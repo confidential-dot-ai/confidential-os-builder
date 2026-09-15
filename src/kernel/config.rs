@@ -440,6 +440,31 @@ fn check_fragment_options(
     }
 }
 
+/// A host directory bind-mounted into the container at `guest`.
+pub struct Bind<'a> {
+    pub host: &'a Path,
+    pub guest: &'a str,
+    pub read_only: bool,
+}
+
+impl<'a> Bind<'a> {
+    pub fn rw(host: &'a Path, guest: &'a str) -> Self {
+        Self {
+            host,
+            guest,
+            read_only: false,
+        }
+    }
+
+    pub fn ro(host: &'a Path, guest: &'a str) -> Self {
+        Self {
+            host,
+            guest,
+            read_only: true,
+        }
+    }
+}
+
 /// Run a shell script inside `tools_tree` with `host_dir` bind-mounted at `mount_at`.
 /// `env_vars` is `(name, value)` pairs forwarded via `--setenv`.
 pub fn nspawn(
@@ -448,6 +473,17 @@ pub fn nspawn(
     mount_at: &str,
     env_vars: &[(&str, &str)],
     script: &str,
+) -> Result<()> {
+    let argv = ["/bin/bash", "-c", script].map(OsString::from);
+    nspawn_exec(tools_tree, &[Bind::rw(host_dir, mount_at)], env_vars, &argv)
+}
+
+/// Run `argv` inside an ephemeral `tools_tree` container with `binds` mounted.
+pub fn nspawn_exec(
+    tools_tree: &Path,
+    binds: &[Bind<'_>],
+    env_vars: &[(&str, &str)],
+    argv: &[OsString],
 ) -> Result<()> {
     let nspawn_bin = tools::require("systemd-nspawn")
         .map_err(|_| anyhow!("systemd-nspawn required; install systemd-container"))?;
@@ -459,16 +495,24 @@ pub fn nspawn(
         OsString::from("--ephemeral"),
         OsString::from("--directory"),
         tools_tree.into(),
-        OsString::from("--bind"),
-        OsString::from(format!("{}:{}", host_dir.display(), mount_at)),
     ];
+    for bind in binds {
+        args.push(OsString::from(if bind.read_only {
+            "--bind-ro"
+        } else {
+            "--bind"
+        }));
+        args.push(OsString::from(format!(
+            "{}:{}",
+            bind.host.display(),
+            bind.guest
+        )));
+    }
     for (k, v) in env_vars {
         args.push(OsString::from("--setenv"));
         args.push(OsString::from(format!("{}={}", k, v)));
     }
-    args.push(OsString::from("/bin/bash"));
-    args.push(OsString::from("-c"));
-    args.push(OsString::from(script));
+    args.extend(argv.iter().cloned());
 
     // CRITICAL: build the full sudo args vec in a let-binding before passing
     // a slice into run_command_streaming. Earlier drafts inlined this with

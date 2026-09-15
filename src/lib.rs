@@ -76,13 +76,23 @@ pub struct KernelArgs {
 }
 
 /// `confos kernel-source`: the pinned, patched kernel tree the build
-/// compiles, prepared the same way but left as source. The ACPI harness
-/// tests it under QEMU.
+/// compiles, prepared the same way but left as source for the ACPI harness.
+/// Its tools tree is built beside the production one with the harness's
+/// QEMU, Python and static libc, which the measured toolchain must not carry.
 #[derive(clap::Args)]
 pub struct KernelSourceArgs {
     /// Output directory; the tree lands at `<output>/linux-<version>`.
     #[arg(short, long, default_value = "output/kernel-source")]
     pub output: PathBuf,
+
+    /// Boot the harness (tests/acpi/run.py) against the prepared tree inside
+    /// the tools tree; results land in `<output>/results`.
+    #[arg(long)]
+    pub acpi_harness: bool,
+
+    /// Arguments after `--` go to run.py, e.g. `--jobs 4`.
+    #[arg(last = true, value_name = "RUN_PY_ARG")]
+    pub harness_args: Vec<String>,
 }
 
 #[derive(clap::Args)]

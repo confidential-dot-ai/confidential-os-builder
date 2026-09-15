@@ -118,11 +118,12 @@ pub struct KernelInputs {
     // RANDSTRUCT seed — a reproduction input (#85). `default` for older manifests.
     #[serde(default)]
     pub randstruct_seed_sha256: String,
-    /// SHA-256 of the canonical trusted ASL source; empty in legacy manifests.
-    #[serde(default)]
+    /// SHA-256 of the canonical trusted ASL source. Required, not defaulted:
+    /// a manifest without it describes a kernel that still honours host AML,
+    /// and reading it as a gated build would hide that.
     pub trusted_dsdt_sha256: String,
-    /// SHA-256 of the version-specific kernel enforcement patch.
-    #[serde(default)]
+    /// SHA-256 of the version-specific kernel enforcement patch. Required for
+    /// the same reason.
     pub trusted_aml_patch_sha256: String,
 }
 
@@ -188,4 +189,31 @@ pub fn read_manifest(path: &Path) -> anyhow::Result<BuildManifest> {
     }
     let manifest: BuildManifest = serde_json::from_str(&content)?;
     Ok(manifest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kernel_inputs_require_the_trusted_aml_hashes() {
+        let gated = serde_json::json!({
+            "linux_version": "6.18.49",
+            "vmlinuz_sha256": "a",
+            "required_config_sha256": "b",
+            "hardening_config_sha256": "c",
+            "snapshot_config_sha256": "d",
+            "trusted_dsdt_sha256": "e",
+            "trusted_aml_patch_sha256": "f",
+        });
+        serde_json::from_value::<KernelInputs>(gated.clone()).unwrap();
+        for missing in ["trusted_dsdt_sha256", "trusted_aml_patch_sha256"] {
+            let mut pre_gate = gated.clone();
+            pre_gate.as_object_mut().unwrap().remove(missing);
+            assert!(
+                serde_json::from_value::<KernelInputs>(pre_gate).is_err(),
+                "accepted a manifest without {missing}"
+            );
+        }
+    }
 }
