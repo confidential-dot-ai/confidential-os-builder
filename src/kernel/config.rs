@@ -5,6 +5,7 @@
 //! then written back to the committed snapshot via [`update_snapshot`],
 //! which confos tracks in git like a lockfile.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -53,10 +54,6 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 /// `extra_fragment` is the optional caller-supplied `--kernel-config-fragment`.
 /// When `Some`, it's merged after the confos-controlled fragments so
 /// `mod2yesconfig` still flattens any tristate symbols it introduces.
-///
-/// `prelude` runs first, from the tree root in the same container: the
-/// trusted-AML patch and table compile (see `aml::stage`), which must land
-/// before Kconfig reads the tree.
 pub fn run_configure_phase(
     tools_tree: &Path,
     kernel_dir: &Path,
@@ -64,7 +61,6 @@ pub fn run_configure_phase(
     hardening_fragment: &Path,
     cvm_fragment: &Path,
     extra_fragment: Option<&Path>,
-    prelude: &str,
 ) -> Result<()> {
     let kernel_dir_abs = kernel_dir
         .canonicalize()
@@ -93,7 +89,6 @@ pub fn run_configure_phase(
     let script = format!(
         "set -eux\n\
          cd /build\n\
-         {prelude}\
          make x86_64_defconfig\n\
          scripts/kconfig/merge_config.sh -m .config .fragments/required.config\n\
          scripts/kconfig/merge_config.sh -m .config .fragments/hardening.config\n\
@@ -197,16 +192,25 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
             Ok((name.into_owned(), fs_err::read_to_string(frag)?))
         })
         .collect::<Result<Vec<_>>>()?;
-    let pairs: Vec<(&str, &str)> = fragments
-        .iter()
-        .map(|(name, body)| (name.as_str(), body.as_str()))
-        .collect();
-    check_fragment_options(&pairs, &fs_err::read_to_string(resolved)?)
+    check_fragment_options(&fragments, &fs_err::read_to_string(resolved)?)
+}
+
+/// Symbol -> value from a resolved `.config`'s `CONFIG_X=value` lines.
+/// `# CONFIG_X is not set` lines are absent, like unmentioned symbols.
+pub(super) fn values(config: &str) -> HashMap<&str, &str> {
+    config
+        .lines()
+        .filter(|l| l.starts_with("CONFIG_"))
+        .filter_map(|l| l.split_once('='))
+        .collect()
 }
 
 /// `fragments` are `(name, contents)` in merge order; `config` is the
 /// resolved `.config`.
-fn check_fragment_options(fragments: &[(&str, &str)], config: &str) -> Result<()> {
+fn check_fragment_options(
+    fragments: &[(impl AsRef<str>, impl AsRef<str>)],
+    config: &str,
+) -> Result<()> {
     /// Final request for a symbol after last-fragment-wins merging; On/Off
     /// carry the requesting fragment's name for the error message.
     enum Request {
@@ -233,12 +237,7 @@ fn check_fragment_options(fragments: &[(&str, &str)], config: &str) -> Result<()
         })
     }
 
-    // symbol -> value from the resolved .config's `CONFIG_X=value` lines.
-    let resolved_values: std::collections::HashMap<&str, &str> = config
-        .lines()
-        .filter(|l| l.starts_with("CONFIG_"))
-        .filter_map(|l| l.split_once('='))
-        .collect();
+    let resolved_values = values(config);
     let mut requested: std::collections::BTreeMap<String, Request> = Default::default();
     let mut submitted: std::collections::BTreeMap<String, SubmittedRequest> = Default::default();
     // Forced assertions are comments and therefore cannot retract an actual
@@ -247,6 +246,7 @@ fn check_fragment_options(fragments: &[(&str, &str)], config: &str) -> Result<()
     let mut on_pins: std::collections::BTreeMap<String, (String, String)> = Default::default();
     let mut forced: std::collections::BTreeMap<String, String> = Default::default();
     for (name, body) in fragments {
+        let (name, body) = (name.as_ref(), body.as_ref());
         for line in body.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("CONFIG_") {
@@ -574,7 +574,7 @@ mod tests {
             let resolved = write(
                 &d,
                 "resolved",
-                &format!("{body}CONFIG_ACPI=y\nCONFIG_ACPI_CUSTOM_DSDT=y\nCONFIG_ACPI_TRUSTED_AML=y\nCONFIG_ACPI_CUSTOM_DSDT_FILE=\"confos-trusted-dsdt.h\"\n"),
+                &format!("{body}{}", crate::kernel::aml::VALID_CONFIG),
             );
             verify_builder_invariants(&resolved).unwrap();
         }

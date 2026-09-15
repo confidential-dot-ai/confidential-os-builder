@@ -34,15 +34,15 @@ int main(void)
     for (size_t i = 0; i < sizeof(tables) / sizeof(*tables); i++) {
         char path[128];
         unsigned char data[4096];
+        char hex[2 * sizeof(data) + 1];
         snprintf(path, sizeof(path), "/sys/firmware/acpi/tables/%s", tables[i]);
         int fd = open(path, O_RDONLY);
         if (fd < 0) continue;
         ssize_t length = read(fd, data, sizeof(data));
         close(fd);
         if (length < 36 || length == (ssize_t)sizeof(data)) continue;
-        printf("AMLTEST: TABLE %s ", tables[i]);
-        for (ssize_t n = 0; n < length; n++) printf("%02x", data[n]);
-        puts("");
+        for (ssize_t n = 0; n < length; n++) sprintf(hex + 2 * n, "%02x", data[n]);
+        printf("AMLTEST: TABLE %s %s\n", tables[i], hex);
     }
     printf("AMLTEST: CPUS %ld\n", sysconf(_SC_NPROCESSORS_ONLN));
     struct sysinfo info;

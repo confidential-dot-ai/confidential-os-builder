@@ -70,8 +70,10 @@ jobs:
                   # Read stdin so checkpatch does not treat the tracked patch as a source file.
                   "output/acpi/linux-${LINUX_VERSION}/scripts/checkpatch.pl" --no-tree --no-signoff - < kernel/patches/0001-acpi-trusted-aml.patch
             - name: Make root-owned trees cache-safe
+              # The post-job cache tar runs unprivileged; mkosi builds the
+              # tools tree as root. output/acpi/cache is written unprivileged.
               if: always()
-              run: sudo chown -R "$(id -u):$(id -g)" mkosi/kernel-builder/mkosi.output output/acpi || true
+              run: sudo chown -R "$(id -u):$(id -g)" mkosi/kernel-builder/mkosi.output || true
             - name: Upload AML test evidence
               if: always()
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

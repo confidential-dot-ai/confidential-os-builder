@@ -62,13 +62,17 @@ def variant(source, output, signature=None, revision=None, oem=None):
     return output
 
 
+def c_array(name, data, static=False):
+    return ("static " if static else "") + "unsigned char " + name + "[] = {" + ",".join(str(x) for x in data) + "};\n"
+
+
 def corrupt(source, defect, *, signature, length):
     """Break one header field; a "checksum" defect leaves the sum wrong."""
     data = bytearray(source.read_bytes())
     if defect == "signature":
         data[:4] = signature
     elif defect == "length":
-        struct.pack_into("<I", data, 4, length(data))
+        struct.pack_into("<I", data, 4, length)
     if defect == "checksum":
         data[9] ^= 1
         return data
@@ -172,7 +176,6 @@ def main():
         return image
 
     results = []
-    templates = {}
 
     def boot(name, image, acpi_tables=(), required=(), forbidden=(), cmdline="", fatal=False, primary=None, cpus=1, memory=256):
         extra = []
@@ -194,10 +197,6 @@ def main():
             timed_out = True
             log = (exc.stdout or b"").decode(errors="replace")
         (output / f"{name}.serial.log").write_text(log)
-        if name == "control-stock":
-            templates.update({name: bytes.fromhex(data) for name, data in re.findall(r"AMLTEST: TABLE (\w+) ([0-9a-f]+)", log)})
-            if "FACP" not in templates:
-                raise RuntimeError("control boot did not export its FADT")
         need = tuple(required) + (() if fatal else ("AMLTEST: USERSPACE_REACHED", f"AMLTEST: CPUS {cpus}"))
         if primary is not None:
             need += ("ACPI: RSDP 0x0000000008000000",)
@@ -212,9 +211,14 @@ def main():
         results.append({"case": name, "passed": not errors, "errors": errors, "command": qemu})
         print(f"{'FAIL' if errors else 'PASS'} {name}: {errors}", flush=True)
         (output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+        return log
 
     control = kernel("control")
-    boot("control-stock", control, required=["AMLTEST: DEVICE PNP0A08"])
+    # The stock boot's exported non-AML tables seed every firmware_root below.
+    templates = {sig: bytes.fromhex(data) for sig, data in re.findall(
+        r"AMLTEST: TABLE (\w+) ([0-9a-f]+)", boot("control-stock", control, required=["AMLTEST: DEVICE PNP0A08"]))}
+    if "FACP" not in templates:
+        raise RuntimeError("control boot did not export its FADT")
     boot("control-host", control, primary=host, required=["AMLTEST: DEVICE CFA0002"])
     for sig, table in tables.items():
         boot("control-" + sig, control, [table], primary=host, required=["AMLTEST: DEVICE CFA0003"])
@@ -231,7 +235,7 @@ def main():
         boot(f"hardened-revision-{revision}", hardened, primary=table, required=accepted, forbidden=denied)
     for defect in ("signature", "length", "checksum"):
         bad_host = output / f"host-invalid-{defect}.aml"
-        bad_host.write_bytes(corrupt(host, defect, signature=b"XXXX", length=lambda _: 20))
+        bad_host.write_bytes(corrupt(host, defect, signature=b"XXXX", length=20))
         fatal_host = defect == "signature"
         boot("hardened-host-invalid-" + defect, hardened, primary=bad_host,
              required=["Kernel panic", "Trusted AML:"] if fatal_host else accepted,
@@ -257,7 +261,7 @@ def main():
     try:
         shutil.copyfile(HERE / "api-probe.c", probe)
         probe_data.write_text("".join(
-            "static unsigned char " + name + "[] = {" + ",".join(str(x) for x in table.read_bytes()) + "};\n"
+            c_array(name, table.read_bytes(), static=True)
             for name, table in (("test_aml", secondary), ("test_method_aml", method))))
         acpi_makefile.write_bytes(original_makefile + b"\nobj-y += confos-aml-probe.o\n")
         method_control = kernel("diagnostic-method-control", dynamic.with_suffix(".hex"))
@@ -277,13 +281,14 @@ def main():
         probe_data.unlink(missing_ok=True)
     for defect in ("signature", "length", "checksum"):
         invalid_header = output / f"invalid-{defect}.hex"
-        invalid = corrupt(trusted, defect, signature=b"SSDT", length=lambda data: len(data) + 1)
-        invalid_header.write_text("unsigned char dsdt_aml_code[] = {" + ",".join(str(x) for x in invalid) + "};\n")
+        invalid = corrupt(trusted, defect, signature=b"SSDT", length=len(trusted.read_bytes()) + 1)
+        invalid_header.write_text(c_array("dsdt_aml_code", invalid))
         invalid_image = kernel("invalid-" + defect, invalid_header, True)
         boot("hardened-invalid-" + defect, invalid_image, required=["Kernel panic", "Trusted AML:"], fatal=True)
     image = kernel("production-dsdt", production, True)
-    boot("production-q35", image, required=["ACPI: Trusted AML: built-in DSDT loaded", "AMLTEST: DEVICE PNP0A08", "AMLTEST: PCI 0000:00:00.0"], forbidden=denied)
-    boot("production-q35-smp", image, required=["ACPI: Trusted AML: built-in DSDT loaded", "AMLTEST: DEVICE PNP0A08", "AMLTEST: PCI 0000:00:00.0"], forbidden=denied, cpus=4, memory=4096)
+    production_required = accepted[:1] + ["AMLTEST: DEVICE PNP0A08", "AMLTEST: PCI 0000:00:00.0"]
+    boot("production-q35", image, required=production_required, forbidden=denied)
+    boot("production-q35-smp", image, required=production_required, forbidden=denied, cpus=4, memory=4096)
     hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in output.glob("*-bzImage")}
     (output / "kernel-sha256.json").write_text(json.dumps(hashes, indent=2) + "\n")
     if any(not item["passed"] for item in results):

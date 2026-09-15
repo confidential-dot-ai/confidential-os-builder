@@ -39,8 +39,7 @@ const TOOLS_TREE_IMAGE: &str = "mkosi/kernel-builder/mkosi.output/image";
 const TOOLS_TREE_STAMP: &str = "mkosi/kernel-builder/mkosi.output/.confos-tools-stamp";
 
 pub fn run(args: &KernelArgs) -> Result<()> {
-    let version = KernelVersion::read(Path::new(VERSION_PATH))?;
-    aml::verify_version(&version.linux_version)?;
+    let version = pinned_version()?;
     tracing::info!(linux_version = %version.linux_version, "building hardened kernel");
 
     // Optional caller-supplied config fragment merged after required +
@@ -112,7 +111,7 @@ pub fn run(args: &KernelArgs) -> Result<()> {
     println!("\n=== Step 0b: Fetching + extracting kernel ===");
     // Discard previous versions' source and objects before a fresh build.
     tools::force_remove_dir_all(&build_dir)?;
-    let (kernel_src, aml_script) = extract_pinned_source(&version, &cache_dir, &build_dir)?;
+    let kernel_src = extract_pinned_source(&version, &tools_tree, &cache_dir, &build_dir)?;
     println!("\n=== Step 0c: Configuring kernel ===");
 
     // Pin the RANDSTRUCT seed: rewrite gen-randstruct-seed.sh to emit our
@@ -170,7 +169,6 @@ pub fn run(args: &KernelArgs) -> Result<()> {
         Path::new(HARDENING_FRAGMENT),
         Path::new(CVM_FRAGMENT),
         fragment,
-        &aml_script,
     )?;
 
     // Phase 0c.5: refresh the snapshot lockfile. The snapshot auto-updates
@@ -217,33 +215,33 @@ pub fn run(args: &KernelArgs) -> Result<()> {
 /// harness (tests/acpi) boots kernels built from it, so what it tests is what
 /// the builder ships, prepared by one code path.
 pub fn prepare_source(args: &KernelSourceArgs) -> Result<()> {
-    let version = KernelVersion::read(Path::new(VERSION_PATH))?;
-    aml::verify_version(&version.linux_version)?;
+    let version = pinned_version()?;
     let tools_tree = ensure_tools_tree(false, &[])?;
     fs_err::create_dir_all(&args.output)?;
     let out_dir = args.output.canonicalize()?;
-    let (kernel_src, aml_script) =
-        extract_pinned_source(&version, &out_dir.join("cache"), &out_dir)?;
-    config::nspawn(
-        &tools_tree,
-        &kernel_src,
-        "/build",
-        &[],
-        &format!("set -eu\ncd /build\n{aml_script}"),
-    )?;
+    let kernel_src =
+        extract_pinned_source(&version, &tools_tree, &out_dir.join("cache"), &out_dir)?;
     println!("kernel source: {}", kernel_src.display());
     Ok(())
 }
 
+/// The committed kernel pin, admitted only if the trusted-AML patch was
+/// audited against it. Every entry point reads the pin through here.
+fn pinned_version() -> Result<KernelVersion> {
+    let version = KernelVersion::read(Path::new(VERSION_PATH))?;
+    aml::verify_version(&version.linux_version)?;
+    Ok(version)
+}
+
 /// Fetch the pinned tarball into `cache_dir`, extract it fresh under `dest`,
-/// and stage the trusted AML inputs into the tree. Returns the tree and the
-/// script that patches it and compiles the table, to run inside the tools
-/// tree from the tree root.
+/// and patch the tree and compile the trusted table inside `tools_tree`.
+/// Returns the prepared tree.
 fn extract_pinned_source(
     version: &KernelVersion,
+    tools_tree: &Path,
     cache_dir: &Path,
     dest: &Path,
-) -> Result<(PathBuf, String)> {
+) -> Result<PathBuf> {
     let tarball = fetch::fetch(&version.linux_version, &version.tarball_sha256, cache_dir)?;
     let kernel_src = dest.join(format!("linux-{}", version.linux_version));
     // The tools tree writes into this tree as root via nspawn, so a previous
@@ -258,8 +256,8 @@ fn extract_pinned_source(
             kernel_src.display()
         ));
     }
-    let aml_script = aml::stage(&kernel_src)?;
-    Ok((kernel_src, aml_script))
+    aml::stage(tools_tree, &kernel_src)?;
+    Ok(kernel_src)
 }
 
 fn verify_signing_cert(signing_cert: &Path) -> Result<()> {

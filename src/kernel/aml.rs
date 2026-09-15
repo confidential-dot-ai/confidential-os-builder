@@ -3,10 +3,11 @@
 //! The source table and the single, version-specific kernel patch are both
 //! cache inputs. The kernel enforces provenance before AML namespace parsing.
 
-use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::{bail, Result};
+
+use super::config;
 
 pub const DSDT_SOURCE: &str = "kernel/trusted-dsdt.asl";
 pub const PATCH: &str = "kernel/patches/0001-acpi-trusted-aml.patch";
@@ -15,6 +16,33 @@ const STAGED_DSDT: &str = "confos-trusted-dsdt.asl";
 const STAGED_PATCH: &str = "confos-trusted-aml.patch";
 /// Trailer in the patch header naming the kernel its hooks were audited on.
 const VERSION_TRAILER: &str = "Linux-Version:";
+/// Applies the patch and compiles the table, run from the tree root inside
+/// the pinned tools tree. Every name is a fixed builder-owned string; no
+/// caller text reaches the shell.
+const STAGE_SCRIPT: &str = "set -eu\n\
+    cd /build\n\
+    patch --batch --forward --fuzz=0 -p1 < confos-trusted-aml.patch\n\
+    iasl -ve -tc -p dsdt confos-trusted-dsdt.asl\n\
+    grep -q 'unsigned char dsdt_aml_code\\[\\]' dsdt.hex\n\
+    cp dsdt.hex include/confos-trusted-dsdt.h\n";
+
+/// Resolved `.config` lines that must hold once every fragment has merged.
+/// The header path is checked as well as the booleans: selecting another
+/// valid built-in DSDT would otherwise satisfy Kconfig while changing our
+/// contract.
+const REQUIRED: [(&str, &str); 4] = [
+    ("CONFIG_ACPI", "y"),
+    ("CONFIG_ACPI_CUSTOM_DSDT", "y"),
+    ("CONFIG_ACPI_TRUSTED_AML", "y"),
+    ("CONFIG_ACPI_CUSTOM_DSDT_FILE", "\"confos-trusted-dsdt.h\""),
+];
+/// Alternate table loaders that must stay off (`=y` and `=m` both fail).
+const FORBIDDEN: [&str; 4] = [
+    "CONFIG_ACPI_TABLE_UPGRADE",
+    "CONFIG_ACPI_CONFIGFS",
+    "CONFIG_EFI_CUSTOM_SSDT_OVERLAYS",
+    "CONFIG_ACPI_DEBUGGER",
+];
 
 /// The patch declares the one kernel it was audited against; `kernel/version`
 /// must match it. A pin bump therefore fails until the loader hooks are
@@ -33,7 +61,9 @@ pub fn verify_version(version: &str) -> Result<()> {
 
 fn supported_version(patch: &str) -> Result<&str> {
     // Only the header carries the trailer; the diff body could quote it.
-    let header = patch.split("\n---\n").next().unwrap_or(patch);
+    let header = patch
+        .split_once("\n---\n")
+        .map_or(patch, |(header, _)| header);
     let mut versions = header
         .lines()
         .filter_map(|line| line.strip_prefix(VERSION_TRAILER))
@@ -46,59 +76,46 @@ fn supported_version(patch: &str) -> Result<&str> {
     }
 }
 
-/// Copy the ASL source and the patch into the freshly extracted kernel tree
-/// and return the script that applies the patch and compiles the table.
-/// The caller runs it inside the pinned tools tree from the tree root,
-/// before Kconfig sees the tree, so the patch's new symbol resolves. All
-/// names are fixed builder-owned strings; no caller text reaches the shell.
-pub fn stage(kernel_src: &Path) -> Result<String> {
+/// Copy the ASL source and the patch into the freshly extracted kernel tree,
+/// then apply the patch and compile the table inside the pinned tools tree.
+/// Runs before Kconfig sees the tree, so the patch's new symbol resolves.
+pub fn stage(tools_tree: &Path, kernel_src: &Path) -> Result<()> {
     fs_err::copy(DSDT_SOURCE, kernel_src.join(STAGED_DSDT))?;
     fs_err::copy(PATCH, kernel_src.join(STAGED_PATCH))?;
-    Ok(format!(
-        "patch --batch --forward --fuzz=0 -p1 < {STAGED_PATCH}\n\
-         iasl -ve -tc -p dsdt {STAGED_DSDT}\n\
-         grep -q 'unsigned char dsdt_aml_code\\[\\]' dsdt.hex\n\
-         cp dsdt.hex include/{HEADER}\n"
-    ))
+    config::nspawn(tools_tree, kernel_src, "/build", &[], STAGE_SCRIPT)
 }
 
 /// These invariants apply after all consumer fragments have been merged.
-/// Check the custom-header path as well as booleans: selecting another valid
-/// built-in DSDT would otherwise satisfy Kconfig while changing our contract.
 pub fn verify_config(config: &str) -> Result<()> {
-    let lines: HashSet<&str> = config.lines().map(str::trim).collect();
-    let header = format!("CONFIG_ACPI_CUSTOM_DSDT_FILE=\"{HEADER}\"");
-    for required in [
-        "CONFIG_ACPI=y",
-        "CONFIG_ACPI_CUSTOM_DSDT=y",
-        "CONFIG_ACPI_TRUSTED_AML=y",
-        header.as_str(),
-    ] {
-        if !lines.contains(required) {
-            bail!("trusted AML requires resolved {required}; consumer fragments cannot disable this boundary");
+    let values = config::values(config);
+    for (symbol, value) in REQUIRED {
+        if values.get(symbol) != Some(&value) {
+            bail!("trusted AML requires resolved {symbol}={value}; consumer fragments cannot disable this boundary");
         }
     }
-    for forbidden in [
-        "CONFIG_ACPI_TABLE_UPGRADE",
-        "CONFIG_ACPI_CONFIGFS",
-        "CONFIG_EFI_CUSTOM_SSDT_OVERLAYS",
-        "CONFIG_ACPI_DEBUGGER",
-    ] {
-        if ["y", "m"]
-            .iter()
-            .any(|v| lines.contains(format!("{forbidden}={v}").as_str()))
-        {
-            bail!("trusted AML forbids {forbidden}; alternate table loaders must remain disabled");
+    for symbol in FORBIDDEN {
+        if matches!(values.get(symbol), Some(&"y" | &"m")) {
+            bail!("trusted AML forbids {symbol}; alternate table loaders must remain disabled");
         }
     }
     Ok(())
 }
 
+/// A resolved `.config` excerpt satisfying [`verify_config`]; shared with
+/// the config tests so a new requirement is added in one place.
+#[cfg(test)]
+pub(crate) const VALID_CONFIG: &str = "CONFIG_ACPI=y\nCONFIG_ACPI_CUSTOM_DSDT=y\nCONFIG_ACPI_TRUSTED_AML=y\nCONFIG_ACPI_CUSTOM_DSDT_FILE=\"confos-trusted-dsdt.h\"\n";
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const VALID_CONFIG: &str = "CONFIG_ACPI=y\nCONFIG_ACPI_CUSTOM_DSDT=y\nCONFIG_ACPI_TRUSTED_AML=y\nCONFIG_ACPI_CUSTOM_DSDT_FILE=\"confos-trusted-dsdt.h\"\n";
+    #[test]
+    fn stage_script_names_the_staged_inputs_and_header() {
+        assert!(STAGE_SCRIPT.contains(&format!("-p1 < {STAGED_PATCH}\n")));
+        assert!(STAGE_SCRIPT.contains(&format!("-p dsdt {STAGED_DSDT}\n")));
+        assert!(STAGE_SCRIPT.ends_with(&format!("include/{HEADER}\n")));
+    }
 
     #[test]
     fn rejects_weakened_consumer_configuration() {
@@ -111,16 +128,9 @@ mod tests {
             );
         }
         assert!(verify_config(&VALID_CONFIG.replace(HEADER, "other-dsdt.h")).is_err());
-        for loader in [
-            "ACPI_TABLE_UPGRADE",
-            "ACPI_CONFIGFS",
-            "EFI_CUSTOM_SSDT_OVERLAYS",
-            "ACPI_DEBUGGER",
-        ] {
+        for loader in FORBIDDEN {
             for value in ["y", "m"] {
-                assert!(
-                    verify_config(&format!("{VALID_CONFIG}CONFIG_{loader}={value}\n")).is_err()
-                );
+                assert!(verify_config(&format!("{VALID_CONFIG}{loader}={value}\n")).is_err());
             }
         }
         // A disabled loader is fine; only enabled ones are forbidden.

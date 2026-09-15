@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 use crate::commands;
 use crate::kernel::manifest as km;
@@ -26,8 +26,6 @@ pub struct KernelArtifact {
 /// `fragment` is the caller-supplied `--kernel-config-fragment`, threaded
 /// from `confos build`.
 pub fn ensure_kernel(force: bool, inputs: KernelInputs) -> Result<KernelArtifact> {
-    require_inputs_exist(&inputs)?;
-
     commands::kernel::run(&KernelArgs {
         force,
         output: PathBuf::from(KERNEL_OUT_DIR),
@@ -42,34 +40,4 @@ pub fn ensure_kernel(force: bool, inputs: KernelInputs) -> Result<KernelArtifact
         linux_version: manifest.linux_version.clone(),
         manifest,
     })
-}
-
-fn require_inputs_exist(inputs: &KernelInputs) -> Result<()> {
-    let fragment = inputs.kernel_config_fragment.as_deref();
-    if let Some(c) = inputs.module_signing_cert.as_deref() {
-        if !c.is_file() {
-            anyhow::bail!("--module-signing-cert path not found: {}", c.display());
-        }
-    }
-    for f in [
-        "kernel/version",
-        "kernel/required.config",
-        "kernel/hardening.config",
-        "kernel/confidential.config",
-        crate::kernel::aml::DSDT_SOURCE,
-        crate::kernel::aml::PATCH,
-    ] {
-        if !Path::new(f).exists() {
-            return Err(anyhow!("required file missing: {}", f));
-        }
-    }
-    if let Some(frag) = fragment {
-        if !frag.exists() {
-            return Err(anyhow!(
-                "--kernel-config-fragment path not found: {}",
-                frag.display()
-            ));
-        }
-    }
-    Ok(())
 }
