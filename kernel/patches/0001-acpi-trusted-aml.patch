@@ -1,0 +1,294 @@
+Subject: [PATCH] ACPI: restrict AML to the built-in DSDT
+
+For confidential guests, firmware-provided AML is outside the trusted
+computing base. Admit only the canonical compiled DSDT once at the
+namespace parser boundary. Drop host definition blocks while parsing the
+root table, reject table and method injection, and require successful
+ACPI setup before starting userspace.
+
+The custom DSDT header must define dsdt_aml_code[]; the builder
+fingerprints this patch and that source. The Linux-Version trailer names
+the source the hooks below were audited against; the builder refuses any
+other kernel/version until the patch is retargeted.
+
+Linux-Version: 6.18.49
+---
+--- a/drivers/acpi/Kconfig
++++ b/drivers/acpi/Kconfig
+@@ -369,6 +369,19 @@
+ 	bool
+ 	default ACPI_CUSTOM_DSDT_FILE != ""
+ 
++config ACPI_TRUSTED_AML
++	bool "Execute only the built-in custom DSDT"
++	depends on ACPI_CUSTOM_DSDT
++	depends on !ACPI_TABLE_UPGRADE && !ACPI_CONFIGFS
++	depends on !EFI_CUSTOM_SSDT_OVERLAYS && !ACPI_DEBUGGER
++	help
++	  Permit only the compiled-in DSDT to enter the AML namespace.
++	  Host definition blocks are dropped from the root table list and
++	  dynamic table loads are rejected. Boot fails before userspace if
++	  the trusted DSDT cannot be loaded or ACPI is disabled. The custom
++	  header must define the dsdt_aml_code array. Every alternate table
++	  loader must stay disabled; the policy has no runtime switch.
++
+ config ARCH_HAS_ACPI_TABLE_UPGRADE
+ 	def_bool n
+ 
+--- a/include/acpi/acpiosxf.h
++++ b/include/acpi/acpiosxf.h
+@@ -76,6 +76,12 @@
+ acpi_os_physical_table_override(struct acpi_table_header *existing_table,
+ 				acpi_physical_address *new_address,
+ 				u32 *new_table_length);
++#endif
++
++#ifdef CONFIG_ACPI_TRUSTED_AML
++acpi_status acpi_os_prepare_trusted_aml(struct acpi_table_header *table);
++void acpi_os_complete_trusted_aml(acpi_status status);
++void acpi_os_check_trusted_aml(void);
+ #endif
+ 
+ /*
+--- a/drivers/acpi/tables.c
++++ b/drivers/acpi/tables.c
+@@ -676,6 +676,56 @@
+ #ifdef CONFIG_ACPI_CUSTOM_DSDT
+ static void *amlcode __attribute__ ((weakref("AmlCode")));
+ static void *dsdt_amlcode __attribute__ ((weakref("dsdt_aml_code")));
++#endif
++
++#ifdef CONFIG_ACPI_TRUSTED_AML
++static bool trusted_aml_started __ro_after_init;
++static bool trusted_aml_loaded __ro_after_init;
++
++/*
++ * Headers and physical origins are supplied by the host. Only the built-in
++ * bytes are trusted: the primary table must equal them whether ACPICA maps
++ * the array in place or copied it locally. acpi_tb_load_namespace checks the
++ * signature before this runs, but Linux disables ACPICA's table validation,
++ * so a bad checksum is only a warning there and is made fatal here.
++ */
++acpi_status acpi_os_prepare_trusted_aml(struct acpi_table_header *table)
++{
++	size_t i;
++	u8 checksum = 0;
++
++	BUILD_BUG_ON(sizeof(dsdt_aml_code) < sizeof(*table));
++	if (table->length != sizeof(dsdt_aml_code) ||
++	    memcmp(table, dsdt_aml_code, sizeof(dsdt_aml_code)))
++		panic("Trusted AML: primary DSDT is not the built-in table");
++
++	for (i = 0; i < sizeof(dsdt_aml_code); i++)
++		checksum += dsdt_aml_code[i];
++	if (checksum)
++		panic("Trusted AML: invalid built-in DSDT checksum");
++
++	if (trusted_aml_started)
++		return AE_ACCESS;
++
++	trusted_aml_started = true;
++	return AE_OK;
++}
++
++void acpi_os_complete_trusted_aml(acpi_status status)
++{
++	if (ACPI_FAILURE(status))
++		panic("Trusted AML: built-in DSDT initialization failed");
++
++	trusted_aml_loaded = true;
++	pr_info("Trusted AML: built-in DSDT loaded\n");
++}
++
++/* Called directly after initcalls, never via a blacklistable initcall. */
++void __init acpi_os_check_trusted_aml(void)
++{
++	if (!trusted_aml_loaded || acpi_disabled)
++		panic("Trusted AML: required built-in DSDT unavailable");
++}
+ #endif
+ 
+ acpi_status acpi_os_table_override(struct acpi_table_header *existing_table,
+--- a/drivers/acpi/acpica/tbutils.c
++++ b/drivers/acpi/acpica/tbutils.c
+@@ -195,8 +195,48 @@
+ 	}
+ }
+ 
++#ifdef CONFIG_ACPI_TRUSTED_AML
+ /*******************************************************************************
+  *
++ * FUNCTION:    acpi_tb_is_host_aml
++ *
++ * PARAMETERS:  address             - Physical address of a root table entry
++ *
++ * RETURN:      TRUE if the entry carries a definition block signature
++ *
++ * DESCRIPTION: Host AML never enters the root table list. The DSDT comes
++ *              from the FADT and is replaced by the built-in table, and a
++ *              secondary table would only be rejected at namespace load.
++ *              Skipping them here also keeps a host DSDT entry from
++ *              displacing the FADT's slot as its duplicate.
++ *
++ ******************************************************************************/
++
++static u8 acpi_tb_is_host_aml(acpi_physical_address address)
++{
++	struct acpi_table_header *header;
++	u8 is_aml;
++
++	header = acpi_os_map_memory(address, sizeof(*header));
++	if (!header)
++		return FALSE;
++
++	is_aml = ACPI_COMPARE_NAMESEG(header->signature, ACPI_SIG_DSDT) ||
++	    ACPI_COMPARE_NAMESEG(header->signature, ACPI_SIG_SSDT) ||
++	    ACPI_COMPARE_NAMESEG(header->signature, ACPI_SIG_PSDT) ||
++	    ACPI_COMPARE_NAMESEG(header->signature, ACPI_SIG_OSDT);
++	if (is_aml) {
++		ACPI_INFO(("Trusted AML: ignoring host %4.4s at %8.8X%8.8X",
++			   header->signature, ACPI_FORMAT_UINT64(address)));
++	}
++
++	acpi_os_unmap_memory(header, sizeof(*header));
++	return is_aml;
++}
++#endif
++
++/*******************************************************************************
++ *
+  * FUNCTION:    acpi_tb_parse_root_table
+  *
+  * PARAMETERS:  rsdp_address        - Pointer to the RSDP
+@@ -319,6 +359,11 @@
+ 		if (!address) {
+ 			goto next_table;
+ 		}
++#ifdef CONFIG_ACPI_TRUSTED_AML
++		if (acpi_tb_is_host_aml(address)) {
++			goto next_table;
++		}
++#endif
+ 
+ 		status = acpi_tb_install_standard_table(address,
+ 							ACPI_TABLE_ORIGIN_INTERNAL_PHYSICAL,
+--- a/drivers/acpi/acpica/nsload.c
++++ b/drivers/acpi/acpica/nsload.c
+@@ -44,6 +44,29 @@
+ 
+ 	ACPI_FUNCTION_TRACE(ns_load_table);
+ 
++#ifdef CONFIG_ACPI_TRUSTED_AML
++	/*
++	 * This is the last common boundary before namespace parsing, which
++	 * executes module-level AML. Do not trust signatures or OEM fields.
++	 */
++	if (table_index != acpi_gbl_dsdt_index) {
++		ACPI_WARNING((AE_INFO,
++			      "Trusted AML: rejected non-primary table"));
++		return_ACPI_STATUS(AE_ACCESS);
++	}
++	{
++		struct acpi_table_header *table;
++
++		status = acpi_get_table_by_index(table_index, &table);
++		if (ACPI_FAILURE(status))
++			return_ACPI_STATUS(status);
++		status = acpi_os_prepare_trusted_aml(table);
++		acpi_put_table(table);
++		if (ACPI_FAILURE(status))
++			return_ACPI_STATUS(status);
++	}
++#endif
++
+ 	/* If table already loaded into namespace, just return */
+ 
+ 	if (acpi_tb_is_table_loaded(table_index)) {
+@@ -106,6 +129,10 @@
+ 	status = acpi_ds_initialize_objects(table_index, node);
+ 	acpi_ex_exit_interpreter();
+ 
++#ifdef CONFIG_ACPI_TRUSTED_AML
++	acpi_os_complete_trusted_aml(status);
++#endif
++
+ 	ACPI_DEBUG_PRINT((ACPI_DB_INFO,
+ 			  "**** Completed Table Object Initialization\n"));
+ 
+--- a/drivers/acpi/acpica/tbxface.c
++++ b/drivers/acpi/acpica/tbxface.c
+@@ -159,6 +159,13 @@
+ 	 */
+ 	for (i = 0; i < acpi_gbl_root_table_list.current_table_count; ++i) {
+ 		table_desc = &acpi_gbl_root_table_list.tables[i];
++#ifdef CONFIG_ACPI_TRUSTED_AML
++		/* The built-in DSDT is never mapped, so it has nothing to release. */
++		if ((table_desc->flags & ACPI_TABLE_ORIGIN_MASK) ==
++		    ACPI_TABLE_ORIGIN_EXTERNAL_VIRTUAL) {
++			continue;
++		}
++#endif
+ 		if (table_desc->pointer) {
+ 			ACPI_ERROR((AE_INFO,
+ 				    "Table [%4.4s] is not invalidated during early boot stage",
+--- a/drivers/acpi/acpica/tbdata.c
++++ b/drivers/acpi/acpica/tbdata.c
+@@ -1009,6 +1009,16 @@
+ 	u32 i;
+ 
+ 	ACPI_FUNCTION_TRACE(tb_install_and_load_table);
++
++#ifdef CONFIG_ACPI_TRUSTED_AML
++	/*
++	 * acpi_ns_load_table() would reject this table, but only after it is
++	 * installed, and callers free the buffer on failure while the
++	 * descriptor keeps pointing at it. Fail before installation instead.
++	 */
++	ACPI_WARNING((AE_INFO, "Trusted AML: dynamic table load denied"));
++	return_ACPI_STATUS(AE_ACCESS);
++#endif
+ 
+ 	/* Install the table and load it into the namespace */
+ 
+@@ -1046,6 +1056,12 @@
+ 
+ 	ACPI_FUNCTION_TRACE(tb_unload_table);
+ 
++#ifdef CONFIG_ACPI_TRUSTED_AML
++	/* The sole trusted namespace must remain installed for this boot. */
++	ACPI_WARNING((AE_INFO, "Trusted AML: table unload denied"));
++	return_ACPI_STATUS(AE_ACCESS);
++#endif
++
+ 	/* Ensure the table is still loaded */
+ 
+ 	if (!acpi_tb_is_table_loaded(table_index)) {
+--- a/init/main.c
++++ b/init/main.c
+@@ -1546,6 +1546,11 @@
+ 
+ 	do_basic_setup();
+ 
++#ifdef CONFIG_ACPI_TRUSTED_AML
++	/* Do not run userspace after ACPI disabled itself or skipped its init. */
++	acpi_os_check_trusted_aml();
++#endif
++
+ 	kunit_run_all_tests();
+ 
+ 	wait_for_initramfs();
+--- a/drivers/acpi/acpica/nsxfname.c
++++ b/drivers/acpi/acpica/nsxfname.c
+@@ -486,6 +486,12 @@
+ 	u16 opcode;
+ 	u8 method_flags;
+ 	acpi_status status;
++
++#ifdef CONFIG_ACPI_TRUSTED_AML
++	/* This API replaces method AML without loading a table. */
++	ACPI_WARNING((AE_INFO, "Trusted AML: dynamic method install denied"));
++	return AE_ACCESS;
++#endif
+ 
+ 	/* Parameter validation */
+ 

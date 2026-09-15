@@ -5,8 +5,14 @@ under Intel TDX. Read this before debugging a GPU CVM that "won't come up" or
 attestation that "won't quote". Each item cites where it's enforced in code.
 
 Companion: the trusted DSDT
-(`mkosi/base/acpi-tables/dsdt.asl`), and (on the operator host)
+(`kernel/trusted-dsdt.asl`), and (on the operator host)
 `tdx-checkpoints/030`, `031`.
+
+The GPU observations below predate the mandatory trusted-AML loader gate.
+They describe the required PCI layout; they do not establish compatibility
+of a newly rebuilt kernel. Repeat GPU enumeration, driver attachment and
+attestation checks for each supported layout before approving its new
+measurement values.
 
 ## 1. CC needs a fresh FLR before the FIRST driver attach — and only one attach per FLR
 
@@ -66,7 +72,7 @@ B200 resizable BAR2 is **256 GiB**; the 6.16 kernel keeps it at full size (stock
 this). Mapping N of them needs:
 
 - **Guest side (in the image): a high 64-bit MMIO `_CRS` window, 2..64 TiB**, in
-  the trusted DSDT (`dsdt.asl`). OVMF places these BARs at ~56 TiB (default
+  the trusted DSDT (`kernel/trusted-dsdt.asl`). OVMF places these BARs at ~56 TiB (default
   aperture) or ~2 TiB (raised aperture); the wide window covers both. Linux
   drops any host-bridge window that overlaps RAM *whole*, so the original low
   32 GiB..1 TiB window vanished on ≥32 GiB-RAM guests. Without this:

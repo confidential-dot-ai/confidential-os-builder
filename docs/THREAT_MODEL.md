@@ -35,7 +35,7 @@ precisely what code is running.
 |---|---|---|
 | Host / hypervisor / VMM | Reads or tampers with guest memory; substitutes boot artifacts; lies about devices | Hardware memory encryption; launch measurement covers firmware + UKI (kernel, initrd, cmdline); anything substituted changes the measurement |
 | Attached storage (`disk.raw`, any block device) | Host can read and modify all disk content at rest and in flight | dm-verity: every root filesystem block is verified against a hash tree whose root is in the measured kernel cmdline. Tampering → I/O error, not silent corruption. **Integrity only — no confidentiality** (see below) |
-| VMM-supplied ACPI tables (TDX) | The DSDT contains AML bytecode the guest kernel executes at kernel privilege ("BadAML") | The initrd carries a trusted, audited DSDT that overrides the VMM's at boot; the override mechanism is part of the measured initrd. RTMR[0] (which the VMM still influences) is deliberately left unpinned |
+| VMM-supplied ACPI tables | Primary and secondary tables can contain AML bytecode interpreted inside the guest kernel; non-AML tables also reach kernel parsers | The measured kernel contains the trusted DSDT and a mandatory gate admitting only that built-in table before namespace parsing. Dynamic AML additions are rejected. Non-AML host data remains an input surface; TDX RTMR[0] is deliberately left unpinned |
 | Serial console | Host reads and injects console traffic | Production images have no console login. `--profile dev` adds a passwordless root autologin on ttyS0 — **never ship a dev-profile image**; the measurement changes, which is your detection mechanism |
 | Network | Standard untrusted network | Out of confos's scope — the workload must use TLS etc. as usual |
 | Virtio devices | Malicious device implementations probing guest drivers | Hardened kernel config trims the surface (no USB, no PCI hotplug, no DRM, lockdown LSM); virtio drivers themselves remain in the TCB |
@@ -91,11 +91,18 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
 
 ## Design decisions with security implications
 
-- **RTMR[0] unpinned on TDX** — deliberate; the trusted-DSDT override closes
-  the executable-AML gap, and what remains in RTMR[0] (TD-HOB, non-DSDT
-  ACPI data tables varying with topology) is data the hardened kernel treats
-  as untrusted input. This is a tradeoff, allowing different amounts of
-  memory and different numbers of CPU cores while measuring everything else.
+- **RTMR[0] unpinned on TDX** — deliberate; the built-in DSDT and mandatory
+  namespace-loading restriction exclude host AML independently of host
+  table identifiers or revisions. TD-HOB and non-AML ACPI data still reach
+  guest parsers. This tradeoff permits topology variation without pinning
+  RTMR[0]; it does not establish that those parsers are safe or every
+  topology works. Validate the supported CPU, memory and PCI/GPU layouts.
+- **Trusted AML rollout requires new measurements** — the ASL and
+  enforcement patch are kernel build inputs. Updating source alone does
+  not change a consumer deployment: update its builder pin, regenerate
+  its kernel configuration and images, validate SNP/TDX boots, and approve
+  reference values derived from those artifacts. Metadata reports the
+  build policy, not completion of hardware acceptance tests.
 - **The root is immutable** — the system runs directly from the read-only
   dm-verity mount. `/usr` and most of `/etc` therefore remain the measured
   bytes for the life of the guest, and ordinary writes fail with `EROFS`.

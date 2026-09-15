@@ -47,11 +47,11 @@ jobs:
           path: apt-debs
           key: ${{ runner.os }}-host-debs-${{ steps.image.outputs.key }}-${{ hashFiles('bin/host-deps', 'mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources') }}
 
-      - name: Install build deps (nspawn, TDVF firmware, iasl, cpio)
+      - name: Install build deps (nspawn, TDVF firmware, cpio)
         # Host deps for `confos build`, snapshot-pinned and fail-closed via
         # bin/host-deps (#36) — keep the list in lockstep with bin/setup.
         timeout-minutes: 10
-        run: bin/host-deps --cache-dir apt-debs systemd-container ovmf cpio acpica-tools
+        run: bin/host-deps --cache-dir apt-debs systemd-container ovmf cpio
 
       - name: Cache kernel-builder tools tree
         # mkosi.output (image + stamp) is what ensure_tools_tree consumes;
@@ -71,7 +71,7 @@ jobs:
           path: |
             output/kernel
             kernel/config-x86_64.snapshot
-          key: ${{ runner.os }}-kernel-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**', 'kernel/*') }}
+          key: ${{ runner.os }}-kernel-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**', 'kernel/*', 'kernel/patches/**') }}
 
       - name: Build kernel
         run: bin/confos kernel
