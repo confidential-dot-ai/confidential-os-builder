@@ -52,10 +52,11 @@ Linux-Version: 6.18.49
  /*
 --- a/drivers/acpi/tables.c
 +++ b/drivers/acpi/tables.c
-@@ -677,7 +677,48 @@
+@@ -676,6 +676,56 @@
+ #ifdef CONFIG_ACPI_CUSTOM_DSDT
  static void *amlcode __attribute__ ((weakref("AmlCode")));
  static void *dsdt_amlcode __attribute__ ((weakref("dsdt_aml_code")));
- #endif
++#endif
 +
 +#ifdef CONFIG_ACPI_TRUSTED_AML
 +static bool trusted_aml_started __ro_after_init;
@@ -64,16 +65,25 @@ Linux-Version: 6.18.49
 +/*
 + * Headers and physical origins are supplied by the host. Only the built-in
 + * bytes are trusted: the primary table must equal them whether ACPICA maps
-+ * the array in place or copied it locally. ACPICA verifies the checksum and
-+ * acpi_tb_load_namespace the signature before this runs.
++ * the array in place or copied it locally. acpi_tb_load_namespace checks the
++ * signature before this runs, but Linux disables ACPICA's table validation,
++ * so a bad checksum is only a warning there and is made fatal here.
 + */
 +acpi_status acpi_os_prepare_trusted_aml(struct acpi_table_header *table)
 +{
++	size_t i;
++	u8 checksum = 0;
++
 +	BUILD_BUG_ON(sizeof(dsdt_aml_code) < sizeof(*table));
 +	if (table->length != sizeof(dsdt_aml_code) ||
 +	    memcmp(table, dsdt_aml_code, sizeof(dsdt_aml_code)))
 +		panic("Trusted AML: primary DSDT is not the built-in table");
- 
++
++	for (i = 0; i < sizeof(dsdt_aml_code); i++)
++		checksum += dsdt_aml_code[i];
++	if (checksum)
++		panic("Trusted AML: invalid built-in DSDT checksum");
++
 +	if (trusted_aml_started)
 +		return AE_ACCESS;
 +
@@ -96,11 +106,9 @@ Linux-Version: 6.18.49
 +	if (!trusted_aml_loaded || acpi_disabled)
 +		panic("Trusted AML: required built-in DSDT unavailable");
 +}
-+#endif
-+
+ #endif
+ 
  acpi_status acpi_os_table_override(struct acpi_table_header *existing_table,
- 		       struct acpi_table_header **new_table)
- {
 --- a/drivers/acpi/acpica/tbutils.c
 +++ b/drivers/acpi/acpica/tbutils.c
 @@ -195,8 +195,48 @@

@@ -312,7 +312,7 @@ def main():
             "Trusted AML: ignoring host SSDT",
             "AMLTEST: acpi_load_table=AE_ACCESS", "AMLTEST: acpi_install_method=AE_ACCESS",
             "AMLTEST: installed-method=AE_NOT_FOUND",
-            "AMLTEST: Load(buffer)=AE_ACCESS", "AMLTEST: LoadTable=AE_ACCESS",
+            "AMLTEST: Load(buffer)=AE_ACCESS", "AMLTEST: LoadTable=no-table",
             "AMLTEST: repeated-primary=AE_ACCESS", "AMLTEST: unload-primary=AE_ACCESS",
             "AMLTEST: reload-primary=AE_ACCESS"], forbidden=markers + ["AMLTEST: installed-method-value="])
     finally:
