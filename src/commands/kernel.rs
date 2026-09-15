@@ -382,7 +382,10 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String], output: &Path) -> R
     let _ = fs_err::remove_file(&stamp_path);
 
     // mkosi chdirs into --directory before reading paths, so hand it the
-    // output directory absolute.
+    // output directory absolute. Create it first: mkosi runs under sudo and
+    // would otherwise own a fresh directory as root, and the stamp below is
+    // written unprivileged.
+    fs_err::create_dir_all(output)?;
     let output_abs = std::env::current_dir()?.join(output);
     let mut args: Vec<String> = vec![
         "--directory".into(),
