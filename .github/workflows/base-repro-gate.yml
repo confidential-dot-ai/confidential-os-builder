@@ -1,0 +1,145 @@
+# Reproducibility gate for the measured base image. docs/REPRODUCIBILITY.md
+# claims consecutive builds with identical config produce identical roothashes
+# and UKIs; nothing enforced it, and "config presence alone has failed open
+# before". This builds the base image TWICE and requires every measured value
+# to match, mirroring the node-image gate in c8s (c8s#264).
+#
+# Scope: the legs share a runner image and caches, so this proves the build is
+# deterministic across two runs of the SAME inputs — not across time or across
+# differing hosts. Cross-host reproduction remains a manual exercise.
+#
+# Fork PRs are exempt (secrets/self-hosted posture matches base.yml); the
+# post-merge push build stays the publication path.
+name: base image repro gate
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: base-repro-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.diff.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PR" ]; then
+            image=true
+          else
+            git cat-file -e "${BASE_SHA}^{commit}"
+            # Anything that feeds measured bytes: the image and kernel trees,
+            # the builder itself, its pins, and this gate's own plumbing.
+            if git diff --name-only "$BASE_SHA" HEAD -- \
+                 mkosi kernel src crates bin Cargo.toml Cargo.lock \
+                 .github/workflows/base.yml \
+                 .github/workflows/base-repro-gate.yml \
+               | grep -q .; then
+              image=true
+            else
+              image=false
+            fi
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "base-image relevant: $image" >> "$GITHUB_STEP_SUMMARY"
+
+  build-a:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base.yml
+    with:
+      gate: true
+      leg: a
+
+  build-b:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base.yml
+    with:
+      gate: true
+      leg: b
+
+  compare:
+    # The required check: green fast when nothing measured changed (and on
+    # fork PRs, whose changes job is skipped); otherwise both legs must have
+    # succeeded and every measured value must match.
+    needs: [changes, build-a, build-b]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Change classification must have succeeded
+        if: needs.changes.result != 'success' && needs.changes.result != 'skipped'
+        env:
+          RESULT: ${{ needs.changes.result }}
+        run: |
+          echo "change-classification result: $RESULT" >&2
+          exit 1
+
+      - name: Nothing measurement-gate-relevant changed
+        if: needs.changes.outputs.image != 'true'
+        run: echo "no gated measurement inputs changed — gate not applicable" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Legs must have succeeded
+        if: needs.changes.outputs.image == 'true'
+        env:
+          A: ${{ needs.build-a.result }}
+          B: ${{ needs.build-b.result }}
+        run: |
+          set -euo pipefail
+          test "$A" = success && test "$B" = success || { echo "leg results: a=$A b=$B" >&2; exit 1; }
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.changes.outputs.image == 'true'
+        with:
+          pattern: gate-base-${{ github.run_id }}-*
+          path: evidence
+
+      - name: Every measured value must match
+        if: needs.changes.outputs.image == 'true'
+        run: |
+          set -euo pipefail
+          python3 - <<'EOF'
+          import json, os, sys
+          run_id = os.environ["GITHUB_RUN_ID"]
+          legs = {}
+          for leg in ("a", "b"):
+              d = f"evidence/gate-base-{run_id}-{leg}"
+              m = json.load(open(f"{d}/manifest.json"))
+              # The report timestamp is metadata, not a baked byte.
+              m.get("build", {}).pop("timestamp", None)
+              legs[leg] = (m, open(f"{d}/roothash").read().strip())
+          (ma, ra), (mb, rb) = legs["a"], legs["b"]
+          fail = ma != mb or ra != rb
+          lines = ["### base image repro gate", "", "| field | verdict |", "|---|---|",
+                   f"| manifest (sans timestamp) | {'identical' if ma == mb else '**DIFFERS**'} |",
+                   f"| roothash `{ra[:12]}…` | {'identical' if ra == rb else '**DIFFERS**'} |"]
+          if ma != mb:
+              a_flat = json.dumps(ma, sort_keys=True, indent=0).splitlines()
+              b_flat = json.dumps(mb, sort_keys=True, indent=0).splitlines()
+              for line in sorted(set(a_flat) ^ set(b_flat)):
+                  print(f"manifest delta: {line.strip()}", file=sys.stderr)
+          if ra != rb:
+              print(f"roothash delta: a={ra} b={rb}", file=sys.stderr)
+          open(os.environ["GITHUB_STEP_SUMMARY"], "a").write("\n".join(lines) + "\n")
+          sys.exit(1 if fail else 0)
+          EOF
