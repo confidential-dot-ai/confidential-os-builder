@@ -110,14 +110,14 @@ jobs:
           overwrite: true
 
       - name: Cache base image tools
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || inputs.gate == true
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: mkosi/base/mkosi.tools
           key: ${{ runner.os }}-base-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf', 'mkosi/base/mkosi.sandbox/**') }}
 
       - name: Cache apt package cache
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || inputs.gate == true
         # Keeps the image assembly off snapshot.ubuntu.com. conf-only globs:
         # profile mkosi.extra trees carry dangling systemd enablement
         # symlinks, which hashFiles refuses to hash.
@@ -129,7 +129,7 @@ jobs:
             ${{ runner.os }}-pkgcache-
 
       - name: Build base image
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || inputs.gate == true
         run: bin/confos build
 
       - name: Make root-owned trees cache-safe
