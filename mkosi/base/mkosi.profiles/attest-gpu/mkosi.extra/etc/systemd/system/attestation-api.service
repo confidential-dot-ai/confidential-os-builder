@@ -1,10 +1,14 @@
 [Unit]
 Description=TEE Attestation REST API (TDX + NVIDIA GPU)
 Documentation=https://github.com/confidential-dot-ai/attestation-rs
-After=network-online.target nvidia-cc-ready.service
+After=network-online.target nvidia-persistenced.service
 Wants=network-online.target
-# GPU evidence collection needs the driver up; ordered after CC bring-up.
-Wants=nvidia-cc-ready.service
+# GPU evidence collection needs the driver resident, not the CC Ready state:
+# SPDM attestation works before `-srs 1`, and NVIDIA's flow sets Ready only
+# after a verifier accepted the GPU evidence. Ordering after
+# nvidia-cc-ready would forbid exactly that gate (c8s runs one), so order
+# after persistenced like nvidia-cc-ready itself does.
+Wants=nvidia-persistenced.service
 
 [Service]
 Type=simple
