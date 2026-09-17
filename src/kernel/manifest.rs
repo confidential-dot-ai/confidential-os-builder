@@ -1,6 +1,5 @@
 //! `output/kernel/manifest.json` schema and fingerprint helpers.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -42,6 +41,12 @@ pub struct Fingerprint {
     // rotating it changes vmlinuz. `default` for pre-field manifests.
     #[serde(default)]
     pub randstruct_seed_sha256: String,
+    /// SHA-256 of the canonical trusted ASL source; empty in legacy manifests.
+    #[serde(default)]
+    pub trusted_dsdt_sha256: String,
+    /// SHA-256 of the version-specific kernel enforcement patch.
+    #[serde(default)]
+    pub trusted_aml_patch_sha256: String,
     pub tools_tree_digest: String,
 }
 
@@ -55,22 +60,11 @@ impl Fingerprint {
     /// Render this fingerprint as canonical JSON: keys sorted, no whitespace.
     /// Used to compare fingerprints across runs.
     pub fn to_canonical_json(&self) -> String {
-        let mut m: BTreeMap<&str, &str> = BTreeMap::new();
-        m.insert("linux_version", &self.linux_version);
-        m.insert("tarball_sha256", &self.tarball_sha256);
-        m.insert("required_config_sha256", &self.required_config_sha256);
-        m.insert("hardening_config_sha256", &self.hardening_config_sha256);
-        m.insert(
-            "confidential_config_sha256",
-            &self.confidential_config_sha256,
-        );
-        m.insert(
-            "kernel_extra_config_sha256",
-            &self.kernel_extra_config_sha256,
-        );
-        m.insert("snapshot_config_sha256", &self.snapshot_config_sha256);
-        m.insert("tools_tree_digest", &self.tools_tree_digest);
-        serde_json::to_string(&m).expect("BTreeMap of strings serializes")
+        // serde_json's object is a BTreeMap (no `preserve_order`), so going
+        // through Value sorts the keys and every field takes part without a
+        // second hand-written list.
+        let value = serde_json::to_value(self).expect("string fields serialize");
+        serde_json::to_string(&value).expect("value serializes")
     }
 }
 
@@ -103,6 +97,8 @@ mod tests {
             module_signing_cert_sha256: "1".repeat(64),
             randstruct_seed_sha256: "2".repeat(64),
             tools_tree_digest: "e".repeat(64),
+            trusted_dsdt_sha256: "4".repeat(64),
+            trusted_aml_patch_sha256: "5".repeat(64),
         }
     }
 
@@ -137,6 +133,8 @@ mod tests {
         }"#;
         let fp: Fingerprint = serde_json::from_str(legacy).unwrap();
         assert_eq!(fp.kernel_extra_config_sha256, "");
+        assert_eq!(fp.trusted_dsdt_sha256, "");
+        assert_eq!(fp.trusted_aml_patch_sha256, "");
         assert_eq!(fp.linux_version, "6.12.7");
     }
 
@@ -168,6 +166,18 @@ mod tests {
         let b = a.clone();
         a.linux_version = "6.12.8".into();
         assert_ne!(a.to_canonical_json(), b.to_canonical_json());
+    }
+
+    #[test]
+    fn trusted_aml_inputs_each_invalidate_fingerprint() {
+        let before = sample_fp();
+        let mut table = before.clone();
+        table.trusted_dsdt_sha256 = "6".repeat(64);
+        let mut patch = before.clone();
+        patch.trusted_aml_patch_sha256 = "7".repeat(64);
+        for after in [table, patch] {
+            assert_ne!(before.to_canonical_json(), after.to_canonical_json());
+        }
     }
 
     #[test]

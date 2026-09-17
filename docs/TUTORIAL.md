@@ -17,7 +17,7 @@ plain KVM or emulation for booting.
 ```bash
 git clone https://github.com/confidential-dot-ai/confidential-os-builder.git
 cd confidential-os-builder
-bin/setup        # installs mkosi v27, qemu-utils, swtpm, iasl, ovmf, rust, cargo-nextest
+bin/setup        # installs mkosi v27, qemu-utils, swtpm, ovmf, rust, cargo-nextest
 sudo apt install qemu-system-x86   # the emulator itself — bin/setup does NOT install it
 ```
 
@@ -48,7 +48,7 @@ When it finishes, look at what you got:
 
 ```bash
 ls output/base/
-# OVMF.fd  OVMF.tdx.fd  combined-initrd.img  disk.raw  dsdt.aml
+# OVMF.fd  OVMF.tdx.fd  initrd.img  disk.raw
 # guest-smp2.igvm ...  manifest.json  roothash  uki.efi
 
 jq '{platform: .build.platform,

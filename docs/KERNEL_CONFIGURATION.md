@@ -11,6 +11,75 @@ Our kernel configuration (fragments plus the pinned version) lives in the
 in `mkosi/kernel-builder/`, so the toolchain used to compile the kernel is
 reproducibly installed and isolated from the host.
 
+## Mandatory trusted-AML policy
+
+The kernel tools tree compiles `kernel/trusted-dsdt.asl` into
+`include/confos-trusted-dsdt.h`. The version-specific patch in
+`kernel/patches/` admits only this built-in DSDT at the AML namespace
+loading boundary, rejects dynamic AML additions and requires successful
+primary-table initialization before userspace starts.
+
+Earlier builds shipped the same table through an early initrd archive and
+`CONFIG_ACPI_TABLE_UPGRADE`. That mechanism is a firmware repair path: it
+matches host-controlled OEM identifiers and only replaces a table whose
+revision is older, so a host could keep its own DSDT in play, and it does
+not exclude secondary SSDT/PSDT/OSDT tables at all. `acpi_no_static_ssdt`
+is likewise insufficient on its own, since it covers only static SSDTs and
+leaves dynamic loading open. Linux's built-in custom-DSDT support selects
+the compiled table by signature without those comparisons, so the trusted
+table is compiled into the measured kernel and the patch closes the
+remaining loading paths.
+
+`verify_builder_invariants` checks the resolved configuration after all
+consumer fragments have been applied:
+
+- `CONFIG_ACPI_CUSTOM_DSDT=y` and `CONFIG_ACPI_TRUSTED_AML=y` are required.
+- `CONFIG_ACPI_CUSTOM_DSDT_FILE` must name the expected generated header.
+- Initrd table upgrade, configfs table injection, EFI SSDT overlays and
+  the ACPI debugger must remain disabled. The patch's Kconfig refuses to
+  combine `CONFIG_ACPI_TRUSTED_AML` with any of them as well, so a kernel
+  configured outside the builder cannot pair the gate with a loader.
+
+These checks are stronger than ordinary last-fragment-wins validation:
+a downstream fragment cannot opt out. Both the ASL source and enforcement
+patch participate in the kernel cache fingerprint. Snapshot regeneration
+must use the patched source tree so the added configuration symbol is
+resolved by Kconfig.
+
+The patch header's `Linux-Version:` trailer names the kernel its hooks were
+audited on. `kernel/version` must match it, so a pin bump fails the build
+until these enforcement points have been reviewed on the new source and
+the patch retargeted:
+
+| Kernel boundary | Enforcement |
+|---|---|
+| `acpi_tb_parse_root_table` | Drop every RSDT/XSDT entry with a DSDT, SSDT, PSDT or OSDT signature before it is installed. Host definition blocks never reach the root table list, sysfs or the loader, and a host DSDT entry listed ahead of the FADT cannot displace the FADT's slot as its byte-identical duplicate |
+| `acpi_ns_load_table` | Before namespace parsing, require the canonical DSDT index and the built-in bytes. Reject a second load. A backstop: after the root-table filter nothing else reaches it on a healthy boot |
+| `acpi_os_prepare_trusted_aml` | The primary table must have the built-in array's exact length and content, whether ACPICA maps the array in place or copied it locally, and the array must checksum to zero (Linux disables ACPICA's table validation, so ACPICA only warns about a bad checksum; `acpi_tb_load_namespace` rejects a bad signature first) |
+| `acpi_reallocate_root_table` | Skip the "not invalidated during early boot" check for the built-in table: a virtual-origin table is never mapped, so its pointer is not a leaked early mapping and the error would fire on every boot |
+| `acpi_tb_install_and_load_table` | Deny `Load` and `acpi_load_table()` before the table is installed: `acpi_ns_load_table` would reject it anyway, but only after installation, and callers free the buffer on failure. `LoadTable` can only name a table in the root list, and host definition blocks never enter it, so it finds nothing to load |
+| `acpi_install_method` / `acpi_tb_unload_table` | Deny direct method replacement and namespace unloading |
+| `kernel_init_freeable` | After initcalls, require successful trusted DSDT loading and enabled ACPI before launching init; this check is not an initcall that can be blacklisted |
+
+A dropped host table logs one `ACPI: Trusted AML: ignoring host SSDT at
+...` line and nothing else. A healthy enforcing boot therefore logs no
+`ACPI Error`, and the harness fails any enforcing case that does; an error
+line from the namespace-load backstop means the root-table filter was
+bypassed and a kernel update must re-audit both.
+
+The AML namespace parser has one table-loading caller in this kernel;
+method evaluation operates on the admitted namespace. The separate method
+installation API is denied explicitly, and the ACPI debugger is disabled.
+These are properties to recheck when updating the kernel, not assumptions
+that the version-specific patch can establish for future releases.
+
+The policy restricts AML execution; non-AML ACPI topology data and device
+drivers remain part of the attack surface. Kernel build/config tests do
+not establish RKE2/GPU compatibility or SNP/TDX launch acceptance. See
+[VERIFYING.md](VERIFYING.md) for consumer rollout requirements.
+
+## KSPP comparison
+
 Below, you can find a list of every suggestion from the [Kernel Self-Protection
 Program's Recommended Settings
 page](https://kspp.github.io/Recommended_Settings) (as of 2026-07-12) that we do

@@ -87,7 +87,7 @@ records the platform-specific reference measurements alongside each other:
 
 Confidential OS Builder is **not** a builder for host/hypervisor images that themselves run
 other VMs: the guest-oriented kernel, dm-verity initrd, and trusted-DSDT
-override are all designed for the guest side of the trust boundary. For a
+policy are all designed for the guest side of the trust boundary. For a
 plain host or hypervisor image, use a general-purpose image builder such as
 mkosi directly.
 
@@ -276,48 +276,48 @@ Confidential OS Builder ships a hardened guest kernel built from `kernel/version
 |---|---|---|
 | `kernel/required.config` | Filesystems, dm-verity, SEV-SNP guest support, devtmpfs | Always |
 | `kernel/hardening.config` | Lockdown LSM, KASLR, stack protector, attack-surface trims (USB / PCI hotplug / DRM off, etc.) | Always |
-| `kernel/confidential.config` | Intel TDX guest support, `ACPI_TABLE_UPGRADE` for the trusted-DSDT override | Always, after hardening |
+| `kernel/confidential.config` | Intel TDX guest support, built-in trusted DSDT and mandatory AML loading policy | Always, after hardening |
 | `--kernel-config-fragment <PATH>` | Whatever the caller's fragment enables — confos ships none | Only when the flag is passed |
 
 Confidential OS Builder itself builds only `required + hardening + confidential` — a minimal hardened confidential-microVM kernel, and **confos carries no project-specific kernel config**. A project that needs extra kernel symbols (a wider networking stack, additional filesystems, cgroup features, …) keeps its own fragment file in its own repo and passes it via `--kernel-config-fragment`. The builder merges it last; nothing else about the build changes.
 
-### Trusted DSDT (TDX BadAML mitigation)
+### Trusted DSDT (host AML exclusion)
 
-A TDX guest's firmware-supplied DSDT (Differentiated System Description Table)
-contains AML bytecode that the guest kernel executes at kernel privilege during
-ACPI init. Because the DSDT comes from the VMM in the TDX threat model,
-arbitrary AML in the DSDT is an attack vector — the "BadAML" class.
+Firmware-supplied ACPI tables can contain AML bytecode that Linux interprets
+inside the guest kernel. Both the primary DSDT (Differentiated System
+Description Table) and secondary tables such as SSDTs can supply AML.
+A customer-controlled VMM must not be allowed to select that code.
 
-Confidential OS Builder ships a minimal, audited DSDT (`mkosi/base/acpi-tables/dsdt.asl`) in
-the initrd's early-cpio segment at `kernel/firmware/acpi/dsdt.aml`. The
-kernel's `CONFIG_ACPI_TABLE_UPGRADE` feature scans the initrd for this path
-at boot and **overrides** the VMM-supplied DSDT (replaces FADT's DSDT
-pointer to point at the trusted bytes). The OEM ID, OEM Table ID, and
-OEM Revision in the ASL are chosen to match QEMU's emission exactly so the
-override condition in Linux's `acpi_table_initrd_override` actually fires —
-a single trailing-byte mismatch falls through to the install-only path and
-leaves the VMM's DSDT live. The runtime override is verifiable via
-`dmesg | grep "Table Upgrade: override"`.
+Confidential OS Builder compiles `kernel/trusted-dsdt.asl` into the kernel
+using `iasl` from the snapshot-pinned kernel tools tree. The built-in DSDT
+replaces the firmware's primary table without relying on matching OEM IDs
+or a higher revision. A kernel patch enforces `CONFIG_ACPI_TRUSTED_AML`:
+only the built-in table may enter the AML namespace, with authorization
+before parsing. Secondary firmware tables and dynamic loads cannot add
+AML. Failure to load the trusted primary table stops boot before userspace.
 
-The trusted DSDT bytes are part of the initrd, which is part of the UKI
-and the IGVM file, so the override is itself attested:
+The builder requires `CONFIG_ACPI_CUSTOM_DSDT` and the loading policy,
+checks the exact generated-header path, and disables initrd table upgrade,
+configfs injection and EFI SSDT overlays. Consumer config fragments cannot
+weaken those invariants. There is no early-initrd ACPI archive.
+
+The trusted table and enforcement code are part of the measured kernel:
   - on TDX, via the UKI sections hash in RTMR[2]
   - on SNP, via the IGVM launch digest
 
-This is why confos's TDX manifest pins only MRTD + RTMR[1] + RTMR[2] and
-leaves RTMR[0] unpinned: the VMM still drives RTMR[0] (TD HOB + remaining
-ACPI tables that vary with memory size and SMP topology), but the
-*executable* AML the kernel runs is the trusted one. Memory and SMP can
-vary at deployment time without invalidating the manifest's TDX reference
-values.
+The TDX manifest leaves RTMR[0] unpinned to accommodate host topology data.
+Excluding host AML addresses one part of that trust decision: non-AML ACPI
+tables, TD HOB data and virtual-device inputs still reach guest parsers.
+Their safety and the supported CPU, memory and PCI/GPU layouts require
+separate review and boot validation; this policy does not establish
+compatibility with every topology.
 
-The kernel fragment `kernel/confidential.config` re-enables
-`CONFIG_ACPI_TABLE_UPGRADE` (which the standard-threat-model hardening
-fragment disables) and adds `CONFIG_INTEL_TDX_GUEST` + `CONFIG_TDX_GUEST_DRIVER`
-+ `CONFIG_X86_X2APIC` (the last being a required dependency for the TDX
-guest support). It's merged after `required.config` and `hardening.config`
-so the last-wins semantics deliberately invert the hardening choices that
-the trusted-DSDT design makes unnecessary.
+Kernel and image manifests record `trusted_dsdt_sha256` (the ASL source
+hash) and `trusted_aml_patch_sha256`. These are build provenance, not an
+independent attestation. Deploying the policy requires
+updating consumer builder pins, rebuilding kernels and images, and deriving
+and approving new SNP/TDX reference values. Hardware acceptance remains a
+release requirement; see [VERIFYING.md](docs/VERIFYING.md).
 
 ### Snapshots
 

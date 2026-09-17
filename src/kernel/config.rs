@@ -5,6 +5,7 @@
 //! then written back to the committed snapshot via [`update_snapshot`],
 //! which confos tracks in git like a lockfile.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -46,8 +47,7 @@ pub fn update_snapshot(resolved: &Path, snapshot: &Path) -> Result<bool> {
 /// force-enabled an off-request (see [`verify_fragment_options`]).
 ///
 /// Merge order is important: `confidential.config` deliberately re-enables
-/// options the `hardening.config` fragment turned off (e.g.
-/// `CONFIG_ACPI_TABLE_UPGRADE=y` overriding the `# is not set` line) — last
+/// options the `hardening.config` fragment turned off — last
 /// fragment wins under `merge_config.sh`, so the confidential fragment MUST
 /// follow hardening.
 ///
@@ -59,7 +59,7 @@ pub fn run_configure_phase(
     kernel_dir: &Path,
     required_fragment: &Path,
     hardening_fragment: &Path,
-    confidential_fragment: &Path,
+    cvm_fragment: &Path,
     extra_fragment: Option<&Path>,
 ) -> Result<()> {
     let kernel_dir_abs = kernel_dir
@@ -67,7 +67,7 @@ pub fn run_configure_phase(
         .with_context(|| format!("canonicalizing {}", kernel_dir.display()))?;
     let required_abs = required_fragment.canonicalize()?;
     let hardening_abs = hardening_fragment.canonicalize()?;
-    let confidential_abs = confidential_fragment.canonicalize()?;
+    let cvm_abs = cvm_fragment.canonicalize()?;
     let extra_abs = extra_fragment.map(|p| p.canonicalize()).transpose()?;
 
     // Stage fragments inside the kernel dir so merge_config can find them
@@ -76,10 +76,7 @@ pub fn run_configure_phase(
     fs_err::create_dir_all(&frag_dir_in_kernel)?;
     fs_err::copy(&required_abs, frag_dir_in_kernel.join("required.config"))?;
     fs_err::copy(&hardening_abs, frag_dir_in_kernel.join("hardening.config"))?;
-    fs_err::copy(
-        &confidential_abs,
-        frag_dir_in_kernel.join("confidential.config"),
-    )?;
+    fs_err::copy(&cvm_abs, frag_dir_in_kernel.join("confidential.config"))?;
     if let Some(ref e) = extra_abs {
         fs_err::copy(e, frag_dir_in_kernel.join("extra.config"))?;
     }
@@ -110,7 +107,7 @@ pub fn run_configure_phase(
     )?;
     fs_err::remove_dir_all(&frag_dir_in_kernel)?;
 
-    let mut fragments: Vec<&Path> = vec![&required_abs, &hardening_abs, &confidential_abs];
+    let mut fragments: Vec<&Path> = vec![&required_abs, &hardening_abs, &cvm_abs];
     if let Some(ref e) = extra_abs {
         fragments.push(e);
     }
@@ -124,7 +121,10 @@ pub fn run_configure_phase(
 /// each fragment got what it requested — these hold even when a fragment
 /// requested the opposite, so a consumer cannot opt out of them.
 fn verify_builder_invariants(resolved: &Path) -> Result<()> {
-    let config = fs_err::read_to_string(resolved)?;
+    check_builder_invariants(&fs_err::read_to_string(resolved)?)
+}
+
+fn check_builder_invariants(config: &str) -> Result<()> {
     // MODULE_SIG_ALL=y makes the kernel build sign in-tree modules, which
     // requires a private key at build time: with no MODULE_SIG_KEY set the
     // build GENKEYs one per run and embeds its certificate in vmlinux, so
@@ -157,7 +157,7 @@ fn verify_builder_invariants(resolved: &Path) -> Result<()> {
              instead (docs/module-signing.md)."
         );
     }
-    Ok(())
+    super::aml::verify_config(config)
 }
 
 /// Fail if the resolved `.config` disagrees with what the fragments
@@ -185,6 +185,32 @@ fn verify_builder_invariants(resolved: &Path) -> Result<()> {
 /// (An actual `=y` pin would keep the symbol on silently, so combining a pin
 /// with an assertion is rejected.)
 fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
+    let fragments = fragments
+        .iter()
+        .map(|frag| {
+            let name = frag.file_name().unwrap_or_default().to_string_lossy();
+            Ok((name.into_owned(), fs_err::read_to_string(frag)?))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    check_fragment_options(&fragments, &fs_err::read_to_string(resolved)?)
+}
+
+/// Symbol -> value from a resolved `.config`'s `CONFIG_X=value` lines.
+/// `# CONFIG_X is not set` lines are absent, like unmentioned symbols.
+pub(super) fn values(config: &str) -> HashMap<&str, &str> {
+    config
+        .lines()
+        .filter(|l| l.starts_with("CONFIG_"))
+        .filter_map(|l| l.split_once('='))
+        .collect()
+}
+
+/// `fragments` are `(name, contents)` in merge order; `config` is the
+/// resolved `.config`.
+fn check_fragment_options(
+    fragments: &[(impl AsRef<str>, impl AsRef<str>)],
+    config: &str,
+) -> Result<()> {
     /// Final request for a symbol after last-fragment-wins merging; On/Off
     /// carry the requesting fragment's name for the error message.
     enum Request {
@@ -211,13 +237,7 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
         })
     }
 
-    let config = fs_err::read_to_string(resolved)?;
-    // symbol -> value from the resolved .config's `CONFIG_X=value` lines.
-    let resolved_values: std::collections::HashMap<&str, &str> = config
-        .lines()
-        .filter(|l| l.starts_with("CONFIG_"))
-        .filter_map(|l| l.split_once('='))
-        .collect();
+    let resolved_values = values(config);
     let mut requested: std::collections::BTreeMap<String, Request> = Default::default();
     let mut submitted: std::collections::BTreeMap<String, SubmittedRequest> = Default::default();
     // Forced assertions are comments and therefore cannot retract an actual
@@ -225,9 +245,9 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     // pin cannot make a forced assertion pass after its forcing chain vanishes.
     let mut on_pins: std::collections::BTreeMap<String, (String, String)> = Default::default();
     let mut forced: std::collections::BTreeMap<String, String> = Default::default();
-    for frag in fragments {
-        let name = frag.file_name().unwrap_or_default().to_string_lossy();
-        for line in fs_err::read_to_string(frag)?.lines() {
+    for (name, body) in fragments {
+        let (name, body) = (name.as_ref(), body.as_ref());
+        for line in body.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("CONFIG_") {
                 if line != trimmed {
@@ -420,6 +440,31 @@ fn verify_fragment_options(fragments: &[&Path], resolved: &Path) -> Result<()> {
     }
 }
 
+/// A host directory bind-mounted into the container at `guest`.
+pub struct Bind<'a> {
+    pub host: &'a Path,
+    pub guest: &'a str,
+    pub read_only: bool,
+}
+
+impl<'a> Bind<'a> {
+    pub fn rw(host: &'a Path, guest: &'a str) -> Self {
+        Self {
+            host,
+            guest,
+            read_only: false,
+        }
+    }
+
+    pub fn ro(host: &'a Path, guest: &'a str) -> Self {
+        Self {
+            host,
+            guest,
+            read_only: true,
+        }
+    }
+}
+
 /// Run a shell script inside `tools_tree` with `host_dir` bind-mounted at `mount_at`.
 /// `env_vars` is `(name, value)` pairs forwarded via `--setenv`.
 pub fn nspawn(
@@ -428,6 +473,17 @@ pub fn nspawn(
     mount_at: &str,
     env_vars: &[(&str, &str)],
     script: &str,
+) -> Result<()> {
+    let argv = ["/bin/bash", "-c", script].map(OsString::from);
+    nspawn_exec(tools_tree, &[Bind::rw(host_dir, mount_at)], env_vars, &argv)
+}
+
+/// Run `argv` inside an ephemeral `tools_tree` container with `binds` mounted.
+pub fn nspawn_exec(
+    tools_tree: &Path,
+    binds: &[Bind<'_>],
+    env_vars: &[(&str, &str)],
+    argv: &[OsString],
 ) -> Result<()> {
     let nspawn_bin = tools::require("systemd-nspawn")
         .map_err(|_| anyhow!("systemd-nspawn required; install systemd-container"))?;
@@ -439,16 +495,24 @@ pub fn nspawn(
         OsString::from("--ephemeral"),
         OsString::from("--directory"),
         tools_tree.into(),
-        OsString::from("--bind"),
-        OsString::from(format!("{}:{}", host_dir.display(), mount_at)),
     ];
+    for bind in binds {
+        args.push(OsString::from(if bind.read_only {
+            "--bind-ro"
+        } else {
+            "--bind"
+        }));
+        args.push(OsString::from(format!(
+            "{}:{}",
+            bind.host.display(),
+            bind.guest
+        )));
+    }
     for (k, v) in env_vars {
         args.push(OsString::from("--setenv"));
         args.push(OsString::from(format!("{}={}", k, v)));
     }
-    args.push(OsString::from("/bin/bash"));
-    args.push(OsString::from("-c"));
-    args.push(OsString::from(script));
+    args.extend(argv.iter().cloned());
 
     // CRITICAL: build the full sudo args vec in a let-binding before passing
     // a slice into run_command_streaming. Earlier drafts inlined this with
@@ -467,6 +531,29 @@ mod tests {
         let p = dir.path().join(name);
         fs_err::write(&p, content).unwrap();
         p
+    }
+
+    // Compile-time copies: the kernel integration tests rewrite the snapshot
+    // on disk, so reading it here would race them.
+    #[test]
+    fn committed_snapshot_matches_kernel_policy() {
+        let fragments = [
+            (
+                "required.config",
+                include_str!("../../kernel/required.config"),
+            ),
+            (
+                "hardening.config",
+                include_str!("../../kernel/hardening.config"),
+            ),
+            (
+                "confidential.config",
+                include_str!("../../kernel/confidential.config"),
+            ),
+        ];
+        let snapshot = include_str!("../../kernel/config-x86_64.snapshot");
+        check_fragment_options(&fragments, snapshot).unwrap();
+        check_builder_invariants(snapshot).unwrap();
     }
 
     #[test]
@@ -528,7 +615,11 @@ mod tests {
             "CONFIG_MODULE_SIG=y\nCONFIG_MODULE_SIG_KEY=\"\"\n# CONFIG_MODULE_SIG_ALL is not set\n",
             "CONFIG_MODULES=y\n",
         ] {
-            let resolved = write(&d, "resolved", body);
+            let resolved = write(
+                &d,
+                "resolved",
+                &format!("{body}{}", crate::kernel::aml::VALID_CONFIG),
+            );
             verify_builder_invariants(&resolved).unwrap();
         }
     }

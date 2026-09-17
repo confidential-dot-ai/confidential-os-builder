@@ -63,9 +63,11 @@ open before.
 
 ### Host toolchain pinning
 
-The build host's own toolchain shapes measured bytes too (#36): `iasl`
-(acpica-tools) compiles the trusted DSDT prepended to the initrd, and
-`ovmf` is the published SNP firmware. `bin/host-deps` installs all host
+The build host's own toolchain shapes measured bytes too (#36): `ovmf`
+provides the published SNP firmware. The trusted DSDT compiler (`iasl`
+from `acpica-tools`) now runs inside the snapshot-pinned kernel tools
+tree, so image assembly does not use the host's compiler.
+`bin/host-deps` installs all host
 build deps from `snapshot.ubuntu.com` at the base image's committed
 pin (read from its `mkosi.sources`, so one bump moves image and host
 toolchain together), confining apt to a snapshot-only source list
@@ -84,10 +86,19 @@ mkosi itself is pinned to v27 — `bin/setup` and CI install exactly
 `mkosi.git@v27`, and `mkosi.conf` enforces `MinimumVersion=27` as a
 floor — since mkosi's own behavior is part of the build's determinism.
 The Rust toolchain that builds the `confos` binary is *not* pinned:
-confos's contributions to the measured artifacts (the DSDT early-cpio,
-the IGVM file, the precomputed measurements) are deterministic data
+confos's contributions to the measured artifacts (initrd metadata
+normalization, the IGVM file, the precomputed measurements) are deterministic data
 derived from fixed inputs, so the compiler version doesn't affect
 artifact bytes the way a package-set change would.
+
+The kernel cache fingerprints both `kernel/trusted-dsdt.asl` and the
+version-specific AML enforcement patch alongside the existing source,
+configuration and toolchain inputs. A change to either forces a rebuild;
+legacy manifests with absent input hashes miss the cache. The generated
+custom-DSDT header is compiled into the kernel, and its source and patch
+hashes are recorded in kernel and image metadata. Independent clean-build
+reproduction and hardware acceptance must be repeated for this pipeline;
+earlier early-initrd results do not validate the new kernel inputs.
 
 ### mkosi.finalize
 

@@ -193,5 +193,5 @@ jobs:
           open_pr "pin-watch/kernel-${latest}" \
             "pin-watch/kernel" \
             "kernel: bump to ${latest} — stable backports on the pinned branch" \
-            "Automated pin-watch bump ${LINUX_VERSION} -> ${latest}; the tarball digest comes from a signature-verified kernel.org checksum manifest using the repository-pinned checksum-autosigner key, not from hashing a download. That signature authenticates kernel.org mirror checksum metadata; it is not a developer tarball signature. Rolls measurements; if CI's kernel-config drift gate trips, regenerate the snapshot lockfile in this PR before merging." \
+            "Automated pin-watch bump ${LINUX_VERSION} -> ${latest}; the tarball digest comes from a signature-verified kernel.org checksum manifest using the repository-pinned checksum-autosigner key, not from hashing a download. That signature authenticates kernel.org mirror checksum metadata; it is not a developer tarball signature. Rolls measurements; if CI's kernel-config drift gate trips, regenerate the snapshot lockfile in this PR before merging. The build refuses the new version until kernel/patches/0001-acpi-trusted-aml.patch is re-audited against it and its Linux-Version trailer updated (docs/KERNEL_CONFIGURATION.md)." \
             kernel/version

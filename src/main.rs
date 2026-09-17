@@ -1,6 +1,8 @@
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
-use confos::{commands, BuildArgs, IgvmArgs, KernelArgs, PullArgs, PushArgs, RunArgs};
+use confos::{
+    commands, BuildArgs, IgvmArgs, KernelArgs, KernelSourceArgs, PullArgs, PushArgs, RunArgs,
+};
 
 #[derive(Parser)]
 #[command(
@@ -20,6 +22,9 @@ enum Commands {
     /// Build the hardened custom kernel (internal)
     #[command(hide = true)]
     Kernel(KernelArgs),
+    /// Fetch, patch and stage the pinned kernel source without building it (internal)
+    #[command(hide = true)]
+    KernelSource(KernelSourceArgs),
     /// Build base image with dm-verity, UKI, and IGVM for measured boot
     Build(Box<BuildArgs>),
     /// Generate IGVM files for additional SMP counts from a sealed output
@@ -54,6 +59,7 @@ fn main() -> anyhow::Result<()> {
 
     match &cli.command {
         Commands::Kernel(args) => commands::kernel::run(args),
+        Commands::KernelSource(args) => commands::kernel::prepare_source(args),
         Commands::Build(args) => commands::build::run(args),
         Commands::Igvm(args) => commands::igvm::run(args),
         Commands::Push(args) => commands::push::run(args),

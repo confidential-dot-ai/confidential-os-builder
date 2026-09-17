@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Install host build deps from snapshot.ubuntu.com at the committed base pin.
 #
-# The host toolchain shapes measured bytes (#36): iasl (acpica-tools) compiles
-# the trusted DSDT prepended to the initrd, and ovmf is the published SNP
-# firmware. Installing them from the live archive lets a rebuild weeks later
+# The host toolchain shapes measured bytes (#36): ovmf provides the published
+# SNP firmware. Installing host dependencies from the live archive lets a rebuild weeks later
 # miss a published measurement even with every image input pinned.
 #
 # Fail-closed in two layers, like confos's run_mkosi mirror guard (#96):

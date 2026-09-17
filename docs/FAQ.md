@@ -56,10 +56,13 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for the full picture.
 
 RTMR[0] captures VMM-supplied boot data (TD-HOB, ACPI tables) that varies
 with memory size and vCPU count — pinning it would need a manifest entry per
-topology. The dangerous part of that VMM-supplied data is the DSDT's
-executable AML, and confos neutralizes that specifically: the measured initrd
-overrides the VMM's DSDT with a trusted copy. So the manifest pins MRTD +
-RTMR[1] + RTMR[2], which transitively cover everything that executes.
+topology. Confos compiles its trusted DSDT into the measured kernel and
+restricts AML namespace loading to that table, excluding host-supplied
+secondary tables and dynamic additions. MRTD + RTMR[1] + RTMR[2] cover
+the firmware, kernel policy and built-in AML. Non-AML topology data still
+reaches guest parsers, so leaving RTMR[0] unpinned remains a deliberate
+trust tradeoff, not a claim that every host input is harmless. Supported
+topologies need separate validation.
 
 ### Why does confos fork edk2?
 
