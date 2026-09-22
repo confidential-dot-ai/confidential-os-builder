@@ -46,10 +46,7 @@ jobs:
           path: output/acompany-nccl
           key: >-
             acompany-nccl-image-v1-${{
-              inputs.repro && github.run_id ||
-              hashFiles('Cargo.toml', 'Cargo.lock', 'src/**', 'crates/**',
-              'bin/**', 'mkosi/**', 'kernel/**', 'firmware/**',
-              'images/acompany-nccl/**')
+              inputs.repro && github.run_id || github.sha
             }}-${{ matrix.leg }}
 
       - name: Setup Rust
