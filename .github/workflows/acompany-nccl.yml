@@ -2,6 +2,12 @@ name: Build Acompany NCCL Image
 
 on:
   workflow_dispatch:
+    inputs:
+      repro:
+        description: Build the measured image twice without the final-image cache
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [acompany-nccl-poc]
     paths:
@@ -13,7 +19,6 @@ on:
       - bin/**
       - Cargo.toml
       - Cargo.lock
-      - .github/workflows/acompany-nccl.yml
 
 permissions:
   contents: read
@@ -28,11 +33,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: [a, b]
+        leg: ${{ fromJSON(inputs.repro && '["a","b"]' || '["publish"]') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Restore completed image
+        id: image-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: output/acompany-nccl
+          key: >-
+            acompany-nccl-image-v1-${{
+              inputs.repro && github.run_id ||
+              hashFiles('Cargo.toml', 'Cargo.lock', 'src/**', 'crates/**',
+              'bin/**', 'mkosi/**', 'kernel/**', 'firmware/**',
+              'images/acompany-nccl/**')
+            }}-${{ matrix.leg }}
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
@@ -58,16 +76,36 @@ jobs:
             --registry-config mkosi/base/mkosi.local/oras-auth.json
 
       - name: Install host dependencies
+        if: steps.image-cache.outputs.cache-hit != 'true'
         timeout-minutes: 10
         run: bin/host-deps systemd-container ovmf cpio kmod
 
+      - name: Restore GPU kernel
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            output/kernel
+            kernel/config-x86_64.snapshot
+            mkosi/kernel-builder/mkosi.output
+          key: ${{ runner.os }}-acompany-gpu-kernel-v1-${{ hashFiles('mkosi/kernel-builder/**', 'kernel/**', 'images/acompany-nccl/module-signing.crt') }}
+
+      - name: Restore NVIDIA download cache
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: output/gpu/cache
+          key: ${{ runner.os }}-acompany-nvidia-v1-${{ hashFiles('bin/confos-fetch-gpu') }}
+
       - name: Build GPU kernel
+        if: steps.image-cache.outputs.cache-hit != 'true'
         run: |
           bin/confos kernel \
             --kernel-config-fragment kernel/gpu.config \
             --module-signing-cert images/acompany-nccl/module-signing.crt
 
       - name: Stage NVIDIA driver
+        if: steps.image-cache.outputs.cache-hit != 'true'
         env:
           MODULE_SIG_CERT: images/acompany-nccl/module-signing.crt
           MODULE_SIG_KEY_PEM: ${{ secrets.ACOMPANY_MODULE_SIG_KEY_PEM }}
@@ -76,6 +114,7 @@ jobs:
           bin/confos-fetch-gpu
 
       - name: Build measured image
+        if: steps.image-cache.outputs.cache-hit != 'true'
         run: |
           bin/confos build acompany-nccl \
             --platform tdx \
@@ -100,7 +139,7 @@ jobs:
           retention-days: 14
 
       - name: Push candidate artifact
-        if: matrix.leg == 'b'
+        if: matrix.leg == 'b' || matrix.leg == 'publish'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -130,14 +169,16 @@ jobs:
 
           roots = sorted(Path("evidence").glob("*/roothash"))
           manifests = sorted(Path("evidence").glob("*/manifest.json"))
-          assert len(roots) == 2 and len(manifests) == 2
-          assert roots[0].read_bytes() == roots[1].read_bytes(), "roothash differs"
+          assert len(roots) in (1, 2) and len(manifests) == len(roots)
+          if len(roots) == 2:
+              assert roots[0].read_bytes() == roots[1].read_bytes(), "roothash differs"
           parsed = []
           for path in manifests:
               value = json.loads(path.read_text())
               value.get("build", {}).pop("timestamp", None)
               parsed.append(value)
-          assert parsed[0] == parsed[1], "manifest differs"
+          if len(parsed) == 2:
+              assert parsed[0] == parsed[1], "manifest differs"
           PY
 
       - name: Setup ORAS
