@@ -109,7 +109,7 @@ jobs:
           cd output/acompany-nccl
           oras push "ghcr.io/${GITHUB_REPOSITORY,,}:acompany-nccl-${GITHUB_SHA}-candidate" \
             --artifact-type application/vnd.confos.image.v1 \
-            disk.raw OVMF.tdx.fd combined-initrd.img dsdt.aml manifest.json roothash uki.efi
+            disk.raw OVMF.tdx.fd initrd.img dsdt.aml manifest.json roothash uki.efi
 
   verify-and-promote:
     needs: build
