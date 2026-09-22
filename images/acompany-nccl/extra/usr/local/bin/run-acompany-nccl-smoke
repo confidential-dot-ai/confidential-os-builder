@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly ROOT=/opt/acompany/nccl-tests
+readonly OUT="${1:-/var/lib/acompany/results/$(date -u +%Y%m%dT%H%M%SZ)}"
+readonly COMMON=(-b 8 -e 1G -f 2 -w 5 -n 20 -c 1)
+
+if [[ "$EUID" -eq 0 ]]; then
+    install -d -o acompany-test -g acompany-test "$OUT"
+    cd /var/lib/acompany
+    exec runuser -u acompany-test -- "$0" "$OUT"
+fi
+
+mkdir -p "$OUT"
+exec > >(tee -a "$OUT/run.log") 2>&1
+
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
+export NCCL_DEBUG=INFO
+export NCCL_DEBUG_SUBSYS=INIT,GRAPH,ENV
+export NCCL_NVLS_ENABLE=0
+
+acompany-gpu-gate | tee "$OUT/gpu-gate.txt"
+nvidia-smi topo -m > "$OUT/topology.txt"
+nvidia-smi nvlink -s > "$OUT/nvlink.txt"
+
+timeout 900 "$ROOT/build-nompi/all_reduce_perf" "${COMMON[@]}" -g 2 \
+    | tee "$OUT/all-reduce-one-process.txt"
+timeout 900 mpirun -np 2 \
+    "$ROOT/build-mpi/all_reduce_perf" "${COMMON[@]}" -g 1 \
+    | tee "$OUT/all-reduce-two-process.txt"
+
+for test in all_gather_perf reduce_scatter_perf; do
+    timeout 900 "$ROOT/build-nompi/$test" "${COMMON[@]}" -g 2 \
+        | tee "$OUT/$test.txt"
+done
+
+for run in 1 2 3; do
+    timeout 300 mpirun -np 2 "$ROOT/build-mpi/all_reduce_perf" \
+        -b 8 -e 64M -f 2 -w 2 -n 5 -c 1 -g 1 \
+        | tee "$OUT/restart-$run.txt"
+done
+
+nvidia-smi conf-compute -q > "$OUT/conf-compute-after.txt"
+echo "NCCL smoke matrix completed: $OUT"

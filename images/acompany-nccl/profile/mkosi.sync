@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly STAGE="$SRCDIR/mkosi.local/mkosi.extra"
+readonly CUDA_ROOT="$STAGE/usr/local/cuda-13.2"
+readonly CUDA_REDIST="https://developer.download.nvidia.com/compute/cuda/redist"
+readonly CUDA_VERSION="13.2.2"
+readonly NCCL_VERSION="2.29.7-1+cuda13.2"
+readonly NCCL_REPO="https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64"
+readonly TESTS_COMMIT="b4d5beebca8a76cf01335f724d154b9b9d394d96"
+readonly TESTS_SHA256="e4a5b46e4a0d4f772fd0b5ce34cfffa338cc284cf208f5f3f4c786c374f35f6d"
+
+tmp="$(mktemp -d /tmp/acompany-nccl.XXXXXXXXXX)"
+trap 'rm -rf "$tmp"' EXIT
+
+fetch() {
+    local url="$1" sha256="$2" output="$3"
+    curl -fL --retry 3 --output "$output" "$url"
+    echo "$sha256  $output" | sha256sum --check --status
+}
+
+stage_cuda_component() {
+    local path="$1" sha256="$2" archive extracted
+    archive="$tmp/$(basename "$path")"
+    extracted="$tmp/extracted"
+    fetch "$CUDA_REDIST/$path" "$sha256" "$archive"
+    rm -rf "$extracted"
+    mkdir -p "$extracted" "$CUDA_ROOT"
+    tar -xJf "$archive" -C "$extracted" --strip-components=1
+    cp -a "$extracted"/. "$CUDA_ROOT"/
+}
+
+# Minimal complete nvcc toolchain plus CUDA runtime. Paths and hashes are from
+# NVIDIA's redistrib_13.2.2.json manifest dated 2026-07-16.
+stage_cuda_component \
+    cuda_cccl/linux-x86_64/cuda_cccl-linux-x86_64-13.2.86-archive.tar.xz \
+    a14f52d5cc8a00a22bccd6c0ab6b1427c7dde7e8251adf321e768a7fc47bb2a5
+stage_cuda_component \
+    cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-13.2.86-archive.tar.xz \
+    d6be2b3546fa93e5dec9e3d118d31f9540d0b7af5319ee3c6726f202dfc5b5d4
+stage_cuda_component \
+    cuda_crt/linux-x86_64/cuda_crt-linux-x86_64-13.2.86-archive.tar.xz \
+    174ad29ab90c9301bd25f32f935345e65f19fbb0f39c15788daae25b0e924892
+stage_cuda_component \
+    cuda_culibos/linux-x86_64/cuda_culibos-linux-x86_64-13.2.86-archive.tar.xz \
+    2e17d411a8b337768691ce6289a558b43e4baea9187552b2d41c133ebebe09ac
+stage_cuda_component \
+    cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-13.2.86-archive.tar.xz \
+    b04e5ca5b41f8b5629ce5f16930920e6af437f32c9777fcb67e0361f732b6f43
+stage_cuda_component \
+    libnvvm/linux-x86_64/libnvvm-linux-x86_64-13.2.86-archive.tar.xz \
+    029fc2a43904a2208a83dfd5834c4c343394d1117279f849863ae94208a88b8a
+stage_cuda_component \
+    libcurand/linux-x86_64/libcurand-linux-x86_64-10.4.2.66-archive.tar.xz \
+    f682166d50b81d3f1833c1d5a29cfe06871ec8e48991ffdeac367ba6430cf6a7
+
+ln -sfn cuda-13.2 "$STAGE/usr/local/cuda"
+if [[ -d "$CUDA_ROOT/lib" && ! -e "$CUDA_ROOT/lib64" ]]; then
+    ln -s lib "$CUDA_ROOT/lib64"
+fi
+
+for spec in \
+    "libnccl2_${NCCL_VERSION}_amd64.deb 8ee1d40a825137af769aff5db26f0e541430e503d0e9c75663a7cfcfe73cd565" \
+    "libnccl-dev_${NCCL_VERSION}_amd64.deb a983576e74ed40d63469bd085b8f270c131887fb61847da15adf549caae57698"
+do
+    set -- $spec
+    deb="$tmp/$1"
+    fetch "$NCCL_REPO/$1" "$2" "$deb"
+    package_dir="$tmp/package"
+    rm -rf "$package_dir"
+    mkdir -p "$package_dir"
+    cd "$package_dir"
+    ar x "$deb"
+    tar -xf data.tar.* -C "$STAGE"
+done
+
+tests_archive="$tmp/nccl-tests.tar.gz"
+fetch \
+    "https://github.com/NVIDIA/nccl-tests/archive/${TESTS_COMMIT}.tar.gz" \
+    "$TESTS_SHA256" "$tests_archive"
+mkdir -p "$STAGE/opt/acompany/nccl-tests/src"
+tar -xzf "$tests_archive" -C "$STAGE/opt/acompany/nccl-tests/src" \
+    --strip-components=1
+
+install -d "$STAGE/opt/acompany"
+cat >"$STAGE/opt/acompany/VERSIONS" <<EOF
+cuda_release=$CUDA_VERSION
+cuda_component_version=13.2.86
+nccl=$NCCL_VERSION
+nccl_tests_commit=$TESTS_COMMIT
+nvidia_driver=595.71.05
+EOF

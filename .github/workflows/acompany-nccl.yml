@@ -1,0 +1,151 @@
+name: Build Acompany NCCL Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [acompany-nccl-poc]
+    paths:
+      - images/acompany-nccl/**
+      - mkosi/**
+      - kernel/**
+      - src/**
+      - crates/**
+      - bin/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/acompany-nccl.yml
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: acompany-nccl-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [a, b]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+
+      - name: Setup mkosi
+        uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
+
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+      - name: Authenticate to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Install host dependencies
+        timeout-minutes: 10
+        run: bin/host-deps systemd-container ovmf cpio kmod
+
+      - name: Build GPU kernel
+        run: |
+          bin/confos kernel \
+            --kernel-config-fragment kernel/gpu.config \
+            --module-signing-cert images/acompany-nccl/module-signing.crt
+
+      - name: Stage NVIDIA driver
+        env:
+          MODULE_SIG_CERT: images/acompany-nccl/module-signing.crt
+          MODULE_SIG_KEY_PEM: ${{ secrets.ACOMPANY_MODULE_SIG_KEY_PEM }}
+        run: |
+          test -n "$MODULE_SIG_KEY_PEM"
+          bin/confos-fetch-gpu
+
+      - name: Build measured image
+        run: |
+          bin/confos build acompany-nccl \
+            --platform tdx \
+            --memory 128G \
+            --profile gpu \
+            --profile attest-gpu \
+            --profile ssh \
+            --profile-dir images/acompany-nccl/profile \
+            --kernel-config-fragment kernel/gpu.config \
+            --module-signing-cert images/acompany-nccl/module-signing.crt \
+            --extra images/acompany-nccl/extra \
+            --script images/acompany-nccl/build-nccl-tests.sh
+
+      - name: Upload reproducibility evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: acompany-nccl-${{ github.run_id }}-${{ matrix.leg }}
+          path: |
+            output/acompany-nccl/manifest.json
+            output/acompany-nccl/roothash
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Push candidate artifact
+        if: matrix.leg == 'b'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          cd output/acompany-nccl
+          oras push "ghcr.io/${GITHUB_REPOSITORY,,}:acompany-nccl-${GITHUB_SHA}-candidate" \
+            --artifact-type application/vnd.confos.image.v1 \
+            disk.raw OVMF.tdx.fd combined-initrd.img dsdt.aml manifest.json roothash uki.efi
+
+  verify-and-promote:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: acompany-nccl-${{ github.run_id }}-*
+          path: evidence
+
+      - name: Require identical measurements
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          roots = sorted(Path("evidence").glob("*/roothash"))
+          manifests = sorted(Path("evidence").glob("*/manifest.json"))
+          assert len(roots) == 2 and len(manifests) == 2
+          assert roots[0].read_bytes() == roots[1].read_bytes(), "roothash differs"
+          parsed = []
+          for path in manifests:
+              value = json.loads(path.read_text())
+              value.get("build", {}).pop("timestamp", None)
+              parsed.append(value)
+          assert parsed[0] == parsed[1], "manifest differs"
+          PY
+
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+      - name: Promote verified artifact
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          SRC="${IMAGE}:acompany-nccl-${GITHUB_SHA}-candidate"
+          oras copy "$SRC" "${IMAGE}:acompany-nccl-${GITHUB_SHA}"
+          oras copy "$SRC" "${IMAGE}:acompany-nccl-latest"
