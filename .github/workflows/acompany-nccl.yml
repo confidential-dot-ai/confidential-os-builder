@@ -166,8 +166,8 @@ jobs:
           import json
           from pathlib import Path
 
-          roots = sorted(Path("evidence").glob("*/roothash"))
-          manifests = sorted(Path("evidence").glob("*/manifest.json"))
+          roots = sorted(Path("evidence").rglob("roothash"))
+          manifests = sorted(Path("evidence").rglob("manifest.json"))
           assert len(roots) in (1, 2) and len(manifests) == len(roots)
           if len(roots) == 2:
               assert roots[0].read_bytes() == roots[1].read_bytes(), "roothash differs"
