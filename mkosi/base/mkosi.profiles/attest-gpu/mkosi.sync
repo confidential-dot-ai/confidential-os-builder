@@ -26,15 +26,19 @@ fi
 # Pinned digest of the GPU-capable attestation runtime. Bumping it changes the
 # launch measurement of every --profile attest-gpu build.
 IMAGE="ghcr.io/confidential-dot-ai/attestation-api-gpu@sha256:375136d59811b8d48dfbaa4e4f1ccd16c4a043c1051c4b881c8d0575236e5097"
+ORAS_AUTH=()
+if [ -f "$SRCDIR/mkosi.local/oras-auth.json" ]; then
+    ORAS_AUTH=(--registry-config "$SRCDIR/mkosi.local/oras-auth.json")
+fi
 mkdir -p "${TMPDIR:=/tmp}"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 EXTRACT="$TMP/rootfs"; mkdir -p "$EXTRACT"
 
-MANIFEST=$(oras manifest fetch "$IMAGE")
+MANIFEST=$(oras manifest fetch "${ORAS_AUTH[@]}" "$IMAGE")
 REPO="${IMAGE%@*}"
 echo "$MANIFEST" | jq -r '.layers[] | select(.mediaType | test("tar.?gzip$")) | .digest' | \
 while read -r layer; do
-    oras blob fetch --output "$TMP/layer.tgz" "${REPO}@${layer}"
+    oras blob fetch "${ORAS_AUTH[@]}" --output "$TMP/layer.tgz" "${REPO}@${layer}"
     tar -xzf "$TMP/layer.tgz" -C "$EXTRACT" 2>/dev/null || true
     rm -f "$TMP/layer.tgz"
 done

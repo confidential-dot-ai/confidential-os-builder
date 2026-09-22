@@ -51,7 +51,11 @@ jobs:
       - name: Authenticate to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        run: |
+          mkdir -p mkosi/base/mkosi.local
+          echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" \
+            --password-stdin \
+            --registry-config mkosi/base/mkosi.local/oras-auth.json
 
       - name: Install host dependencies
         timeout-minutes: 10
