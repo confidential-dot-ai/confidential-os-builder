@@ -86,6 +86,8 @@ jobs:
             kernel/config-x86_64.snapshot
             mkosi/kernel-builder/mkosi.output
           key: ${{ runner.os }}-acompany-gpu-kernel-v1-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-acompany-gpu-kernel-v1-
 
       - name: Restore NVIDIA download cache
         if: steps.image-cache.outputs.cache-hit != 'true'
