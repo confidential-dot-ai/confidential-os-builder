@@ -15,7 +15,7 @@ mkdir -p "$OUT"
 exec > >(tee -a "$OUT/run.log") 2>&1
 
 export PATH=/usr/local/cuda/bin:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
+export LD_LIBRARY_PATH=/usr/local/cuda/lib:/usr/lib/x86_64-linux-gnu
 export NCCL_DEBUG=INFO
 export NCCL_DEBUG_SUBSYS=INIT,GRAPH,ENV
 export NCCL_NVLS_ENABLE=0

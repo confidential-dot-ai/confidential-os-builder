@@ -14,7 +14,7 @@ readonly SRC="$ROOT/src"
 readonly MPI_HOME=/usr/lib/x86_64-linux-gnu/openmpi
 
 export PATH=/usr/local/cuda/bin:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
+export LD_LIBRARY_PATH=/usr/local/cuda/lib:/usr/lib/x86_64-linux-gnu
 
 make -C "$SRC" clean
 make -C "$SRC" -j"$(nproc)" MPI=0 CUDA_HOME=/usr/local/cuda

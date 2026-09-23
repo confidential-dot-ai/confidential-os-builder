@@ -16,3 +16,9 @@ grep -q '^acompany-test:[^:]*:19800:' "$shadow"
 # Drop the inherited narrower /etc/ssh overlay: mounting both a parent and its
 # child wastes state and makes the resulting mount hierarchy order-dependent.
 rm -f "$BUILDROOT/usr/lib/confai/state.d/50-ssh.conf"
+
+# CUDA 13.2 installs its runtime libraries in lib/, not lib64/. Register that
+# measured path in the image's linker cache so NCCL and vLLM work outside an
+# interactive shell without relying on LD_LIBRARY_PATH.
+echo /usr/local/cuda/lib > "$BUILDROOT/etc/ld.so.conf.d/acompany-cuda.conf"
+chroot "$BUILDROOT" /sbin/ldconfig
