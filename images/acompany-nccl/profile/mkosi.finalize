@@ -22,3 +22,10 @@ rm -f "$BUILDROOT/usr/lib/confai/state.d/50-ssh.conf"
 # interactive shell without relying on LD_LIBRARY_PATH.
 echo /usr/local/cuda/lib > "$BUILDROOT/etc/ld.so.conf.d/acompany-cuda.conf"
 chroot "$BUILDROOT" /sbin/ldconfig
+
+# Keep customer data outside the ephemeral state overlays. The automount is
+# harmless when no data disk is attached and avoids delaying boot on images
+# used without one.
+mkdir -p "$BUILDROOT/etc/systemd/system/multi-user.target.wants"
+ln -s ../var-lib-user\\x2ddata.automount \
+    "$BUILDROOT/etc/systemd/system/multi-user.target.wants/var-lib-user\\x2ddata.automount"

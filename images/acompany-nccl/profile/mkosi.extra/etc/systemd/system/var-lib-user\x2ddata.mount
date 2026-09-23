@@ -1,0 +1,11 @@
+[Unit]
+Description=User data volume
+After=dev-disk-by\x2dlabel-user\x2ddata.device
+BindsTo=dev-disk-by\x2dlabel-user\x2ddata.device
+
+[Mount]
+What=/dev/disk/by-label/user-data
+Where=/var/lib/user-data
+Type=ext4
+Options=defaults
+

@@ -1,0 +1,9 @@
+[Unit]
+Description=Automount user data volume
+
+[Automount]
+Where=/var/lib/user-data
+
+[Install]
+WantedBy=multi-user.target
+
