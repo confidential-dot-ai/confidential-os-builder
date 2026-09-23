@@ -11,6 +11,7 @@ on:
   push:
     branches: [acompany-nccl-poc]
     paths:
+      - .github/workflows/acompany-nccl.yml
       - images/acompany-nccl/**
       - mkosi/**
       - kernel/**
