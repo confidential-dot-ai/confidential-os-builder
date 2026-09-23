@@ -124,7 +124,6 @@ jobs:
             --profile-dir images/acompany-nccl/profile \
             --kernel-config-fragment kernel/gpu.config \
             --module-signing-cert images/acompany-nccl/module-signing.crt \
-            --extra images/acompany-nccl/extra \
             --script images/acompany-nccl/build-nccl-tests.sh
 
       - name: Upload reproducibility evidence
