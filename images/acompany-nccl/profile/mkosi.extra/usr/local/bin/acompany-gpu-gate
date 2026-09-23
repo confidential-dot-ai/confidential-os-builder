@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-expected=2
+expected="${ACOMPANY_EXPECTED_GPUS:-}"
+if [[ -z "$expected" ]]; then
+    expected="$(lspci -Dnnd 10de:3182 | wc -l)"
+fi
+if ! [[ "$expected" =~ ^[1-9][0-9]*$ ]]; then
+    echo "invalid expected GPU count: $expected" >&2
+    exit 1
+fi
+
 actual="$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)"
 if [[ "$actual" -ne "$expected" ]]; then
-    echo "expected exactly $expected GPUs, found $actual" >&2
+    echo "expected $expected initialized B300 GPU(s), found $actual" >&2
     exit 1
 fi
 
@@ -17,4 +25,4 @@ if nvidia-smi conf-compute -q | grep -Eiq 'devtools[^:]*:[[:space:]]*(on|enabled
     exit 1
 fi
 
-echo "two-GPU visibility and production-mode gate passed"
+echo "$actual-GPU visibility and production-mode gate passed"

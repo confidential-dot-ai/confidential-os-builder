@@ -21,22 +21,27 @@ export NCCL_DEBUG_SUBSYS=INIT,GRAPH,ENV
 export NCCL_NVLS_ENABLE=0
 
 acompany-gpu-gate | tee "$OUT/gpu-gate.txt"
+gpu_count="$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)"
+if ! [[ "$gpu_count" =~ ^[1-9][0-9]*$ ]]; then
+    echo "invalid initialized GPU count: $gpu_count" >&2
+    exit 1
+fi
 nvidia-smi topo -m > "$OUT/topology.txt"
 nvidia-smi nvlink -s > "$OUT/nvlink.txt"
 
-timeout 900 "$ROOT/build-nompi/all_reduce_perf" "${COMMON[@]}" -g 2 \
+timeout 900 "$ROOT/build-nompi/all_reduce_perf" "${COMMON[@]}" -g "$gpu_count" \
     | tee "$OUT/all-reduce-one-process.txt"
-timeout 900 mpirun -np 2 \
+timeout 900 mpirun -np "$gpu_count" \
     "$ROOT/build-mpi/all_reduce_perf" "${COMMON[@]}" -g 1 \
     | tee "$OUT/all-reduce-two-process.txt"
 
 for test in all_gather_perf reduce_scatter_perf; do
-    timeout 900 "$ROOT/build-nompi/$test" "${COMMON[@]}" -g 2 \
+    timeout 900 "$ROOT/build-nompi/$test" "${COMMON[@]}" -g "$gpu_count" \
         | tee "$OUT/$test.txt"
 done
 
 for run in 1 2 3; do
-    timeout 300 mpirun -np 2 "$ROOT/build-mpi/all_reduce_perf" \
+    timeout 300 mpirun -np "$gpu_count" "$ROOT/build-mpi/all_reduce_perf" \
         -b 8 -e 64M -f 2 -w 2 -n 5 -c 1 -g 1 \
         | tee "$OUT/restart-$run.txt"
 done
