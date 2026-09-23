@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+# systemd-sysusers creates acompany-test under the reproducible
+# SOURCE_DATE_EPOCH, so its shadow "last change" day is 0. PAM reads day 0
+# as "password expired, change it now", which blocks even key-based ssh
+# logins ("Password change required but no TTY available"). Pin the same
+# fixed day root's baked entry carries; the account stays passwordless
+# (locked hash) and the image stays byte-reproducible.
+shadow="$BUILDROOT/etc/shadow"
+grep -q '^acompany-test:' "$shadow"
+sed -i 's/^\(acompany-test:[^:]*\):0:/\1:19800:/' "$shadow"
+grep -q '^acompany-test:[^:]*:19800:' "$shadow"
