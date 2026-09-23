@@ -26,7 +26,7 @@ permissions:
 
 concurrency:
   group: acompany-nccl-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -34,7 +34,7 @@ jobs:
       fail-fast: false
       matrix:
         leg: ${{ fromJSON(inputs.repro && '["a","b"]' || '["publish"]') }}
-    runs-on: ubuntu-latest
+    runs-on: big-build-runner
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,12 +82,28 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            output/kernel
-            kernel/config-x86_64.snapshot
+            output/kernel/cache
+            output/kernel/manifest.json
+            output/kernel/vmlinuz
+            kernel/config-x86_64-gpu.snapshot
             mkosi/kernel-builder/mkosi.output
-          key: ${{ runner.os }}-acompany-gpu-kernel-v1-${{ github.sha }}
+          key: >-
+            ${{ runner.os }}-acompany-gpu-kernel-v2-${{
+              hashFiles(
+                'mkosi/kernel-builder/mkosi.conf',
+                'mkosi/kernel-builder/mkosi.sandbox/**',
+                'kernel/version',
+                'kernel/*.config',
+                'kernel/*.seed',
+                'kernel/*.dts',
+                'kernel/patches/**',
+                'images/acompany-nccl/module-signing.crt',
+                'src/commands/kernel.rs',
+                'src/kernel/**'
+              )
+            }}
           restore-keys: |
-            ${{ runner.os }}-acompany-gpu-kernel-v1-
+            ${{ runner.os }}-acompany-gpu-kernel-v2-
 
       - name: Restore NVIDIA download cache
         if: steps.image-cache.outputs.cache-hit != 'true'
@@ -95,6 +111,24 @@ jobs:
         with:
           path: output/gpu/cache
           key: ${{ runner.os }}-acompany-nvidia-v1-${{ hashFiles('bin/confos-fetch-gpu') }}
+
+      - name: Restore mkosi package cache
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: mkosi/base/mkosi.pkgcache
+          key: >-
+            ${{ runner.os }}-acompany-pkgcache-v1-${{
+              hashFiles(
+                'mkosi/base/mkosi.conf',
+                'mkosi/base/mkosi.conf.d/*.conf',
+                'mkosi/base/mkosi.profiles/*/mkosi.conf',
+                'mkosi/base/mkosi.sandbox/**',
+                'images/acompany-nccl/profile/**'
+              )
+            }}
+          restore-keys: |
+            ${{ runner.os }}-acompany-pkgcache-v1-
 
       - name: Build GPU kernel
         if: steps.image-cache.outputs.cache-hit != 'true'
