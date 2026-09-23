@@ -148,6 +148,15 @@ jobs:
             --artifact-type application/vnd.confos.image.v1 \
             disk.raw OVMF.tdx.fd initrd.img manifest.json roothash uki.efi
 
+          # CDI requires a standard OCI image with one tar+gzip layer and the
+          # VM disk at disk/disk.raw. Keep the general artifact above for
+          # confos pull and publish this deployment-specific representation
+          # under a distinct tag.
+          cd "$GITHUB_WORKSPACE"
+          bin/confos push output/acompany-nccl \
+            --cdi \
+            --tag "acompany-nccl-${GITHUB_SHA}-candidate-cdi"
+
   verify-and-promote:
     needs: build
     runs-on: ubuntu-latest
@@ -190,5 +199,8 @@ jobs:
           echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
           SRC="${IMAGE}:acompany-nccl-${GITHUB_SHA}-candidate"
+          CDI_SRC="${IMAGE}:acompany-nccl-${GITHUB_SHA}-candidate-cdi"
           oras copy "$SRC" "${IMAGE}:acompany-nccl-${GITHUB_SHA}"
           oras copy "$SRC" "${IMAGE}:acompany-nccl-latest"
+          oras copy "$CDI_SRC" "${IMAGE}:acompany-nccl-${GITHUB_SHA}-cdi"
+          oras copy "$CDI_SRC" "${IMAGE}:acompany-nccl-cdi-latest"

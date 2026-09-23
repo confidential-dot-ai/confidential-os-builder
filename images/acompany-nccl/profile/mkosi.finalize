@@ -11,3 +11,8 @@ shadow="$BUILDROOT/etc/shadow"
 grep -q '^acompany-test:' "$shadow"
 sed -i 's/^\(acompany-test:[^:]*\):0:/\1:19800:/' "$shadow"
 grep -q '^acompany-test:[^:]*:19800:' "$shadow"
+
+# The Acompany profile overlays all of /etc so apt/dpkg can behave normally.
+# Drop the inherited narrower /etc/ssh overlay: mounting both a parent and its
+# child wastes state and makes the resulting mount hierarchy order-dependent.
+rm -f "$BUILDROOT/usr/lib/confai/state.d/50-ssh.conf"

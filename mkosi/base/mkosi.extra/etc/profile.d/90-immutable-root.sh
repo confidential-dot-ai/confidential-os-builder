@@ -13,5 +13,5 @@ for _f in /usr/lib/confai/state.d/*.conf; do
         _confai_state="$_confai_state /${_d#/}"
     done < "$_f"
 done
-printf 'Immutable root: /usr and /etc are the read-only verity image; a write there fails with "Read-only file system".\nWritable (ephemeral state overlays):%s\nDeclare more in /usr/lib/confai/state.d — see docs/THREAT_MODEL.md in confidential-os-builder.\n' "$_confai_state"
+printf 'Measured root: undeclared paths remain on the read-only verity image.\nWritable (ephemeral state overlays):%s\nDeclare more in /usr/lib/confai/state.d — see docs/THREAT_MODEL.md in confidential-os-builder.\n' "$_confai_state"
 unset _confai_state _f _d
