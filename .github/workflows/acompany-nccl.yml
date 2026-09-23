@@ -79,8 +79,9 @@ jobs:
         run: bin/host-deps systemd-container ovmf cpio kmod
 
       - name: Restore GPU kernel
+        id: gpu-kernel-cache
         if: steps.image-cache.outputs.cache-hit != 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             output/kernel/cache
@@ -137,6 +138,20 @@ jobs:
           bin/confos kernel \
             --kernel-config-fragment kernel/gpu.config \
             --module-signing-cert images/acompany-nccl/module-signing.crt
+
+      - name: Save GPU kernel
+        if: >-
+          steps.image-cache.outputs.cache-hit != 'true' &&
+          steps.gpu-kernel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            output/kernel/cache
+            output/kernel/manifest.json
+            output/kernel/vmlinuz
+            kernel/config-x86_64-gpu.snapshot
+            mkosi/kernel-builder/mkosi.output
+          key: ${{ steps.gpu-kernel-cache.outputs.cache-primary-key }}
 
       - name: Stage NVIDIA driver
         if: steps.image-cache.outputs.cache-hit != 'true'
