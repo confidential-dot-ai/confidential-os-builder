@@ -1,3 +1,4 @@
 enable acompany-ssh-host-keys.service
 enable containerd.service
 enable docker.service
+enable systemd-timesyncd.service

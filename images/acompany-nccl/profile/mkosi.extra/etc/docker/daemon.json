@@ -1,5 +1,11 @@
 {
   "data-root": "/var/lib/user-data/docker",
+  "mtu": 1420,
+  "default-network-opts": {
+    "bridge": {
+      "com.docker.network.driver.mtu": "1420"
+    }
+  },
   "features": {
     "cdi": true
   }

@@ -87,7 +87,7 @@ jobs:
             output/kernel/cache
             output/kernel/manifest.json
             output/kernel/vmlinuz
-            kernel/config-x86_64-gpu.snapshot
+            kernel/config-x86_64-gpu-relaxed.snapshot
             mkosi/kernel-builder/mkosi.output
           key: >-
             ${{ runner.os }}-acompany-gpu-kernel-v2-${{
@@ -136,7 +136,7 @@ jobs:
         if: steps.image-cache.outputs.cache-hit != 'true'
         run: |
           bin/confos kernel \
-            --kernel-config-fragment kernel/gpu.config \
+            --kernel-config-fragment kernel/gpu-relaxed.config \
             --module-signing-cert images/acompany-nccl/module-signing.crt
 
       - name: Verify OCI kernel support
@@ -147,9 +147,13 @@ jobs:
           grep -qx 'CONFIG_BPF_SYSCALL=y' "$CONFIG"
           grep -qx 'CONFIG_BPF_JIT=y' "$CONFIG"
           grep -qx 'CONFIG_CGROUP_BPF=y' "$CONFIG"
+          grep -qx 'CONFIG_USER_NS=y' "$CONFIG"
           grep -qx 'CONFIG_VETH=y' "$CONFIG"
           grep -qx 'CONFIG_BRIDGE=y' "$CONFIG"
           grep -qx 'CONFIG_BRIDGE_NETFILTER=y' "$CONFIG"
+          grep -qx 'CONFIG_NETFILTER_XT_NAT=y' "$CONFIG"
+          grep -qx 'CONFIG_IO_URING=y' "$CONFIG"
+          grep -qx 'CONFIG_KCMP=y' "$CONFIG"
 
       - name: Make GPU kernel cache readable
         if: steps.image-cache.outputs.cache-hit != 'true'
@@ -168,7 +172,7 @@ jobs:
             output/kernel/cache
             output/kernel/manifest.json
             output/kernel/vmlinuz
-            kernel/config-x86_64-gpu.snapshot
+            kernel/config-x86_64-gpu-relaxed.snapshot
             mkosi/kernel-builder/mkosi.output
           key: ${{ steps.gpu-kernel-cache.outputs.cache-primary-key }}
 
@@ -191,7 +195,7 @@ jobs:
             --profile attest-gpu \
             --profile ssh \
             --profile-dir images/acompany-nccl/profile \
-            --kernel-config-fragment kernel/gpu.config \
+            --kernel-config-fragment kernel/gpu-relaxed.config \
             --module-signing-cert images/acompany-nccl/module-signing.crt \
             --script images/acompany-nccl/build-nccl-tests.sh
 
