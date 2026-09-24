@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+test -x /usr/bin/runc
+test -S /run/containerd/containerd.sock
+test -S /run/docker.sock
+test -s /var/run/cdi/nvidia.yaml
+findmnt -n /var/lib/user-data >/dev/null
+docker info >/dev/null
+
+printf 'container runtime ready; NVIDIA CDI devices:\n'
+docker info --format '{{json .DriverStatus}}'
+nvidia-ctk cdi list | grep 'nvidia.com/gpu='

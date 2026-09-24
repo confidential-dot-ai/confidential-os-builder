@@ -16,6 +16,15 @@ readonly MPI_HOME=/usr/lib/x86_64-linux-gnu/openmpi
 export PATH=/usr/local/cuda/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda/lib:/usr/lib/x86_64-linux-gnu
 
+# Fail the measured-image build if the rootful OCI runtime or its checked-in
+# configuration is missing/invalid. Runtime GPU execution is exercised on a
+# confidential GPU VM after publication; this catches packaging drift early.
+for binary in containerd docker dockerd runc; do
+    command -v "$binary" >/dev/null
+done
+dockerd --validate --config-file=/etc/docker/daemon.json
+containerd --config /etc/containerd/config.toml config dump >/dev/null
+
 make -C "$SRC" clean
 make -C "$SRC" -j"$(nproc)" MPI=0 CUDA_HOME=/usr/local/cuda
 mv "$SRC/build" "$ROOT/build-nompi"

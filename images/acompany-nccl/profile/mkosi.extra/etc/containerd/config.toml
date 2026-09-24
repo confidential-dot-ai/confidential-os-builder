@@ -1,0 +1,3 @@
+version = 2
+root = "/var/lib/user-data/containerd"
+state = "/run/containerd"

@@ -139,6 +139,18 @@ jobs:
             --kernel-config-fragment kernel/gpu.config \
             --module-signing-cert images/acompany-nccl/module-signing.crt
 
+      - name: Verify OCI kernel support
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          CONFIG=output/kernel/build/linux-$(sed -n 's/^LINUX_VERSION=//p' kernel/version)/.config
+          grep -qx 'CONFIG_BPF_SYSCALL=y' "$CONFIG"
+          grep -qx 'CONFIG_BPF_JIT=y' "$CONFIG"
+          grep -qx 'CONFIG_CGROUP_BPF=y' "$CONFIG"
+          grep -qx 'CONFIG_VETH=y' "$CONFIG"
+          grep -qx 'CONFIG_BRIDGE=y' "$CONFIG"
+          grep -qx 'CONFIG_BRIDGE_NETFILTER=y' "$CONFIG"
+
       - name: Save GPU kernel
         if: >-
           steps.image-cache.outputs.cache-hit != 'true' &&

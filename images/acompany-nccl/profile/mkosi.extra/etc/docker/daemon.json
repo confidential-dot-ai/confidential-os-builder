@@ -1,0 +1,6 @@
+{
+  "data-root": "/var/lib/user-data/docker",
+  "features": {
+    "cdi": true
+  }
+}

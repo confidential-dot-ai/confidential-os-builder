@@ -181,10 +181,12 @@ privilege-escalation chains.
 **Why we deviate.** Container and sandbox tooling in confos workloads depends on
 unprivileged user namespaces; setting 0 breaks them. The surrounding mitigations
 shrink what a namespaced attacker can reach: the syscall surface is already
-heavily cut at compile time (no bpf(2) for unprivileged use —
-`CONFIG_BPF_SYSCALL` is off entirely — no io_uring, no userfaultfd, no 32-bit
-compat), which removes the interfaces user-namespace escalation chains most
-commonly pivot through. Documented in the sysctl drop-in header.
+heavily cut at compile time (no bpf(2) in the base kernel, no io_uring, no
+userfaultfd, no 32-bit compat), which removes the interfaces user-namespace
+escalation chains most commonly pivot through. The GPU fragment is an explicit
+exception: rootful OCI device control requires cgroup BPF, so it enables the
+syscall while the sysctl drop-in denies unprivileged BPF. Documented in the
+sysctl drop-in header and `kernel/gpu.config`.
 
 ### cmdline `pti=on`
 
@@ -386,7 +388,7 @@ addresses is closed more completely than the recommendation itself would.
 | `CONFIG_STRICT_MODULE_RWX=y`, `CONFIG_MODULE_SIG*` (signing, SHA-512, force), `CONFIG_MODULE_FORCE_LOAD=n` | Enforce W^X on module memory and cryptographic signatures on every loaded module; unsigned loading = trivial kernel-code injection for root | `CONFIG_MODULES` is not set — no module loading exists; all code is built in and covered by `STRICT_KERNEL_RWX` (KSPP lists the signing block as the fallback "if CONFIG_MODULES=y is needed") |
 | sysctl `kernel.modules_disabled = 1` | Runtime one-way switch to stop module loading | No modules at compile time; the sysctl key does not exist in this kernel |
 | sysctl `kernel.kexec_load_disabled = 1` | Block kexec-based replacement of the running kernel | `CONFIG_KEXEC` is not set; kexec does not exist |
-| sysctls `kernel.unprivileged_bpf_disabled = 1`, `net.core.bpf_jit_harden = 2` | Keep unprivileged users away from bpf(2); blind the JIT against constant-spray attacks | `CONFIG_BPF_SYSCALL` and `CONFIG_BPF_JIT` are off — there is no bpf(2) and no JIT for any user |
+| sysctls `kernel.unprivileged_bpf_disabled = 1`, `net.core.bpf_jit_harden = 2` | Keep unprivileged users away from bpf(2); blind the JIT against constant-spray attacks | The base kernel has no bpf(2) or JIT. GPU images apply both sysctls because their explicit fragment enables privileged cgroup BPF for rootful OCI runtimes. |
 | sysctl `vm.unprivileged_userfaultfd = 0` | Stop unprivileged use of userfaultfd (used to win kernel race conditions) | `CONFIG_USERFAULTFD` is not set |
 | sysctls `dev.tty.ldisc_autoload = 0`, `dev.tty.legacy_tiocsti = 0` | Block line-discipline autoload and TIOCSTI keystroke injection | `CONFIG_LDISC_AUTOLOAD` and `CONFIG_LEGACY_TIOCSTI` are not set; the sysctls' compiled-in defaults are already 0 (noted in the sysctl drop-in header) |
 | cmdline `vdso32=0` | Ensure the 32-bit vDSO (fixed-address ROP target) stays off | `CONFIG_COMPAT` / `CONFIG_IA32_EMULATION` are not set — no 32-bit vDSO is built |
