@@ -1,0 +1,5 @@
+[Match]
+Kind=veth bridge
+
+[Link]
+Unmanaged=yes

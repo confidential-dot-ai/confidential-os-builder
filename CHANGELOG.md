@@ -8,7 +8,18 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Added
+- Opt-in `gpu-workload` profile and publishing workflow for general GPU CVMs:
+  writable package/configuration overlays, key-only SSH, persistent user-data,
+  Docker/containerd with CDI and bridge networking, and dynamic-count NCCL
+  diagnostics. Uses its own kernel fragment and measurements; hardened base
+  and `gpu` defaults are unchanged. Runtime-installed software and persistent
+  disk contents are not covered by launch attestation.
+
 ### Changed
+- **Changes measurements for `attest-gpu` builds.** Pin the published GPU
+  attestation runtime instead of the unpublished-artifact sentinel and stage
+  its versioned libnvat/ICU dependencies. The CPU-only base is unaffected.
 - **Changes measurements.** The trusted DSDT is compiled into the measured
   kernel with the pinned kernel tools tree. A mandatory kernel gate admits
   only that table before AML namespace parsing and rejects secondary tables,

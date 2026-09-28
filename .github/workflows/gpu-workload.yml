@@ -1,0 +1,285 @@
+name: Build GPU Workload Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'gpu-workload-*']
+    paths:
+      - .github/workflows/gpu-workload.yml
+      - tests/gpu_workload.py
+      - mkosi/**
+      - kernel/**
+      - src/**
+      - crates/**
+      - bin/**
+      - Cargo.toml
+      - Cargo.lock
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: gpu-workload-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test profile invariants and GPU-count handling
+        run: python3 tests/gpu_workload.py
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [a, b]
+    needs: validate
+    runs-on: big-build-runner
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+
+      - name: Setup mkosi
+        uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
+
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+      - name: Authenticate to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p mkosi/base/mkosi.local
+          echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" \
+            --password-stdin \
+            --registry-config mkosi/base/mkosi.local/oras-auth.json
+
+      - name: Check module-signing configuration before building
+        env:
+          MODULE_SIG_KEY_PEM: ${{ secrets.MODULE_SIG_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          test -n "$MODULE_SIG_KEY_PEM" || { echo 'Missing MODULE_SIG_KEY_PEM secret' >&2; exit 1; }
+          key_pub=$(printf '%s\n' "$MODULE_SIG_KEY_PEM" | openssl pkey -pubout 2>/dev/null)
+          cert_pub=$(openssl x509 -in kernel/module-signing.crt -pubkey -noout)
+          test "$key_pub" = "$cert_pub" || { echo 'Signing key does not match kernel/module-signing.crt' >&2; exit 1; }
+
+      - name: Install host dependencies
+        timeout-minutes: 10
+        run: bin/host-deps systemd-container ovmf cpio kmod
+
+      - name: Restore GPU kernel
+        id: gpu-kernel-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            output/kernel
+            kernel/config-x86_64-gpu-workload.snapshot
+            mkosi/kernel-builder/mkosi.output
+          key: >-
+            ${{ runner.os }}-gpu-workload-kernel-v2-${{
+              hashFiles(
+                'mkosi/kernel-builder/mkosi.conf',
+                'mkosi/kernel-builder/mkosi.sandbox/**',
+                'kernel/version',
+                'kernel/*.config',
+                'kernel/*.seed',
+                'kernel/*.dts',
+                'kernel/*.asl',
+                'kernel/patches/**',
+                'kernel/module-signing.crt',
+                'src/commands/kernel.rs',
+                'src/kernel/**'
+              )
+            }}
+          restore-keys: |
+            ${{ runner.os }}-gpu-workload-kernel-v2-
+
+      - name: Restore NVIDIA download cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: output/gpu/cache
+          key: ${{ runner.os }}-gpu-workload-nvidia-v1-${{ hashFiles('bin/confos-fetch-gpu') }}
+
+      - name: Restore mkosi package cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: mkosi/base/mkosi.pkgcache
+          key: >-
+            ${{ runner.os }}-gpu-workload-pkgcache-v1-${{
+              hashFiles(
+                'mkosi/base/mkosi.conf',
+                'mkosi/base/mkosi.conf.d/*.conf',
+                'mkosi/base/mkosi.profiles/*/mkosi.conf',
+                'mkosi/base/mkosi.sandbox/**',
+                'mkosi/base/mkosi.profiles/gpu-workload/**'
+              )
+            }}
+          restore-keys: |
+            ${{ runner.os }}-gpu-workload-pkgcache-v1-
+
+      - name: Build GPU kernel
+        run: |
+          bin/confos kernel \
+            --kernel-config-fragment kernel/gpu-workload.config \
+            --module-signing-cert kernel/module-signing.crt
+
+      - name: Restore CUDA and NCCL inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: mkosi/base/mkosi.cache/gpu-workload-inputs
+          key: ${{ runner.os }}-gpu-workload-inputs-v1-${{ hashFiles('mkosi/base/mkosi.profiles/gpu-workload/mkosi.sync') }}
+          restore-keys: |
+            ${{ runner.os }}-gpu-workload-inputs-v1-
+
+      - name: Verify OCI kernel support
+        run: |
+          set -euo pipefail
+          CONFIG=output/kernel/build/linux-$(sed -n 's/^LINUX_VERSION=//p' kernel/version)/.config
+          grep -qx 'CONFIG_BPF_SYSCALL=y' "$CONFIG"
+          grep -qx 'CONFIG_BPF_JIT=y' "$CONFIG"
+          grep -qx 'CONFIG_CGROUP_BPF=y' "$CONFIG"
+          grep -qx 'CONFIG_USER_NS=y' "$CONFIG"
+          grep -qx 'CONFIG_VETH=y' "$CONFIG"
+          grep -qx 'CONFIG_BRIDGE=y' "$CONFIG"
+          grep -qx 'CONFIG_BRIDGE_NETFILTER=y' "$CONFIG"
+          grep -qx 'CONFIG_NETFILTER_XT_NAT=y' "$CONFIG"
+          grep -qx 'CONFIG_IO_URING=y' "$CONFIG"
+          grep -qx 'CONFIG_KCMP=y' "$CONFIG"
+
+      - name: Make GPU kernel cache readable
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            output/kernel \
+            mkosi/kernel-builder/mkosi.output
+
+      - name: Save GPU kernel
+        if: steps.gpu-kernel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            output/kernel
+            kernel/config-x86_64-gpu-workload.snapshot
+            mkosi/kernel-builder/mkosi.output
+          key: ${{ steps.gpu-kernel-cache.outputs.cache-primary-key }}
+
+      - name: Stage NVIDIA driver
+        env:
+          MODULE_SIG_CERT: kernel/module-signing.crt
+          MODULE_SIG_KEY_PEM: ${{ secrets.MODULE_SIG_KEY_PEM }}
+        run: |
+          test -n "$MODULE_SIG_KEY_PEM"
+          bin/confos-fetch-gpu
+
+      - name: Build measured image
+        run: |
+          bin/confos build gpu-workload \
+            --platform tdx \
+            --memory 128G \
+            --profile gpu \
+            --profile attest-gpu \
+            --profile ssh \
+            --profile gpu-workload \
+            --kernel-config-fragment kernel/gpu-workload.config \
+            --module-signing-cert kernel/module-signing.crt
+
+      - name: Make package cache readable
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            mkosi/base/mkosi.pkgcache \
+            mkosi/base/mkosi.cache/gpu-workload-inputs || true
+
+      - name: Upload reproducibility evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gpu-workload-${{ github.run_id }}-${{ matrix.leg }}
+          path: |
+            output/gpu-workload/manifest.json
+            output/gpu-workload/roothash
+            kernel/config-x86_64-gpu-workload.snapshot
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Push candidate artifact
+        if: matrix.leg == 'b'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          cd output/gpu-workload
+          oras push "ghcr.io/${GITHUB_REPOSITORY,,}:gpu-workload-${GITHUB_SHA}-candidate" \
+            --artifact-type application/vnd.confos.image.v1 \
+            disk.raw OVMF.tdx.fd initrd.img manifest.json roothash uki.efi
+
+          # CDI requires a standard OCI image with one tar+gzip layer and the
+          # VM disk at disk/disk.raw. Keep the general artifact above for
+          # confos pull and publish this deployment-specific representation
+          # under a distinct tag.
+          cd "$GITHUB_WORKSPACE"
+          bin/confos push output/gpu-workload \
+            --cdi \
+            --tag "gpu-workload-${GITHUB_SHA}-candidate-cdi"
+
+  verify-and-promote:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: gpu-workload-${{ github.run_id }}-*
+          path: evidence
+
+      - name: Require identical measurements
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          roots = sorted(Path("evidence").rglob("roothash"))
+          manifests = sorted(Path("evidence").rglob("manifest.json"))
+          assert len(roots) == 2 and len(manifests) == 2, "two build legs required"
+          if len(roots) == 2:
+              assert roots[0].read_bytes() == roots[1].read_bytes(), "roothash differs"
+          parsed = []
+          for path in manifests:
+              value = json.loads(path.read_text())
+              value.get("build", {}).pop("timestamp", None)
+              parsed.append(value)
+          if len(parsed) == 2:
+              assert parsed[0] == parsed[1], "manifest differs"
+          PY
+
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+      - name: Promote reproducible artifact
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          SRC="${IMAGE}:gpu-workload-${GITHUB_SHA}-candidate"
+          CDI_SRC="${IMAGE}:gpu-workload-${GITHUB_SHA}-candidate-cdi"
+          oras copy "$SRC" "${IMAGE}:gpu-workload-${GITHUB_SHA}"
+          oras copy "$CDI_SRC" "${IMAGE}:gpu-workload-${GITHUB_SHA}-cdi"
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            oras copy "$SRC" "${IMAGE}:gpu-workload-latest"
+            oras copy "$CDI_SRC" "${IMAGE}:gpu-workload-cdi-latest"
+          fi
