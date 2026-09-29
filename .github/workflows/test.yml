@@ -24,6 +24,7 @@ jobs:
                   python3 tests/image_profiles.py
                   python3 tests/ci_images.py
                   python3 tests/gpu_module_cache.py
+                  python3 tests/host_deps.py
 
     kernel-checksum:
         name: Test kernel.org checksum verification
@@ -40,7 +41,9 @@ jobs:
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
             - name: Install snapshot-pinned cloud-init
-              run: bin/host-deps cloud-init
+              uses: ./.github/actions/host-deps
+              with:
+                  packages: cloud-init
             - name: Test seed isolation and state overlays
               run: sudo tests/immutable-root.sh
 
@@ -60,7 +63,9 @@ jobs:
             - name: Setup mkosi
               uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
             - name: Install nspawn
-              run: bin/host-deps systemd-container
+              uses: ./.github/actions/host-deps
+              with:
+                  packages: systemd-container
             - name: Cache the harness tools tree
               # The production tree plus QEMU and Python, built beside it by
               # `confos kernel-source`; base.yml's production cache stays

@@ -30,6 +30,7 @@ restored tools tree. A regression test covers both empty and populated lists.
 
 | Layer | Reuse boundary / validation |
 |---|---|
+| Runner host dependencies | A separate shared action keys the verified offline deb set by runner image, snapshot, installer and requested packages. It saves immediately after successful installation, so a later image failure does not discard it. Cold APT metadata failures stop bootstrap explicitly; signed snapshot sources and package verification stay mandatory. |
 | Distro package pool: `mkosi/mkosi.pkgcache` | Explicit `PackageCacheDirectory=../mkosi.pkgcache` in all three mkosi stages. Shared across profiles/stages. apt uses signed indexes and package hashes; no live-mirror fallback is added. A rolling run/variant/leg key lets warm builds save added packages instead of freezing the first pool forever. |
 | Repository metadata | Stage-local `mkosi.cache/*.metadata.cache` and keyring cache: kernel tools and image stages have different pinned snapshot dates. Pool restore keys include all snapshot configuration. Incremental image builds stay off; mkosi may still resync metadata. This is not a guarantee of fully offline builds. |
 | Kernel sources | One shared `output/kernel/cache` namespace keyed by the pinned kernel version/hash. The downloader rechecks SHA256. |

@@ -58,6 +58,7 @@ jobs:
           python3 tests/image_profiles.py
           python3 tests/ci_images.py
           python3 tests/gpu_module_cache.py
+          python3 tests/host_deps.py
 
   build:
     if: needs.validate.outputs.images != '[]'
@@ -111,7 +112,9 @@ jobs:
 
       - name: Install host dependencies
         timeout-minutes: 10
-        run: bin/host-deps systemd-container ovmf cpio kmod
+        uses: ./.github/actions/host-deps
+        with:
+          packages: systemd-container ovmf cpio kmod
 
       - name: Restore shared build caches
         uses: ./.github/actions/build-cache

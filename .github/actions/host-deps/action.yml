@@ -1,0 +1,40 @@
+name: Snapshot-pinned runner dependencies
+description: Restore and immediately save verified host packages independently of image-build success
+inputs:
+  packages:
+    description: Space-separated host package names
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Identify compatible runner dependency cache
+      id: key
+      shell: bash
+      env:
+        BUILD_PACKAGES: ${{ inputs.packages }}
+        BUILD_INPUTS: ${{ hashFiles('bin/host-deps', 'mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources') }}
+      run: |
+        set -euo pipefail
+        packages_hash=$(printf '%s' "$BUILD_PACKAGES" | sha256sum | cut -d ' ' -f 1)
+        echo "value=${RUNNER_OS}-confos-host-deps-v2-${ImageOS:-unknown}-${ImageVersion:-unknown}-${BUILD_INPUTS}-${packages_hash}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore verified host packages
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: apt-debs
+        key: ${{ steps.key.outputs.value }}
+
+    - name: Install snapshot-pinned host packages
+      shell: bash
+      env:
+        BUILD_PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+        read -r -a packages <<< "$BUILD_PACKAGES"
+        bin/host-deps --cache-dir apt-debs "${packages[@]}"
+
+    - name: Save host packages before image assembly
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: apt-debs
+        key: ${{ steps.key.outputs.value }}
