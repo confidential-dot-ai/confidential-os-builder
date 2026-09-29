@@ -84,9 +84,12 @@ CI publishes to `ghcr.io/confidential-dot-ai/confidential-os-builder`:
 | `<image>-<commit>-cdi` | KubeVirt CDI import representation |
 | `<image>-latest`, `<image>-cdi-latest` | Main-branch aliases only |
 
-Feature branch builds do not publish by default. After local acceptance, a
-manual dispatch with `publish=true` enables commit tags; only main updates
-latest aliases. Deploy by OCI digest, not a moving tag. Download the matching manifest
+Feature branch builds do not publish by default. A manual dispatch with
+`publish=true` enables commit-tagged candidate publication after CI checks and
+reproducibility comparison, allowing retrieval for hardware acceptance.
+Publication alone does not approve stable release or customer handoff; complete
+the profile's runtime and review gates first. Only main updates latest aliases.
+Deploy by OCI digest, not a moving tag. Download the matching manifest
 with `confos pull <artifact-reference> output/general-purpose-gpu`; compare attestation
 against `output/general-purpose-gpu/manifest.json`. CDI and confos representations have
 different OCI digests. Do not reuse a different image's reference values.

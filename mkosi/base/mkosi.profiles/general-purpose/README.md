@@ -92,18 +92,26 @@ be changed after boot.
 
 ## Approval and release gates
 
+Commit-tagged candidates may be published after CI checks and reproducibility
+comparison so the exact artifacts can be retrieved for hardware validation.
+Candidate publication is not approval for stable release or customer handoff;
+those require the runtime and review gates below.
+
 1. Review resolved CPU/GPU configs and their dependency deltas against the
    base snapshot. Approve BPF, user namespaces, networking and io_uring explicitly.
 2. Locally boot each exact candidate; validate SSH, CPU attestation against
    its manifest, mounted disk, apt/Git/PyPI, Docker bridge DNS/HTTPS and port
-   publishing. Do not publish based on static tests alone.
+   publishing. Do not approve a release based on static tests alone.
 3. GPU candidate: validate signed-driver load/latch, CC ON/Ready, encrypted
    multi-GPU mode, GPU attestation, CDI containers and NCCL at each supported
    allocation size. Validate the serving workload separately.
 4. Recreate a test VM with its retained test disk and repeat acceptance; do
    not reuse or modify a customer disk. Record the exact image/manifest digests.
-5. Publish accepted CPU/GPU artifacts by immutable digest. Reproducibility
-   comparison is additional supply-chain evidence, not hardware acceptance.
+5. Release only accepted CPU/GPU artifacts, identified by immutable digest,
+   and complete acceptance before stable promotion or customer handoff. If
+   release bytes differ from the tested candidate, validate those exact bytes.
+   Reproducibility comparison is additional supply-chain evidence, not hardware
+   acceptance.
 
 References: [Linux BPF/JIT](https://docs.kernel.org/networking/filter.html),
 [BPF sysctl semantics](https://docs.kernel.org/admin-guide/sysctl/kernel.html),
