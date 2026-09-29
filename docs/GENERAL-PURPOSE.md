@@ -8,6 +8,8 @@ the hardened base and the serial-autologin `dev` profile.
 ## Contents and policy
 
 - Both images: Docker, containerd, runc, Git, Python, package installs and SSH.
+- Memory/swap, CPU-quota and PID-limit support; configure limits per container.
+  `container-runtime-check` rejects runtimes missing these capabilities.
 - GPU only: NVIDIA CDI, open driver `595.71.05` (from `gpu`), CUDA `13.2.2`, NCCL `2.29.7`,
   OpenMPI and checksum-pinned `nccl-tests`.
 - Git, Python pip/venv, build tools and normal package-manager metadata.
