@@ -3,7 +3,7 @@ set -euo pipefail
 
 expected="${CONFOS_EXPECTED_GPUS:-}"
 if [[ -z "$expected" ]]; then
-    expected="$(lspci -Dnnd 10de: | awk '
+    expected="$(lspci -Dn -d 10de: | awk '
         $3 == "10de:2901" || $3 == "10de:3182" { n++ }
         END { print n+0 }
     ')"

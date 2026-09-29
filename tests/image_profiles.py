@@ -32,7 +32,13 @@ class WorkloadTests(unittest.TestCase):
             "FAKE_PCI": self.pci(2),
         }
         self.env.pop("CONFOS_EXPECTED_GPUS", None)
-        self.shim("lspci", 'printf "%s\\n" "$FAKE_PCI"')
+        self.shim("lspci", '''
+[[ "$*" == '-Dn -d 10de:' ]] || {
+    echo 'GPU detection requires numeric-only PCI output' >&2
+    exit 1
+}
+printf '%s\\n' "$FAKE_PCI"
+''')
         self.shim("nvidia-smi", '''
 case "$*" in
   '--query-gpu=index --format=csv,noheader')
