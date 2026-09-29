@@ -15,12 +15,15 @@ env:
     CARGO_TERM_COLOR: always
 
 jobs:
-    gpu-workload:
-        name: GPU workload profile regressions
+    general-purpose-gpu:
+        name: General-purpose profile and cache regressions
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - run: python3 tests/gpu_workload.py
+            - run: |
+                  python3 tests/image_profiles.py
+                  python3 tests/ci_images.py
+                  python3 tests/gpu_module_cache.py
 
     kernel-checksum:
         name: Test kernel.org checksum verification
@@ -69,10 +72,13 @@ jobs:
             - name: Cache kernel tarball
               uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
-                  path: output/acpi/cache
-                  key: ${{ runner.os }}-kernel-tarball-${{ hashFiles('kernel/version') }}
+                  path: output/kernel/cache
+                  key: ${{ runner.os }}-confos-source-v2-${{ hashFiles('kernel/version') }}
             - name: Prepare the patched kernel source
-              run: bin/confos kernel-source --output output/acpi
+              run: |
+                  mkdir -p output/kernel/cache output/acpi
+                  ln -s ../kernel/cache output/acpi/cache
+                  bin/confos kernel-source --output output/acpi
             - name: Lint the kernel patch with upstream checkpatch
               # Before the long boot step so a style failure surfaces first.
               run: |

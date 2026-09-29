@@ -9,12 +9,21 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Added
-- Opt-in `gpu-workload` profile and publishing workflow for general GPU CVMs:
+- Opt-in `general-purpose` CPU and `general-purpose-gpu` GPU image recipes:
   writable package/configuration overlays, key-only SSH, persistent user-data,
-  Docker/containerd with CDI and bridge networking, and dynamic-count NCCL
+  Docker/containerd with bridge networking, GPU CDI and dynamic-count NCCL
   diagnostics. Uses its own kernel fragment and measurements; hardened base
   and `gpu` defaults are unchanged. Runtime-installed software and persistent
   disk contents are not covered by launch attestation.
+- Shared cross-profile package/source/tools caches, input-keyed unsigned
+  NVIDIA module reuse, and changed-profile image selection. Fix package-cache
+  directories and explicit mkosi output paths; keep final image assembly fresh.
+
+### Fixed
+- Preserve the empty extra-package field when checking compiler-tool cache
+  stamps, so restored tools are reused by ordinary builds.
+- Honor an explicitly staged registry-auth file when fetching CPU attestation
+  artifacts, matching the GPU attestation hook.
 
 ### Changed
 - **Changes measurements for `attest-gpu` builds.** Pin the published GPU

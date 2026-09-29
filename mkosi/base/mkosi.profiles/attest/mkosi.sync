@@ -40,6 +40,10 @@ mkdir -p "${TMPDIR:=/tmp}"
 # (`/dev/tdx_guest`); see attestation-api/src/config.rs's
 # SUPPORTED_ATTESTATION_PLATFORMS for the full list.
 IMAGE="ghcr.io/confidential-dot-ai/attestation-api@sha256:8dfb4db34d966374c3dbd81548c532a2015123d41f3aab553cea1cb7a327c8e9"
+ORAS_AUTH=()
+if [ -f "$SRCDIR/mkosi.local/oras-auth.json" ]; then
+    ORAS_AUTH=(--registry-config "$SRCDIR/mkosi.local/oras-auth.json")
+fi
 
 mkdir -p "$STAGE_DIR"
 
@@ -56,7 +60,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 EXTRACT_DIR="$TMPDIR/rootfs"
 mkdir -p "$EXTRACT_DIR"
 
-MANIFEST=$(oras manifest fetch "$IMAGE")
+MANIFEST=$(oras manifest fetch "${ORAS_AUTH[@]}" "$IMAGE")
 # Repository part of the image ref, without the @digest. Used to fetch
 # blobs by their layer digest (oras blob fetch needs <repo>@<blob-digest>).
 REPO="${IMAGE%@*}"
@@ -68,7 +72,7 @@ REPO="${IMAGE%@*}"
 echo "$MANIFEST" | jq -r '.layers[] | select(.mediaType | test("tar.?gzip$")) | .digest' | \
 while read -r layer; do
     echo "Fetching layer $layer" >&2
-    oras blob fetch --output "$TMPDIR/layer.tar.gz" "${REPO}@${layer}"
+    oras blob fetch "${ORAS_AUTH[@]}" --output "$TMPDIR/layer.tar.gz" "${REPO}@${layer}"
     tar -xzf "$TMPDIR/layer.tar.gz" -C "$EXTRACT_DIR" 2>/dev/null || true
     rm -f "$TMPDIR/layer.tar.gz"
 done

@@ -370,7 +370,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String], output: &Path) -> R
 
     if !force && tree.exists() {
         if let Ok(stamped) = fs_err::read_to_string(&stamp_path) {
-            if stamped.trim() == stamp_key {
+            if stamped == stamp_key {
                 println!("kernel-builder tools tree cache HIT (mkosi.conf + packages unchanged)");
                 return Ok(tree.canonicalize()?);
             }
@@ -515,6 +515,25 @@ fn extract_tarball(tarball: &Path, dest: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn tools_cache_hits_with_empty_and_nonempty_extra_package_lists() {
+        for packages in [vec![], vec!["qemu-system-x86".to_string()]] {
+            let output = TempDir::new().unwrap();
+            let tree = output.path().join("image");
+            fs_err::create_dir(&tree).unwrap();
+            let stamp = format!(
+                "{}\n{}",
+                tools_tree_inputs_digest().unwrap(),
+                packages.join(",")
+            );
+            fs_err::write(output.path().join(".confos-tools-stamp"), stamp).unwrap();
+            assert_eq!(
+                ensure_tools_tree(false, &packages, output.path()).unwrap(),
+                tree.canonicalize().unwrap()
+            );
+        }
+    }
 
     #[test]
     fn hash_tree_inputs_covers_conf_and_every_sandbox_file() {

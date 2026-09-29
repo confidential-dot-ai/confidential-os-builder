@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Select registered image recipes affected by a diff; unknown inputs fail open to builds."""
+
+import argparse
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def affected(recipes, paths):
+    selected = set()
+    for path in paths:
+        parts = Path(path).parts
+        if len(parts) >= 5 and parts[:3] == ("mkosi", "base", "mkosi.profiles"):
+            profile = parts[3]
+            selected.update(name for name, recipe in recipes.items() if profile in recipe["profiles"])
+        elif path.startswith("kernel/") and (
+            path.endswith(".config") or Path(path).name.startswith("config-x86_64") or path.endswith(".crt")
+        ) and path not in ("kernel/required.config", "kernel/hardening.config", "kernel/confidential.config", "kernel/config-x86_64.snapshot"):
+            selected.update(
+                name for name, recipe in recipes.items()
+                if path == recipe["kernel"] or path in recipe["extra_kernel_inputs"]
+                or (recipe["kernel"] and path == f"kernel/config-x86_64-{Path(recipe['kernel']).stem}.snapshot")
+            )
+        elif path in ("bin/confos-fetch-gpu", "bin/lib/gpu-module-cache.sh"):
+            selected.update(name for name, recipe in recipes.items() if "gpu" in recipe["profiles"])
+        elif path.startswith(("mkosi/", "kernel/", "src/", "crates/", "bin/", "firmware/", "ci/", ".github/actions/")) or path in (
+            "Cargo.toml", "Cargo.lock", ".github/workflows/general-purpose.yml",
+            ".github/workflows/base.yml", ".github/workflows/base-repro-gate.yml",
+        ):
+            selected.update(recipes)
+    return sorted(selected)
+
+
+def changed(base):
+    if not base or set(base) == {"0"}:
+        return None
+    # GitHub's first branch push or a force push can lack the old object.
+    # Build everything rather than silently skipping an image.
+    if subprocess.run(["git", "cat-file", "-e", f"{base}^{{commit}}"], cwd=ROOT, capture_output=True).returncode:
+        print("Previous commit unavailable; selecting all images", file=sys.stderr)
+        return None
+    result = subprocess.run(["git", "diff", "--name-only", "-z", base, "HEAD"], cwd=ROOT, check=True, stdout=subprocess.PIPE)
+    return result.stdout.decode().rstrip("\0").split("\0") if result.stdout else []
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base")
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument("--omit-base", action="store_true")
+    args = parser.parse_args()
+    recipes = json.loads((ROOT / "ci/images.json").read_text())
+    paths = None if args.all else changed(args.base)
+    names = sorted(recipes) if paths is None else affected(recipes, paths)
+    if args.omit_base:
+        names = [name for name in names if name != "base"]
+    print(json.dumps(names))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,23 @@
+{
+  "base": {
+    "profiles": [],
+    "kernel": null,
+    "extra_kernel_inputs": [],
+    "platform": "snp",
+    "memory": "2G"
+  },
+  "general-purpose": {
+    "profiles": ["ssh", "general-purpose", "attest"],
+    "kernel": "kernel/general-purpose.config",
+    "extra_kernel_inputs": [],
+    "platform": "tdx",
+    "memory": "8G"
+  },
+  "general-purpose-gpu": {
+    "profiles": ["ssh", "general-purpose", "gpu", "attest-gpu", "general-purpose-gpu"],
+    "kernel": "kernel/general-purpose-gpu.config",
+    "extra_kernel_inputs": ["kernel/general-purpose.config", "kernel/gpu.config", "kernel/module-signing.crt", "bin/confos-fetch-gpu", "bin/lib/gpu-module-cache.sh"],
+    "platform": "tdx",
+    "memory": "128G"
+  }
+}

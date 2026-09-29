@@ -42,17 +42,8 @@ jobs:
             image=true
           else
             git cat-file -e "${BASE_SHA}^{commit}"
-            # Anything that feeds measured bytes: the image and kernel trees,
-            # the builder itself, its pins, and this gate's own plumbing.
-            if git diff --name-only "$BASE_SHA" HEAD -- \
-                 mkosi kernel src crates bin Cargo.toml Cargo.lock \
-                 .github/workflows/base.yml \
-                 .github/workflows/base-repro-gate.yml \
-               | grep -q .; then
-              image=true
-            else
-              image=false
-            fi
+            selected=$(bin/ci-images --base "$BASE_SHA")
+            image=$(SELECTED="$selected" python3 -c 'import json, os; print(str("base" in json.loads(os.environ["SELECTED"])).lower())')
           fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "base-image relevant: $image" >> "$GITHUB_STEP_SUMMARY"

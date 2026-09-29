@@ -111,7 +111,7 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   `/usr/lib/confai/state.d/` receive writable overlays. The base declares
   `/var`, `/home`, `/root`, and `/tmp`; the ssh profile adds
   `/etc/ssh`; `/run` is a fresh tmpfs. The opt-in
-  [gpu-workload profile](GPU-WORKLOAD.md) additionally declares `/boot`, `/etc`,
+  [general-purpose profiles](GENERAL-PURPOSE.md) additionally declare `/boot`, `/etc`,
   `/opt` and `/usr` writable for package/container workflows. It retains the
   measured verity lower image, but runtime software and configuration in those
   overlays are mutable and not launch-measured. Other shipped profiles do not
@@ -135,7 +135,7 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   while the launch measurement remained valid. Keeping executable and
   configuration paths on the verity root removes that ordinary-write path,
   which is especially important for the attestation-api that composes
-  evidence at runtime. This describes the hardened layout, not `gpu-workload`,
+  evidence at runtime. This describes the hardened layout, not `general-purpose`,
   which deliberately allows runtime writes and trusts guest administrators and
   runtime software. Its persistent ext4 user-data volume is neither encrypted
   nor integrity-protected by this profile and is outside the launch measurement.

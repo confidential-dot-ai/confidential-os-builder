@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Build a registered image recipe locally or in CI. Never publishes or launches it."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    recipes = json.loads((ROOT / "ci/images.json").read_text())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("image", choices=recipes)
+    parser.add_argument("--module-signing-cert", default="kernel/module-signing.crt")
+    args = parser.parse_args()
+    recipe = recipes[args.image]
+    gpu = "gpu" in recipe["profiles"]
+    kernel = ["--kernel-config-fragment", recipe["kernel"]] if recipe["kernel"] else []
+    if gpu:
+        kernel += ["--module-signing-cert", args.module_signing_cert]
+    subprocess.run([str(ROOT / "bin/confos"), "kernel", *kernel], cwd=ROOT, check=True)
+    if gpu:
+        subprocess.run([str(ROOT / "bin/confos-fetch-gpu")], cwd=ROOT, check=True,
+                       env={**os.environ, "MODULE_SIG_CERT": args.module_signing_cert})
+    command = [str(ROOT / "bin/confos"), "build", args.image, "--platform", recipe["platform"], "--memory", recipe["memory"], *kernel]
+    for profile in recipe["profiles"]:
+        command += ["--profile", profile]
+    subprocess.run(command, cwd=ROOT, check=True)
+
+
+if __name__ == "__main__":
+    main()

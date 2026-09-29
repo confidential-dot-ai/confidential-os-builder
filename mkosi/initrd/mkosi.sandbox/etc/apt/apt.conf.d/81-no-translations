@@ -1,0 +1,3 @@
+// Translation indices are unnecessary for builds; historical snapshots may
+// lack them. Keep signed package indexes and the snapshot URI unchanged.
+Acquire::Languages "none";

@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+
+test -x /usr/bin/runc
+test -S /run/containerd/containerd.sock
+test -S /run/docker.sock
+findmnt -n /var/lib/user-data >/dev/null
+docker info >/dev/null
+printf 'container runtime and user-data mount ready\n'
