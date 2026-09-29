@@ -17,3 +17,6 @@ grep -q '^nccl-test:[^:]*:19800:' "$shadow"
 # interactive shell without relying on LD_LIBRARY_PATH.
 echo /usr/local/cuda/lib > "$BUILDROOT/etc/ld.so.conf.d/general-purpose-gpu-cuda.conf"
 chroot "$BUILDROOT" /sbin/ldconfig
+# This hook runs after the base cleanup. ldconfig recreates an auxiliary
+# cache containing build-filesystem inode identities; keep only ld.so.cache.
+rm -f "$BUILDROOT/var/cache/ldconfig/aux-cache"
