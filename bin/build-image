@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Build one named recipe from ci/images.json using the existing confos tools.
+
+Used by .github/workflows/general-purpose.yml and by local operators so both
+select the same kernel fragment, ordered mkosi profiles, TEE and measurement
+memory. Runs confos kernel, stages NVIDIA inputs for GPU recipes, then runs
+confos build. Existing fingerprint checks reuse compatible build outputs.
+
+Example: bin/build-image general-purpose
+Output: output/<recipe>/ (disk, firmware and measurement manifest).
+For custom combinations use bin/confos build directly. This wrapper never
+launches a VM, chooses a host, allocates GPUs or publishes to a registry.
+See ci/README.md for the recipe fields and GPU signing prerequisites.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    recipes = json.loads((ROOT / "ci/images.json").read_text())
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("image", choices=recipes, help="recipe name from ci/images.json")
+    parser.add_argument("--module-signing-cert", default="kernel/module-signing.crt", help="GPU public signing certificate; private key is supplied separately")
+    args = parser.parse_args()
+    recipe = recipes[args.image]
+    gpu = "gpu" in recipe["profiles"]
+    kernel = ["--kernel-config-fragment", recipe["kernel"]] if recipe["kernel"] else []
+    if gpu:
+        kernel += ["--module-signing-cert", args.module_signing_cert]
+    tools = ["--ensure-tools"] if gpu else []
+    subprocess.run([str(ROOT / "bin/confos"), "kernel", *kernel, *tools], cwd=ROOT, check=True)
+    if gpu:
+        subprocess.run([str(ROOT / "bin/confos-fetch-gpu")], cwd=ROOT, check=True,
+                       env={**os.environ, "MODULE_SIG_CERT": args.module_signing_cert})
+    command = [str(ROOT / "bin/confos"), "build", args.image, "--platform", recipe["platform"], "--memory", recipe["memory"], *kernel]
+    for profile in recipe["profiles"]:
+        command += ["--profile", profile]
+    subprocess.run(command, cwd=ROOT, check=True)
+
+
+if __name__ == "__main__":
+    main()

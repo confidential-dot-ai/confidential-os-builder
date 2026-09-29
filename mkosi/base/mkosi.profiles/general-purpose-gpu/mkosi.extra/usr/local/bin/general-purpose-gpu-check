@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+expected="${CONFOS_EXPECTED_GPUS:-}"
+if [[ -z "$expected" ]]; then
+    expected="$(lspci -Dn -d 10de: | awk '
+        $3 == "10de:2901" || $3 == "10de:3182" { n++ }
+        END { print n+0 }
+    ')"
+fi
+if ! [[ "$expected" =~ ^[1-9][0-9]*$ ]]; then
+    echo "invalid expected GPU count: $expected" >&2
+    exit 1
+fi
+
+actual="$(nvidia-smi --query-gpu=index --format=csv,noheader | awk 'END {print NR}')"
+if [[ "$actual" -ne "$expected" ]]; then
+    echo "expected $expected initialized Blackwell GPU(s), found $actual" >&2
+    exit 1
+fi
+
+nvidia-smi -L
+cc="$(nvidia-smi conf-compute -q)"
+printf '%s\n' "$cc"
+nvidia-smi topo -m
+
+if ! grep -Eiq 'CC (state|status|feature)[[:space:]]*:[[:space:]]*ON[[:space:]]*$' <<<"$cc"; then
+    echo "GPU confidential computing is not ON" >&2
+    exit 1
+fi
+if ! grep -Eiq 'CC GPUs Ready State[[:space:]]*:[[:space:]]*Ready[[:space:]]*$' <<<"$cc"; then
+    echo "confidential GPUs are not Ready" >&2
+    exit 1
+fi
+if grep -Eiq 'devtools[^:]*:[[:space:]]*(on|enabled|true)' <<<"$cc"; then
+    echo "GPU devtools mode is enabled" >&2
+    exit 1
+fi
+if [[ "$actual" -gt 1 ]] && ! grep -Eiq 'Multi-GPU Mode[[:space:]]*:[[:space:]]*NVLE[[:space:]]*$' <<<"$cc"; then
+    echo "multi-GPU NVLink encryption is not enabled" >&2
+    exit 1
+fi
+
+echo "$actual-GPU visibility and production-mode gate passed"

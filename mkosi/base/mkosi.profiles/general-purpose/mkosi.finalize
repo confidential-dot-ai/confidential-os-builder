@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+
+# The parent /etc overlay replaces ssh's narrower overlay.
+rm -f "$BUILDROOT/usr/lib/confai/state.d/50-ssh.conf"

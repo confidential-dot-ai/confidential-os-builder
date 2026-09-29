@@ -63,6 +63,11 @@ pub struct KernelInputs {
 
 #[derive(clap::Args)]
 pub struct KernelArgs {
+    /// Ensure the kernel-builder tools tree even on a kernel cache hit
+    /// (needed by subsequent out-of-tree GPU module staging).
+    #[arg(long)]
+    pub ensure_tools: bool,
+
     /// Force rebuild even if cache is current
     #[arg(short, long)]
     pub force: bool,

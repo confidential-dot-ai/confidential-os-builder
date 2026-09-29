@@ -35,7 +35,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.select.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: select
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            images=$(bin/ci-images --base "$BEFORE")
+          else
+            images=$(bin/ci-images --all)
+          fi
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+
   build-and-push:
+    needs: select
+    if: contains(fromJSON(needs.select.outputs.images), 'base')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -53,52 +74,23 @@ jobs:
       - name: Setup mkosi
         uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
 
-      - name: Compute runner-image cache term
-        # ImageOS/ImageVersion are runner-process env vars, not workflow env
-        # context — ${{ env.ImageOS }} silently renders empty in a key.
-        id: image
-        run: echo "key=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-
-      - name: Cache host build deps
-        # The snapshot pin moves the whole dep closure to snapshot versions,
-        # which would re-download it from snapshot.ubuntu.com every run; warm
-        # runs reinstall these debs fully offline. The key rotates with the
-        # runner image (the closure was resolved against its preinstalled
-        # state), the script, and the pin it reads (base mkosi.sources);
-        # host-deps validates the cached manifest and falls back to a cold
-        # snapshot install on any mismatch, so a stale entry costs time only.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: apt-debs
-          key: ${{ runner.os }}-host-debs-${{ steps.image.outputs.key }}-${{ hashFiles('bin/host-deps', 'mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources') }}
-
       - name: Install build deps (nspawn, TDVF firmware, cpio)
         # Host deps for `confos build`, snapshot-pinned and fail-closed via
         # bin/host-deps (#36) — keep the list in lockstep with bin/setup.
         timeout-minutes: 10
-        run: bin/host-deps --cache-dir apt-debs systemd-container ovmf cpio
-
-      - name: Cache kernel-builder tools tree
-        # mkosi.output (image + stamp) is what ensure_tools_tree consumes;
-        # mkosi.tools is only an intermediate for building it.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/host-deps
         with:
-          path: mkosi/kernel-builder/mkosi.output
-          key: ${{ runner.os }}-tools-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
+          packages: systemd-container ovmf cpio
 
-      - name: Cache kernel
-        # The snapshot lockfile rides the cache: the build rewrites it with
-        # the resolved config and fingerprints THAT, so restoring
-        # output/kernel without it never matches and the kernel rebuilds
-        # every run. hashFiles has no brace expansion, so files are listed.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore shared image inputs
+        uses: ./.github/actions/build-cache
         with:
-          path: |
-            output/kernel
-            kernel/config-x86_64.snapshot
-          key: ${{ runner.os }}-kernel-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**', 'kernel/*', 'kernel/patches/**') }}
+          phase: restore
+          variant: base
+          leg: ${{ inputs.leg || 'single' }}
 
       - name: Build kernel
+        id: kernel
         run: bin/confos kernel
 
       - name: Upload resolved kernel config
@@ -116,31 +108,25 @@ jobs:
           path: mkosi/base/mkosi.tools
           key: ${{ runner.os }}-base-tools-${{ hashFiles('mkosi/base/mkosi.conf.d/tools.conf', 'mkosi/base/mkosi.sandbox/**') }}
 
-      - name: Cache apt package cache
-        if: github.ref == 'refs/heads/main' || inputs.gate == true
-        # Keeps the image assembly off snapshot.ubuntu.com. conf-only globs:
-        # profile mkosi.extra trees carry dangling systemd enablement
-        # symlinks, which hashFiles refuses to hash.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: mkosi/base/mkosi.pkgcache
-          key: ${{ runner.os }}-pkgcache-${{ hashFiles('mkosi/base/mkosi.conf', 'mkosi/base/mkosi.conf.d/*.conf', 'mkosi/base/mkosi.profiles/*/mkosi.conf', 'mkosi/base/mkosi.sandbox/**') }}
-          restore-keys: |
-            ${{ runner.os }}-pkgcache-
-
       - name: Build base image
         if: github.ref == 'refs/heads/main' || inputs.gate == true
         run: bin/confos build
 
-      - name: Make root-owned trees cache-safe
-        # The post-job cache tar runs unprivileged; mkosi builds these as
-        # root, so their saves fail without this. Runs after all use.
+      - name: Save shared inputs even on later failures
+        if: always()
+        uses: ./.github/actions/build-cache
+        with:
+          phase: save
+          kernel-ready: ${{ steps.kernel.outcome == 'success' }}
+          variant: base
+          leg: ${{ inputs.leg || 'single' }}
+
+      - name: Make base-only tools cache-readable
+        if: always()
         run: |
-          sudo chown -R "$(id -u):$(id -g)" \
-            output/kernel \
-            mkosi/kernel-builder/mkosi.output \
-            mkosi/base/mkosi.tools \
-            mkosi/base/mkosi.pkgcache || true
+          if [ -e mkosi/base/mkosi.tools ]; then
+            sudo chown -R "$(id -u):$(id -g)" mkosi/base/mkosi.tools
+          fi
 
       - name: Upload measurement evidence (gate)
         # Gate mode ends here: evidence out, nothing published. The report

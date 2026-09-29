@@ -156,7 +156,10 @@ install_cold() {
             -o APT::Get::List-Cleanup=0 \
             -o Acquire::http::Timeout=30 \
             -o Acquire::https::Timeout=30 \
-            -o Acquire::Retries=3 \
+            -o Acquire::Retries=5 \
+            -o Acquire::Retries::Delay::Maximum=30 \
+            -o Acquire::Languages=none \
+            -o APT::Update::Error-Mode=any \
             -o Dpkg::Options::=--force-confdef \
             -o Dpkg::Options::=--force-confold \
             -o APT::Keep-Downloaded-Packages=true \

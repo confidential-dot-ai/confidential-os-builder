@@ -47,11 +47,12 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
 1. **Launch integrity** — the guest booted exactly the firmware, kernel,
    initrd, and kernel command line in the manifest. On SNP the IGVM launch
    digest covers all of it; on TDX it is covered by MRTD + RTMR[1] + RTMR[2].
-2. **Root filesystem integrity** — every block of the root filesystem the
-   guest ever reads matches the dm-verity root hash embedded in the measured
+2. **Root filesystem integrity** — every block read from the dm-verity lower
+   root filesystem matches the root hash embedded in the measured
    cmdline. This transitively covers everything baked in at build time:
    packages, `--extra` files, cloud-init user-data (its payload source is
-   pinned to the baked local seed), post-install script effects.
+   pinned to the baked local seed), post-install script effects. Writable
+   runtime overlays and separate data disks are not covered by this guarantee.
 3. **Runtime memory confidentiality** — guest RAM is encrypted with a key
    the host does not have (hardware guarantee, not confos's).
 4. **Scratch confidentiality** — the optional scratch disk is encrypted with
@@ -103,13 +104,18 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   its kernel configuration and images, validate SNP/TDX boots, and approve
   reference values derived from those artifacts. Metadata reports the
   build policy, not completion of hardware acceptance tests.
-- **The root is immutable** — the system runs directly from the read-only
+- **The hardened root is immutable** — the system runs directly from the read-only
   dm-verity mount. `/usr` and most of `/etc` therefore remain the measured
   bytes for the life of the guest, and ordinary writes fail with `EROFS`.
   Only directories declared in the measured image's
   `/usr/lib/confai/state.d/` receive writable overlays. The base declares
   `/var`, `/home`, `/root`, and `/tmp`; the ssh profile adds
-  `/etc/ssh`; `/run` is a fresh tmpfs. No profile enables a mutable root;
+  `/etc/ssh`; `/run` is a fresh tmpfs. The opt-in
+  [general-purpose profiles](GENERAL-PURPOSE.md) additionally declare `/boot`, `/etc`,
+  `/opt` and `/usr` writable for package/container workflows. It retains the
+  measured verity lower image, but runtime software and configuration in those
+  overlays are mutable and not launch-measured. Other shipped profiles do not
+  enable those broader overlays;
   `--profile dev` retains the same immutable layout because content installed
   at runtime cannot be covered by the launch measurement.
 - **Cloud-init payloads come from the baked seed** — `datasource_list`
@@ -129,7 +135,12 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   while the launch measurement remained valid. Keeping executable and
   configuration paths on the verity root removes that ordinary-write path,
   which is especially important for the attestation-api that composes
-  evidence at runtime.
+  evidence at runtime. This describes the hardened layout, not `general-purpose`,
+  which deliberately allows runtime writes and trusts guest administrators and
+  runtime software. Its persistent ext4 user-data volume is neither encrypted
+  nor integrity-protected by this profile and is outside the launch measurement.
+  Unrestricted guest networking requires application authentication and
+  transport encryption.
 - **Some `/etc` paths intentionally resolve to runtime state** —
   `/etc/ssh` is writable when the ssh profile is enabled so first-boot host
   keys can be generated; this also makes its SSH configuration root-writable.

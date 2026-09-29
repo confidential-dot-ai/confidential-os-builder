@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+# systemd-sysusers creates nccl-test under the reproducible
+# SOURCE_DATE_EPOCH, so its shadow "last change" day is 0. PAM reads day 0
+# as "password expired, change it now", which blocks even key-based ssh
+# logins ("Password change required but no TTY available"). Pin the same
+# fixed day root's baked entry carries; the account stays passwordless
+# (locked hash) and the image stays byte-reproducible.
+shadow="$BUILDROOT/etc/shadow"
+grep -q '^nccl-test:' "$shadow"
+sed -i 's/^\(nccl-test:[^:]*\):0:/\1:19800:/' "$shadow"
+grep -q '^nccl-test:[^:]*:19800:' "$shadow"
+
+# CUDA 13.2 installs its runtime libraries in lib/, not lib64/. Register that
+# measured path in the image's linker cache so NCCL and vLLM work outside an
+# interactive shell without relying on LD_LIBRARY_PATH.
+echo /usr/local/cuda/lib > "$BUILDROOT/etc/ld.so.conf.d/general-purpose-gpu-cuda.conf"
+chroot "$BUILDROOT" /sbin/ldconfig
+# This hook runs after the base cleanup. ldconfig recreates an auxiliary
+# cache containing build-filesystem inode identities; keep only ld.so.cache.
+rm -f "$BUILDROOT/var/cache/ldconfig/aux-cache"

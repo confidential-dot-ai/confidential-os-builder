@@ -1,5 +1,9 @@
 # Linux Kernel configuration
 
+This document reviews the default kernel. See the
+[security baseline and profile index](KERNEL-SECURITY.md) for optional-profile
+differences; the general-purpose kernels deliberately expose additional APIs.
+
 Configuring the kernel that runs inside our Confidential VMs is very important
 -- we don't want to open ourselves up to any more security risks than we have
 to. That said, we also need our VMs to be useful runners for

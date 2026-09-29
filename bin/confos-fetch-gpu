@@ -22,6 +22,7 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
+source bin/lib/gpu-module-cache.sh
 
 # --- Pinned inputs (version-locked to the working B200 CC guest: 595.71.05) ---
 # open-gpu-kernel-modules tag 595.71.05 == commit 095de56d. The "open" modules
@@ -130,57 +131,71 @@ fetch "$RUN_INSTALLER" "$RUN_SHA256" "$CACHE/NVIDIA-${NV_VERSION}.run"
 # =============================================================================
 # Part 1: build + sign the kernel modules
 # =============================================================================
-log "Building NVIDIA kernel modules against linux-$KVER (kernel-builder toolchain)"
-# The build runs as root inside nspawn and writes to this bind-mounted dir, so
-# a prior run leaves root-owned artifacts here — fall back to sudo to clear it.
+# Cache only unsigned modules; the private key and signed staging tree never
+# enter this cache. Bind reuse to driver/build-script bytes, the full kernel
+# manifest, actual config and symbol table. Re-sign a fresh copy on every run.
+symbols="$KTREE/vmlinux.symvers"
+[[ -f "$symbols" ]] || symbols="$KTREE/Module.symvers"
+[[ -f "$KERNEL_OUT/manifest.json" ]] || die "kernel manifest missing"
+module_key="$(gpu_module_cache_key bin/confos-fetch-gpu bin/lib/gpu-module-cache.sh \
+    "$KERNEL_OUT/manifest.json" "$KTREE/.config" "$symbols")"
+module_cache="$CACHE/modules/$module_key"
 rm -rf "$WORK/ogkm" 2>/dev/null || sudo rm -rf "$WORK/ogkm"
-mkdir -p "$WORK/ogkm"
-tar -xzf "$CACHE/ogkm-${NV_VERSION}.tar.gz" -C "$WORK/ogkm" --strip-components=1
+if [[ "${CONFOS_GPU_MODULE_CACHE_DISABLE:-0}" != 1 ]] &&
+    gpu_module_cache_restore "$module_cache" "$WORK/ogkm/kernel-open" "${WANT_MODULES[@]}"; then
+  log "Unsigned NVIDIA module cache HIT ($module_key)"
+else
+  log "Building NVIDIA kernel modules against linux-$KVER (kernel-builder toolchain)"
+  mkdir -p "$WORK/ogkm"
+  tar -xzf "$CACHE/ogkm-${NV_VERSION}.tar.gz" -C "$WORK/ogkm" --strip-components=1
 
-# Build inside the SAME nspawn tools tree confos compiled the kernel in, so the
-# module objects are ABI-compatible (gcc/binutils versions match). Pin the
-# reproducibility env exactly as src/kernel/compile.rs does.
-KTREE_ABS="$(cd "$KTREE" && pwd)"
-OGKM_ABS="$(cd "$WORK/ogkm" && pwd)"
-NPROC="$(nproc)"
-# Build ONLY the modules we ship (WANT_MODULES without the .ko suffix). The
-# default set also builds nvidia-modeset + nvidia-drm, which need g++ and
-# CONFIG_DRM (both absent by design) — restricting the set skips them cleanly.
-NV_NAMES="${WANT_MODULES[*]%.ko}"
-sudo systemd-nspawn --quiet --register=no --keep-unit --ephemeral \
-  --directory "$TOOLS_TREE" \
-  --bind "${KTREE_ABS}:/ksrc" \
-  --bind "${OGKM_ABS}:/nv" \
-  --setenv SOURCE_DATE_EPOCH=0 \
-  --setenv KBUILD_BUILD_TIMESTAMP=@0 \
-  --setenv KBUILD_BUILD_USER=confos \
-  --setenv KBUILD_BUILD_HOST=confos \
-  /bin/bash -c "set -eux
-    # OOT module builds read Module.symvers; \`make bzImage\` only left
-    # vmlinux.symvers. MODVERSIONS is off, so derive the former from the latter.
-    [ -f /ksrc/Module.symvers ] || cp /ksrc/vmlinux.symvers /ksrc/Module.symvers
-    # Ensure the tree can host out-of-tree module builds.
-    make -C /ksrc modules_prepare
-    # Build ONLY the nvidia OS-agnostic object (src/nvidia, gcc). We deliberately
-    # do NOT use the top-level 'modules' target: it hardcodes building
-    # src/nvidia-modeset too, which needs g++ and (for its .ko) CONFIG_DRM —
-    # neither of which we want. NV_KERNEL_MODULES already excludes the modeset
-    # .ko; this also skips its object build.
-    make -C /nv SYSSRC=/ksrc -j${NPROC} \\
-      KCFLAGS='-frandom-seed=\$(srctree)/\$@' \\
-      NV_BUILD_USER=c8s NV_BUILD_HOST=confos DATE='date -u -d @0' \\
-      kernel-open/nvidia/nv-kernel.o_binary
-    # Then build just the .ko we ship, straight from kernel-open/ via kbuild.
-    make -C /nv/kernel-open SYSSRC=/ksrc NV_KERNEL_MODULES='${NV_NAMES}' -j${NPROC} \\
-      KCFLAGS='-frandom-seed=\$(srctree)/\$@' \\
-      NV_BUILD_USER=c8s NV_BUILD_HOST=confos DATE='date -u -d @0' \\
-      modules
-    test -f /nv/kernel-open/nvidia.ko"
+  # Build inside the SAME nspawn tools tree confos compiled the kernel in, so the
+  # module objects are ABI-compatible (gcc/binutils versions match). Pin the
+  # reproducibility env exactly as src/kernel/compile.rs does.
+  KTREE_ABS="$(cd "$KTREE" && pwd)"
+  OGKM_ABS="$(cd "$WORK/ogkm" && pwd)"
+  NPROC="$(nproc)"
+  # Build ONLY the modules we ship (WANT_MODULES without the .ko suffix). The
+  # default set also builds nvidia-modeset + nvidia-drm, which need g++ and
+  # CONFIG_DRM (both absent by design) — restricting the set skips them cleanly.
+  NV_NAMES="${WANT_MODULES[*]%.ko}"
+  sudo systemd-nspawn --quiet --register=no --keep-unit --ephemeral \
+    --directory "$TOOLS_TREE" \
+    --bind "${KTREE_ABS}:/ksrc" \
+    --bind "${OGKM_ABS}:/nv" \
+    --setenv SOURCE_DATE_EPOCH=0 \
+    --setenv KBUILD_BUILD_TIMESTAMP=@0 \
+    --setenv KBUILD_BUILD_USER=confos \
+    --setenv KBUILD_BUILD_HOST=confos \
+    /bin/bash -c "set -eux
+      # OOT module builds read Module.symvers; \`make bzImage\` only left
+      # vmlinux.symvers. MODVERSIONS is off, so derive the former from the latter.
+      [ -f /ksrc/Module.symvers ] || cp /ksrc/vmlinux.symvers /ksrc/Module.symvers
+      # Ensure the tree can host out-of-tree module builds.
+      make -C /ksrc modules_prepare
+      # Build ONLY the nvidia OS-agnostic object (src/nvidia, gcc). We deliberately
+      # do NOT use the top-level 'modules' target: it hardcodes building
+      # src/nvidia-modeset too, which needs g++ and (for its .ko) CONFIG_DRM —
+      # neither of which we want. NV_KERNEL_MODULES already excludes the modeset
+      # .ko; this also skips its object build.
+      make -C /nv SYSSRC=/ksrc -j${NPROC} \\
+        KCFLAGS='-frandom-seed=\$(srctree)/\$@' \\
+        NV_BUILD_USER=c8s NV_BUILD_HOST=confos DATE='date -u -d @0' \\
+        kernel-open/nvidia/nv-kernel.o_binary
+      # Then build just the .ko we ship, straight from kernel-open/ via kbuild.
+      make -C /nv/kernel-open SYSSRC=/ksrc NV_KERNEL_MODULES='${NV_NAMES}' -j${NPROC} \\
+        KCFLAGS='-frandom-seed=\$(srctree)/\$@' \\
+        NV_BUILD_USER=c8s NV_BUILD_HOST=confos DATE='date -u -d @0' \\
+        modules
+      test -f /nv/kernel-open/nvidia.ko"
 
-# The nspawn build ran as root (uid 0 in container == uid 0 on host via the
-# bind mount), so the .ko outputs are root-owned. Chown the tree back so the
-# in-place sign-file, cp, and depmod below all work as the invoking user.
-sudo chown -R "$(id -u):$(id -g)" "$WORK/ogkm"
+  # The nspawn build ran as root (uid 0 in container == uid 0 on host via the
+  # bind mount), so the .ko outputs are root-owned. Chown the tree back so the
+  # in-place sign-file, cp, and depmod below all work as the invoking user.
+  sudo chown -R "$(id -u):$(id -g)" "$WORK/ogkm"
+  gpu_module_cache_store "$module_cache" "$WORK/ogkm/kernel-open" "${WANT_MODULES[@]}" ||
+    die "expected unsigned modules not produced"
+fi
 
 # --- Sign + stage the modules -------------------------------------------------
 log "Signing modules with the supplied key (public half is built into the kernel)"

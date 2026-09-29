@@ -8,7 +8,27 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Added
+- Opt-in `general-purpose` CPU and `general-purpose-gpu` GPU image recipes:
+  writable package/configuration overlays, key-only SSH, persistent user-data,
+  Docker/containerd with bridge networking, GPU CDI and dynamic-count NCCL
+  diagnostics. Uses its own kernel fragment and measurements; hardened base
+  and `gpu` defaults are unchanged. Runtime-installed software and persistent
+  disk contents are not covered by launch attestation.
+- Shared cross-profile package/source/tools caches, input-keyed unsigned
+  NVIDIA module reuse, and changed-profile image selection. Fix package-cache
+  directories and explicit mkosi output paths; keep final image assembly fresh.
+
+### Fixed
+- Preserve the empty extra-package field when checking compiler-tool cache
+  stamps, so restored tools are reused by ordinary builds.
+- Honor an explicitly staged registry-auth file when fetching CPU attestation
+  artifacts, matching the GPU attestation hook.
+
 ### Changed
+- **Changes measurements for `attest-gpu` builds.** Pin the published GPU
+  attestation runtime instead of the unpublished-artifact sentinel and stage
+  its versioned libnvat/ICU dependencies. The CPU-only base is unaffected.
 - **Changes measurements.** The trusted DSDT is compiled into the measured
   kernel with the pinned kernel tools tree. A mandatory kernel gate admits
   only that table before AML namespace parsing and rejects secondary tables,

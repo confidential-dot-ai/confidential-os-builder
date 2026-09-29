@@ -1,0 +1,176 @@
+name: Shared image build cache
+description: Reuse verified inputs across profiles without caching measured image outputs
+inputs:
+  phase:
+    description: restore or save
+    required: true
+  variant:
+    description: Image/kernel lineage (not a package-cache partition)
+    default: base
+  leg:
+    description: Distinguishes package-cache updates from concurrent build legs
+    default: single
+  fragment:
+    description: Optional kernel fragment path
+    default: ''
+  snapshot:
+    description: Resolved kernel config lockfile
+    default: kernel/config-x86_64.snapshot
+  gpu:
+    description: Restore NVIDIA/CUDA inputs as well
+    default: 'false'
+  kernel-ready:
+    description: The current kernel compilation or fingerprint verification succeeded
+    default: 'false'
+  compiled-kernel:
+    description: Restore/save compiled kernel artifacts (disable for source-only jobs)
+    default: 'true'
+outputs:
+  kernel-key:
+    description: Input-keyed kernel cache key
+    value: ${{ steps.keys.outputs.kernel }}
+runs:
+  using: composite
+  steps:
+    - name: Compute shared cache namespaces
+      id: keys
+      shell: bash
+      env:
+        PHASE: ${{ inputs.phase }}
+        VARIANT: ${{ inputs.variant }}
+        LEG: ${{ inputs.leg }}
+        TOOLS: ${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**', 'src/commands/kernel.rs') }}
+        KERNEL: ${{ hashFiles('kernel/version', 'kernel/required.config', 'kernel/hardening.config', 'kernel/confidential.config', 'kernel/*.seed', 'kernel/*.asl', 'kernel/patches/**', 'kernel/module-signing.crt', inputs.fragment, inputs.snapshot, 'src/commands/kernel.rs', 'src/kernel/**') }}
+        PIN: ${{ hashFiles('mkosi/base/mkosi.sandbox/**', 'mkosi/initrd/mkosi.sandbox/**', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
+        SOURCE: ${{ hashFiles('kernel/version') }}
+        NVIDIA: ${{ hashFiles('bin/confos-fetch-gpu') }}
+        CUDA: ${{ hashFiles('mkosi/base/mkosi.profiles/general-purpose-gpu/mkosi.sync') }}
+      run: |
+        set -euo pipefail
+        case "$PHASE" in restore|save) ;; *) exit 1 ;; esac
+        echo "tools=${RUNNER_OS}-confos-tools-v3-${TOOLS}" >> "$GITHUB_OUTPUT"
+        echo "kernel=${RUNNER_OS}-confos-kernel-v3-${VARIANT}-${TOOLS}-${KERNEL}" >> "$GITHUB_OUTPUT"
+        echo "kernel-prefix=${RUNNER_OS}-confos-kernel-v3-${VARIANT}-${TOOLS}-" >> "$GITHUB_OUTPUT"
+        echo "source=${RUNNER_OS}-confos-source-v2-${SOURCE}" >> "$GITHUB_OUTPUT"
+        echo "packages=${RUNNER_OS}-confos-packages-v2-${PIN}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${VARIANT}-${LEG}" >> "$GITHUB_OUTPUT"
+        echo "packages-prefix=${RUNNER_OS}-confos-packages-v2-${PIN}-" >> "$GITHUB_OUTPUT"
+        echo "nvidia=${RUNNER_OS}-confos-nvidia-v2-${NVIDIA}-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        echo "nvidia-prefix=${RUNNER_OS}-confos-nvidia-v2-${NVIDIA}-" >> "$GITHUB_OUTPUT"
+        echo "cuda=${RUNNER_OS}-confos-cuda-v2-${CUDA}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore kernel tools (shared by all profiles)
+      if: inputs.phase == 'restore'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          mkosi/kernel-builder/mkosi.output
+          mkosi/kernel-builder/mkosi.tools
+        key: ${{ steps.keys.outputs.tools }}
+
+    - name: Restore verified kernel source (shared by all profiles)
+      if: inputs.phase == 'restore'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: output/kernel/cache
+        key: ${{ steps.keys.outputs.source }}
+
+    - name: Restore compiled kernel for this input lineage
+      if: inputs.phase == 'restore' && inputs.compiled-kernel == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          output/kernel/build
+          output/kernel/vmlinuz
+          output/kernel/manifest.json
+          ${{ inputs.snapshot }}
+        key: ${{ steps.keys.outputs.kernel }}
+        restore-keys: ${{ steps.keys.outputs.kernel-prefix }}
+
+    - name: Restore growing distro package pool (not profile-specific)
+      if: inputs.phase == 'restore'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          mkosi/mkosi.pkgcache
+          mkosi/*/mkosi.cache/*.metadata.cache
+          mkosi/*/mkosi.cache/*.keyring.cache
+        key: ${{ steps.keys.outputs.packages }}
+        restore-keys: ${{ steps.keys.outputs.packages-prefix }}
+
+    - name: Restore NVIDIA downloads and unsigned modules
+      if: inputs.phase == 'restore' && inputs.gpu == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: output/gpu/cache
+        key: ${{ steps.keys.outputs.nvidia }}
+        restore-keys: ${{ steps.keys.outputs.nvidia-prefix }}
+
+    - name: Restore checksum-pinned CUDA/NCCL inputs
+      if: inputs.phase == 'restore' && inputs.gpu == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: mkosi/base/mkosi.cache/general-purpose-gpu-inputs
+        key: ${{ steps.keys.outputs.cuda }}
+
+    - name: Make only generated cache trees readable
+      if: inputs.phase == 'save'
+      shell: bash
+      run: |
+        set -euo pipefail
+        for path in output/kernel output/gpu/cache \
+            mkosi/kernel-builder/mkosi.output mkosi/kernel-builder/mkosi.output-acpi mkosi/kernel-builder/mkosi.tools \
+            mkosi/mkosi.pkgcache mkosi/base/mkosi.cache \
+            mkosi/initrd/mkosi.cache mkosi/kernel-builder/mkosi.cache; do
+          if [ -e "$path" ]; then sudo chown -R "$(id -u):$(id -g)" "$path"; fi
+        done
+
+    - name: Save tools
+      if: inputs.phase == 'save' && hashFiles('mkosi/kernel-builder/mkosi.output/.confos-tools-stamp') != ''
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          mkosi/kernel-builder/mkosi.output
+          mkosi/kernel-builder/mkosi.tools
+        key: ${{ steps.keys.outputs.tools }}
+
+    - name: Save verified kernel source
+      if: inputs.phase == 'save' && inputs.kernel-ready == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: output/kernel/cache
+        key: ${{ steps.keys.outputs.source }}
+
+    - name: Save successful compiled kernel
+      if: inputs.phase == 'save' && inputs.kernel-ready == 'true' && inputs.compiled-kernel == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          output/kernel/build
+          output/kernel/vmlinuz
+          output/kernel/manifest.json
+          ${{ inputs.snapshot }}
+        key: ${{ steps.keys.outputs.kernel }}
+
+    - name: Save growing package pool even when later build steps failed
+      if: inputs.phase == 'save'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          mkosi/mkosi.pkgcache
+          mkosi/*/mkosi.cache/*.metadata.cache
+          mkosi/*/mkosi.cache/*.keyring.cache
+        key: ${{ steps.keys.outputs.packages }}
+
+    - name: Save NVIDIA inputs
+      if: inputs.phase == 'save' && inputs.gpu == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: output/gpu/cache
+        key: ${{ steps.keys.outputs.nvidia }}
+
+    - name: Save CUDA/NCCL inputs
+      if: inputs.phase == 'save' && inputs.gpu == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: mkosi/base/mkosi.cache/general-purpose-gpu-inputs
+        key: ${{ steps.keys.outputs.cuda }}

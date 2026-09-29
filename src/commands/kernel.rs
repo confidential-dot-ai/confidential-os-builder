@@ -46,6 +46,13 @@ const HARNESS_TOOLS_PACKAGES: [&str; 3] = ["libc6-dev", "python3", "qemu-system-
 const ACPI_HARNESS_DIR: &str = "tests/acpi";
 
 pub fn run(args: &KernelArgs) -> Result<()> {
+    run_with_tools(args, ensure_tools_tree)
+}
+
+fn run_with_tools(
+    args: &KernelArgs,
+    ensure_tools: impl FnOnce(bool, &[String], &Path) -> Result<PathBuf>,
+) -> Result<()> {
     let version = pinned_version()?;
     tracing::info!(linux_version = %version.linux_version, "building hardened kernel");
 
@@ -97,6 +104,15 @@ pub fn run(args: &KernelArgs) -> Result<()> {
             if cached.inputs == staged {
                 let actual = fetch::sha256_file(&vmlinuz_path)?;
                 if actual.eq_ignore_ascii_case(&cached.outputs.vmlinuz_sha256) {
+                    // Tools and compiled kernels have independent caches. GPU
+                    // staging needs tools even when the kernel can be reused.
+                    if args.ensure_tools {
+                        ensure_tools(
+                            false,
+                            &args.kernel_inputs.kernel_builder_package,
+                            Path::new(TOOLS_TREE_OUTPUT),
+                        )?;
+                    }
                     println!(
                         "kernel cache HIT (linux {}, sha256 {})",
                         cached.linux_version, actual
@@ -110,9 +126,8 @@ pub fn run(args: &KernelArgs) -> Result<()> {
         }
     }
 
-    // Phase 0a: ensure tools tree
     println!("\n=== Step 0a: Ensuring kernel-builder tools tree (mkosi) ===");
-    let tools_tree = ensure_tools_tree(
+    let tools_tree = ensure_tools(
         args.force,
         &args.kernel_inputs.kernel_builder_package,
         Path::new(TOOLS_TREE_OUTPUT),
@@ -370,7 +385,7 @@ fn ensure_tools_tree(force: bool, extra_packages: &[String], output: &Path) -> R
 
     if !force && tree.exists() {
         if let Ok(stamped) = fs_err::read_to_string(&stamp_path) {
-            if stamped.trim() == stamp_key {
+            if stamped == stamp_key {
                 println!("kernel-builder tools tree cache HIT (mkosi.conf + packages unchanged)");
                 return Ok(tree.canonicalize()?);
             }
@@ -515,6 +530,93 @@ fn extract_tarball(tarball: &Path, dest: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn kernel_cache_hit_still_prepares_tools_without_rebuilding_kernel() {
+        let output = TempDir::new().unwrap();
+        let tools_output = TempDir::new().unwrap();
+        let tools_image = tools_output.path().join("image");
+        let version = pinned_version().unwrap();
+        let fragment = Path::new("kernel/general-purpose-gpu.config");
+        let snapshot = snapshot_path(Some(fragment)).unwrap();
+        let kernel = output.path().join("vmlinuz");
+        fs_err::write(&kernel, b"cached-kernel").unwrap();
+        let manifest_path = output.path().join("manifest.json");
+        km::write(
+            &manifest_path,
+            &km::KernelManifest {
+                version: 1,
+                linux_version: version.linux_version.clone(),
+                inputs: compute_fingerprint(
+                    &version,
+                    Some(fragment),
+                    Path::new(DEFAULT_SIGNING_CERT),
+                    &snapshot,
+                )
+                .unwrap(),
+                outputs: km::Outputs {
+                    vmlinuz_sha256: fetch::sha256_file(&kernel).unwrap(),
+                },
+                built_at: "cached-build".into(),
+            },
+        )
+        .unwrap();
+        let original_manifest = fs_err::read(&manifest_path).unwrap();
+        let mut args = KernelArgs {
+            ensure_tools: true,
+            force: false,
+            output: output.path().to_path_buf(),
+            kernel_inputs: crate::KernelInputs {
+                kernel_config_fragment: Some(fragment.into()),
+                module_signing_cert: None,
+                kernel_builder_package: vec![],
+            },
+        };
+        for fail_tools in [true, false] {
+            let mut called = false;
+            let result = run_with_tools(&args, |force, packages, path| {
+                called = true;
+                assert!(!force);
+                assert!(packages.is_empty());
+                assert_eq!(path, Path::new(TOOLS_TREE_OUTPUT));
+                if fail_tools {
+                    bail!("tools unavailable");
+                }
+                fs_err::create_dir(&tools_image)?;
+                Ok(tools_image.clone())
+            });
+            assert!(called, "kernel cache hit skipped its tools dependency");
+            assert_eq!(result.is_err(), fail_tools);
+            assert_eq!(fs_err::read(&kernel).unwrap(), b"cached-kernel");
+            assert_eq!(fs_err::read(&manifest_path).unwrap(), original_manifest);
+            assert!(!output.path().join("build").exists());
+        }
+        assert!(tools_image.is_dir());
+        args.ensure_tools = false;
+        run_with_tools(&args, |_, _, _| {
+            panic!("ordinary kernel cache hits must not require tools")
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn tools_cache_hits_with_empty_and_nonempty_extra_package_lists() {
+        for packages in [vec![], vec!["qemu-system-x86".to_string()]] {
+            let output = TempDir::new().unwrap();
+            let tree = output.path().join("image");
+            fs_err::create_dir(&tree).unwrap();
+            let stamp = format!(
+                "{}\n{}",
+                tools_tree_inputs_digest().unwrap(),
+                packages.join(",")
+            );
+            fs_err::write(output.path().join(".confos-tools-stamp"), stamp).unwrap();
+            assert_eq!(
+                ensure_tools_tree(false, &packages, output.path()).unwrap(),
+                tree.canonicalize().unwrap()
+            );
+        }
+    }
 
     #[test]
     fn hash_tree_inputs_covers_conf_and_every_sandbox_file() {

@@ -1,0 +1,18 @@
+#!/bin/bash
+set -euo pipefail
+
+test -x /usr/bin/runc
+test -S /run/containerd/containerd.sock
+test -S /run/docker.sock
+findmnt -n /var/lib/user-data >/dev/null
+# Docker's capability report can overstate CPU-quota support on minimal kernels.
+test -r /sys/fs/cgroup/system.slice/cpu.max
+test -r /sys/fs/cgroup/system.slice/memory.max
+test -r /sys/fs/cgroup/system.slice/pids.max
+capabilities=$(docker info --format '{{json .}}' | jq -r \
+    '[.MemoryLimit, .SwapLimit, .CpuCfsQuota, .PidsLimit] | map(tostring) | join(" ")')
+if [[ "$capabilities" != 'true true true true' ]]; then
+    printf 'Docker resource enforcement unavailable (memory swap cpu pids): %s\n' "$capabilities" >&2
+    exit 1
+fi
+printf 'container runtime and user-data mount ready\n'
