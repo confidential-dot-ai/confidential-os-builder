@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 loader = importlib.machinery.SourceFileLoader("ci_images", str(ROOT / "bin/ci-images"))
@@ -11,6 +12,10 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 RECIPES = json.loads((ROOT / "ci/images.json").read_text())
+build_loader = importlib.machinery.SourceFileLoader("build_image", str(ROOT / "bin/build-image"))
+build_spec = importlib.util.spec_from_loader(build_loader.name, build_loader)
+build_module = importlib.util.module_from_spec(build_spec)
+build_loader.exec_module(build_module)
 
 
 class SelectionTests(unittest.TestCase):
@@ -43,6 +48,20 @@ class SelectionTests(unittest.TestCase):
 
     def test_deletion_and_multiple_profiles(self):
         self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync", "kernel/general-purpose-gpu.config"], ["general-purpose", "general-purpose-gpu"])
+
+
+class BuildRecipeTests(unittest.TestCase):
+    def test_only_gpu_kernel_preparation_requires_tools_on_cache_hit(self):
+        for name, recipe in RECIPES.items():
+            with self.subTest(recipe=name), patch("sys.argv", ["build-image", name]), patch.object(build_module.subprocess, "run") as run:
+                build_module.main()
+                commands = [call.args[0] for call in run.call_args_list]
+                self.assertEqual("--ensure-tools" in commands[0], "gpu" in recipe["profiles"])
+                self.assertEqual(commands[0][1], "kernel")
+                self.assertNotIn("--ensure-tools", commands[-1])
+                self.assertEqual(commands[-1][1], "build")
+                if "gpu" in recipe["profiles"]:
+                    self.assertEqual(Path(commands[1][0]).name, "confos-fetch-gpu")
 
 
 if __name__ == "__main__":

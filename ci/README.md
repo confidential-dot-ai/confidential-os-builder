@@ -36,6 +36,9 @@ these values.
 2. [`bin/build-image`](../bin/build-image) builds a selected recipe using the
    existing kernel, GPU-staging and image-builder commands. It centralizes the
    flags so local builds and general-purpose CI builds cannot drift apart.
+   GPU recipes request `kernel --ensure-tools`: a compiled-kernel cache hit
+   still prepares the independently cached toolchain needed for GPU module
+   staging. CPU cache hits do not require this extra preparation.
    The existing base workflow keeps its own build orchestration.
 3. CI compares independently assembled outputs before any publication. Launch,
    storage attachment, SSH key delivery and GPU assignment are separate tasks.

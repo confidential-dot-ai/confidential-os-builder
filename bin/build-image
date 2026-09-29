@@ -33,7 +33,8 @@ def main():
     kernel = ["--kernel-config-fragment", recipe["kernel"]] if recipe["kernel"] else []
     if gpu:
         kernel += ["--module-signing-cert", args.module_signing_cert]
-    subprocess.run([str(ROOT / "bin/confos"), "kernel", *kernel], cwd=ROOT, check=True)
+    tools = ["--ensure-tools"] if gpu else []
+    subprocess.run([str(ROOT / "bin/confos"), "kernel", *kernel, *tools], cwd=ROOT, check=True)
     if gpu:
         subprocess.run([str(ROOT / "bin/confos-fetch-gpu")], cwd=ROOT, check=True,
                        env={**os.environ, "MODULE_SIG_CERT": args.module_signing_cert})

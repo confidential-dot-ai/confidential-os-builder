@@ -27,6 +27,7 @@ pub struct KernelArtifact {
 /// from `confos build`.
 pub fn ensure_kernel(force: bool, inputs: KernelInputs) -> Result<KernelArtifact> {
     commands::kernel::run(&KernelArgs {
+        ensure_tools: false,
         force,
         output: PathBuf::from(KERNEL_OUT_DIR),
         kernel_inputs: inputs,
