@@ -1,8 +1,8 @@
 # General-purpose images
 
 `general-purpose` and `general-purpose-gpu` are opt-in, operator-managed CVM
-environments for CPU/GPU applications and containers. They generalize the tested PoC
-image without customer keys, models, IPs or GPU counts. It is distinct from
+environments for CPU/GPU applications and containers. They contain no customer
+keys, models, IPs or GPU counts. These images are distinct from
 the hardened base and the serial-autologin `dev` profile.
 
 ## Contents and policy
@@ -26,9 +26,11 @@ bridges, netfilter and io_uring. CRIU, kcmp, userfaultfd, FUSE and TUN stay off;
 system-mapping sealing stays on. The CPU kernel keeps modules and vsock off.
 GPU adds the existing signed-module/latch and vsock policy. Lockdown, trusted
 AML, measured boot and lower-root dm-verity remain. Unprivileged BPF is disabled.
-See the [detailed security review](GENERAL-PURPOSE-SECURITY.md) for exact
-changes, reasons and limitations. These candidates require fresh acceptance;
-the broader PoC kernel is not identical.
+See the [baseline kernel security policy](KERNEL-SECURITY.md) and the
+[CPU](../mkosi/base/mkosi.profiles/general-purpose/README.md) and
+[GPU](../mkosi/base/mkosi.profiles/general-purpose-gpu/README.md) profile READMEs
+for exact changes, reasons and limitations. Each candidate requires fresh
+acceptance against its own manifest.
 
 **Runtime installs are not launch-measured.** `/boot`, `/etc`, `/opt` and `/usr`
 have writable ephemeral overlays; software and configuration there can change
@@ -87,7 +89,7 @@ manual dispatch with `publish=true` enables commit tags; only main updates
 latest aliases. Deploy by OCI digest, not a moving tag. Download the matching manifest
 with `confos pull <artifact-reference> output/general-purpose-gpu`; compare attestation
 against `output/general-purpose-gpu/manifest.json`. CDI and confos representations have
-different OCI digests. Do not reuse the old PoC image's reference values.
+different OCI digests. Do not reuse a different image's reference values.
 
 ## Launch contract
 

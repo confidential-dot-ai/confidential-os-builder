@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Select registered image recipes affected by a diff; unknown inputs fail open to builds."""
+"""Print the JSON list of image recipes affected by changes from --base to HEAD.
+
+Reads ci/images.json and maps changed profiles/shared inputs to their recipe
+consumers. general-purpose.yml uses the list as its build matrix; base.yml and
+base-repro-gate.yml check whether it contains "base". Does not build images.
+
+Example: bin/ci-images --base origin/main --omit-base
+Output: ["general-purpose", "general-purpose-gpu"] when both are affected.
+--all or an unavailable base selects all recipes; unrelated docs select none.
+See ci/README.md for the registry and docs/IMAGE-CI.md for selection rules.
+"""
 
 import argparse
 import json
@@ -13,8 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def affected(recipes, paths):
     selected = set()
     for path in paths:
+        if path == "ci/README.md":
+            continue
         parts = Path(path).parts
         if len(parts) >= 5 and parts[:3] == ("mkosi", "base", "mkosi.profiles"):
+            if len(parts) == 5 and parts[4] == "README.md":
+                continue
             profile = parts[3]
             selected.update(name for name, recipe in recipes.items() if profile in recipe["profiles"])
         elif path.startswith("kernel/") and (
@@ -48,10 +62,10 @@ def changed(base):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base")
-    parser.add_argument("--all", action="store_true")
-    parser.add_argument("--omit-base", action="store_true")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--base", help="Git commit to compare with HEAD")
+    parser.add_argument("--all", action="store_true", help="select all registered recipes without inspecting a diff")
+    parser.add_argument("--omit-base", action="store_true", help="exclude the base recipe handled by its own workflow")
     args = parser.parse_args()
     recipes = json.loads((ROOT / "ci/images.json").read_text())
     paths = None if args.all else changed(args.base)

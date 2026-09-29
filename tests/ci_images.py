@@ -34,7 +34,12 @@ class SelectionTests(unittest.TestCase):
             self.check([path], RECIPES)
 
     def test_docs_and_unpublished_dev_profile_do_not_rebuild(self):
-        self.check(["docs/GENERAL-PURPOSE-SECURITY.md", "README.md", "mkosi/base/mkosi.profiles/dev/mkosi.conf"], [])
+        self.check(["docs/KERNEL-SECURITY.md", "README.md", "ci/README.md", "mkosi/base/mkosi.profiles/dev/mkosi.conf"], [])
+        for profile in ("general-purpose", "general-purpose-gpu"):
+            self.check([f"mkosi/base/mkosi.profiles/{profile}/README.md"], [])
+
+    def test_payload_readme_still_rebuilds(self):
+        self.check(["mkosi/base/mkosi.profiles/general-purpose/mkosi.extra/opt/README.md"], ["general-purpose", "general-purpose-gpu"])
 
     def test_deletion_and_multiple_profiles(self):
         self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync", "kernel/general-purpose-gpu.config"], ["general-purpose", "general-purpose-gpu"])
