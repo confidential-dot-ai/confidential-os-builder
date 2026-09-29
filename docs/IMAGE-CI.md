@@ -40,8 +40,14 @@ restored tools tree. A regression test covers both empty and populated lists.
 | Unsigned NVIDIA modules | Content-keyed by build script/helper, kernel manifest, actual kernel config and symbol table. Corrupt/partial entries miss. Cached bytes are copied, then freshly signed with the supplied key; private keys and signed staging trees never enter this cache. `CONFOS_GPU_MODULE_CACHE_DISABLE=1` forces compilation for an independent check. |
 | CUDA/NCCL inputs | Shared checksum-pinned downloads, validated again by the sync hook. |
 
-The shared `.github/actions/build-cache` restore/save action is used by base and
-general-purpose image workflows. Saves run with `always()` so successful tool,
+The shared `.github/actions/build-cache` restore/save action is used by base,
+general-purpose image workflows and the AML source/boot job. The AML job skips
+compiled-kernel artifacts but restores the same package pool and verified source.
+It saves downloaded inputs even if source preparation fails, and saves a stamped,
+completed harness tools tree before running the tests. A later test failure no
+longer discards that completed tree. Cold caches still require a working upstream
+snapshot service; this does not bypass repository signatures or change pins.
+Saves run with `always()` so successful tool,
 source, module and package work survives a later image failure. The action never
 caches `mkosi.local`, registry credentials, private signing keys, final root
 disks or UKIs. Image assembly is repeated for reproducibility evidence.

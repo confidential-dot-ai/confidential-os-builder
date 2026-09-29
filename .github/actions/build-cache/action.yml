@@ -22,6 +22,9 @@ inputs:
   kernel-ready:
     description: The current kernel compilation or fingerprint verification succeeded
     default: 'false'
+  compiled-kernel:
+    description: Restore/save compiled kernel artifacts (disable for source-only jobs)
+    default: 'true'
 outputs:
   kernel-key:
     description: Input-keyed kernel cache key
@@ -72,7 +75,7 @@ runs:
         key: ${{ steps.keys.outputs.source }}
 
     - name: Restore compiled kernel for this input lineage
-      if: inputs.phase == 'restore'
+      if: inputs.phase == 'restore' && inputs.compiled-kernel == 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -115,7 +118,7 @@ runs:
       run: |
         set -euo pipefail
         for path in output/kernel output/gpu/cache \
-            mkosi/kernel-builder/mkosi.output mkosi/kernel-builder/mkosi.tools \
+            mkosi/kernel-builder/mkosi.output mkosi/kernel-builder/mkosi.output-acpi mkosi/kernel-builder/mkosi.tools \
             mkosi/mkosi.pkgcache mkosi/base/mkosi.cache \
             mkosi/initrd/mkosi.cache mkosi/kernel-builder/mkosi.cache; do
           if [ -e "$path" ]; then sudo chown -R "$(id -u):$(id -g)" "$path"; fi
@@ -138,7 +141,7 @@ runs:
         key: ${{ steps.keys.outputs.source }}
 
     - name: Save successful compiled kernel
-      if: inputs.phase == 'save' && inputs.kernel-ready == 'true'
+      if: inputs.phase == 'save' && inputs.kernel-ready == 'true' && inputs.compiled-kernel == 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
