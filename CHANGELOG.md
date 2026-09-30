@@ -9,6 +9,8 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Added
+- Repeatable `confos run --cdrom <ISO>` attaches read-only launch media.
+  Runner-only; measurements are unchanged.
 - `confos run --host-data <HEX>` sets the 32-byte SEV-SNP HOST_DATA field.
   Runner-only; measurements are unchanged.
 - Opt-in `general-purpose` CPU and `general-purpose-gpu` GPU image recipes:

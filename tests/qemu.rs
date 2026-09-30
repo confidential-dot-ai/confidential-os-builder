@@ -1,6 +1,94 @@
 use confos::qemu::{select_tier, QemuArgs, QemuTier};
 use std::path::PathBuf;
 
+fn qemu_args_with_scratch() -> QemuArgs {
+    QemuArgs {
+        tier: QemuTier::SevSnp,
+        qemu_bin: "qemu-system-x86_64".into(),
+        igvm: Some("/output/guest.igvm".into()),
+        uki: Some("/output/uki.efi".into()),
+        firmware: Some("/output/OVMF.fd".into()),
+        disk: "/output/disk.raw".into(),
+        disk_format: "raw".into(),
+        smp: 2,
+        memory: "4G".into(),
+        port_forwards: vec![],
+        scratch: Some("/output/scratch.raw".into()),
+        host_data: None,
+        cdroms: vec![],
+    }
+}
+
+#[test]
+fn test_qemu_args_cdroms_follow_root_and_scratch_on_every_tier() {
+    let media = [
+        tempfile::NamedTempFile::new().unwrap(),
+        tempfile::NamedTempFile::new().unwrap(),
+    ];
+    let mut args = qemu_args_with_scratch();
+    args.cdroms = media.iter().map(|file| file.path().to_path_buf()).collect();
+    for tier in [QemuTier::SevSnp, QemuTier::Kvm, QemuTier::Emulated] {
+        args.tier = tier;
+        let cmd = args.to_args().unwrap();
+        let storage_devices: Vec<_> = cmd
+            .windows(2)
+            .filter(|pair| pair[0] == "-device")
+            .map(|pair| pair[1].as_str())
+            .filter(|device| {
+                device.starts_with("virtio-blk-pci,")
+                    || device.starts_with("virtio-scsi-pci,")
+                    || device.starts_with("scsi-cd,")
+            })
+            .collect();
+        assert_eq!(
+            storage_devices,
+            [
+                "virtio-blk-pci,drive=root0",
+                "virtio-blk-pci,drive=scratch0,serial=confai-scratch",
+                "virtio-scsi-pci,id=scsi0",
+                "scsi-cd,drive=cd0,bus=scsi0.0",
+                "scsi-cd,drive=cd1,bus=scsi0.0",
+            ]
+        );
+        for (i, file) in media.iter().enumerate() {
+            let drive = format!(
+                "file={},format=raw,if=none,id=cd{i},readonly=on",
+                file.path().display()
+            );
+            assert!(cmd.windows(2).any(|pair| pair == ["-drive", &drive]));
+        }
+    }
+}
+
+#[test]
+fn test_qemu_args_empty_cdroms_add_no_scsi() {
+    let mut args = qemu_args_with_scratch();
+    for tier in [QemuTier::SevSnp, QemuTier::Kvm, QemuTier::Emulated] {
+        args.tier = tier;
+        assert!(!args
+            .to_args()
+            .unwrap()
+            .iter()
+            .any(|arg| arg.contains("scsi")));
+    }
+}
+
+#[test]
+fn test_qemu_args_rejects_invalid_cdroms() {
+    let dir = tempfile::tempdir().unwrap();
+    let comma = dir.path().join("bad,name.iso");
+    std::fs::write(&comma, []).unwrap();
+    let mut args = qemu_args_with_scratch();
+    for (path, message) in [
+        (comma, "comma"),
+        (dir.path().join("missing.iso"), "existing regular file"),
+        (dir.path().to_path_buf(), "existing regular file"),
+    ] {
+        args.cdroms = vec![path];
+        assert!(args.to_args().unwrap_err().to_string().contains(message));
+    }
+}
+
 #[test]
 fn test_qemu_args_host_data() {
     let mut args = QemuArgs {
@@ -15,6 +103,7 @@ fn test_qemu_args_host_data() {
         memory: "4G".into(),
         port_forwards: vec![],
         scratch: None,
+        cdroms: vec![],
         host_data: None,
     };
     let default_args = args.to_args().unwrap();
@@ -41,6 +130,7 @@ fn test_qemu_args_host_data() {
 fn test_qemu_args_basic() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -66,6 +156,7 @@ fn test_qemu_args_basic() {
 fn test_qemu_args_contains_sev_snp() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -89,6 +180,7 @@ fn test_qemu_args_contains_sev_snp() {
 fn test_qemu_args_snp_missing_igvm_errors() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
@@ -108,6 +200,7 @@ fn test_qemu_args_snp_missing_igvm_errors() {
 fn test_qemu_args_kvm_missing_uki_errors() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
@@ -127,6 +220,7 @@ fn test_qemu_args_kvm_missing_uki_errors() {
 fn test_qemu_args_no_port_forwards_has_no_netdev() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -149,6 +243,7 @@ fn test_qemu_args_no_port_forwards_has_no_netdev() {
 fn test_qemu_args_single_port_forward() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -171,6 +266,7 @@ fn test_qemu_args_single_port_forward() {
 fn test_qemu_args_multiple_port_forwards() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -195,6 +291,7 @@ fn test_qemu_args_multiple_port_forwards() {
 fn test_qemu_args_kvm_tier() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
@@ -219,6 +316,7 @@ fn test_qemu_args_kvm_tier() {
 fn test_qemu_args_emulated_tier() {
     let args = QemuArgs {
         tier: QemuTier::Emulated,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
@@ -304,6 +402,7 @@ fn test_validate_memory_rejects_non_numeric() {
 fn test_qemu_args_rejects_comma_in_disk_path() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -324,6 +423,7 @@ fn test_qemu_args_rejects_comma_in_disk_path() {
 fn test_qemu_args_rejects_comma_in_igvm_path() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest,evil.igvm")),
@@ -344,6 +444,7 @@ fn test_qemu_args_rejects_comma_in_igvm_path() {
 fn test_qemu_args_rejects_comma_in_uki_path() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
@@ -364,6 +465,7 @@ fn test_qemu_args_rejects_comma_in_uki_path() {
 fn test_qemu_args_rejects_comma_in_firmware_path() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
@@ -386,6 +488,7 @@ fn test_qemu_args_rejects_comma_in_firmware_path() {
 fn test_qemu_args_rejects_unsupported_disk_format() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -406,6 +509,7 @@ fn test_qemu_args_rejects_unsupported_disk_format() {
 fn test_qemu_args_accepts_qcow2_format() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -427,6 +531,7 @@ fn test_qemu_args_accepts_qcow2_format() {
 fn test_qemu_args_disk_is_readonly() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -453,6 +558,7 @@ fn test_qemu_args_disk_is_readonly() {
 fn test_qemu_args_kvm_missing_firmware_errors() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
@@ -472,6 +578,7 @@ fn test_qemu_args_kvm_missing_firmware_errors() {
 fn test_qemu_args_emulated_missing_firmware_errors() {
     let args = QemuArgs {
         tier: QemuTier::Emulated,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
@@ -491,6 +598,7 @@ fn test_qemu_args_emulated_missing_firmware_errors() {
 fn test_qemu_args_uses_virtio_console() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
@@ -532,6 +640,7 @@ fn test_qemu_args_uses_virtio_console() {
 fn test_qemu_args_kvm_uses_virtio_console() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        cdroms: vec![],
         host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
