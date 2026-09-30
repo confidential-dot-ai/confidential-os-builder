@@ -1,5 +1,7 @@
 use std::{os::unix::process::CommandExt as _, path::PathBuf, process::Command};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use crate::tools;
 
 /// Validate a QEMU memory string (e.g. "4G", "512M").
@@ -135,6 +137,7 @@ pub struct QemuArgs {
     pub disk_format: String,
     pub smp: u32,
     pub memory: String,
+    pub host_data: Option<[u8; 32]>,
     pub port_forwards: Vec<(u16, u16)>,
     /// Optional writable ephemeral scratch disk. Attached with
     /// `serial=confai-scratch` so the guest initrd recognizes it as the
@@ -163,6 +166,10 @@ impl QemuArgs {
                     .igvm
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("SevSnp tier requires igvm path"))?;
+                let mut sev = "sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1".to_string();
+                if let Some(data) = self.host_data {
+                    sev.push_str(&format!(",host-data={}", STANDARD.encode(data)));
+                }
                 vec![
                     "-enable-kvm".to_string(),
                     "-cpu".to_string(),
@@ -174,7 +181,7 @@ impl QemuArgs {
                     "-object".to_string(),
                     format!("memory-backend-memfd,id=ram1,size={},share=true", self.memory),
                     "-object".to_string(),
-                    "sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1".to_string(),
+                    sev,
                     "-no-reboot".to_string(),
                     "-chardev".to_string(),
                     "stdio,id=hvc0,signal=off,mux=on".to_string(),
@@ -187,6 +194,10 @@ impl QemuArgs {
                 ]
             }
             QemuTier::Kvm | QemuTier::Emulated => {
+                anyhow::ensure!(
+                    self.host_data.is_none(),
+                    "--host-data requires the SEV-SNP tier"
+                );
                 let uki = self
                     .uki
                     .as_ref()

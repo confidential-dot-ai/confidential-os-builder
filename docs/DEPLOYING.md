@@ -53,6 +53,11 @@ as explicit `-device virtio-blk-pci` entries (not `-drive if=virtio`) so
 PCI slot order — and therefore guest device naming — stays deterministic.
 `cbitpos=51` is correct for the Milan/Genoa parts confos targets.
 
+For launch-time HOST_DATA, append `,host-data=<base64>` to the
+`sev-snp-guest` object. `confos run --host-data <HEX>` accepts the same 32
+bytes as 64 lowercase hex characters. An `opkeydata` launch requires
+HOST_DATA to equal `SHA-256(pubkey)` over the exact file bytes on that volume.
+
 **vCPU count must match an IGVM variant** — SMP is part of the launch
 measurement. Memory size is not; size it freely. If you need a vCPU count
 the build didn't emit, generate it without rebuilding:

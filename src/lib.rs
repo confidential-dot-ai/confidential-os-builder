@@ -118,6 +118,10 @@ pub struct RunArgs {
     #[arg(long, env = "CONFOS_FIRMWARE")]
     pub firmware: Option<PathBuf>,
 
+    /// Set HOST_DATA to exactly 64 lowercase hex characters. Requires the SEV-SNP tier.
+    #[arg(long, value_name = "HEX", value_parser = parse_host_data)]
+    pub host_data: Option<[u8; 32]>,
+
     /// Attach an ephemeral encrypted scratch disk of this size (e.g. "20G") as
     /// the backing for declared writable state directories. Creates a fresh raw
     /// disk in the output directory and attaches it with serial=confai-scratch.
@@ -126,6 +130,16 @@ pub struct RunArgs {
     /// plain VM provides no such protection.
     #[arg(long, value_name = "SIZE")]
     pub scratch: Option<String>,
+}
+
+fn parse_host_data(value: &str) -> Result<[u8; 32], String> {
+    let mut bytes = [0; 32];
+    if value.bytes().any(|b| b.is_ascii_uppercase())
+        || hex::decode_to_slice(value, &mut bytes).is_err()
+    {
+        return Err("expected exactly 64 lowercase hex characters (32 bytes)".into());
+    }
+    Ok(bytes)
 }
 
 #[derive(clap::Args)]

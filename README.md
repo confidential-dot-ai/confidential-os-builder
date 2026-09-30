@@ -155,6 +155,7 @@ confos run [OPTIONS] [DIR]
 | Arg / flag | Default | Purpose |
 |---|---|---|
 | `DIR` | `output/base` | Output directory from `confos build` (contains `manifest.json`). |
+| `--host-data <HEX>` | (none) | Set SEV-SNP HOST_DATA to exactly 64 lowercase hex characters (32 bytes). Requires the SEV-SNP tier. |
 | `--scratch <SIZE>` | (none) | Attach a fresh ephemeral disk (virtio-block serial `confai-scratch`); the initrd encrypts it with a random key and mounts it as expanded writable space. See [Ephemeral scratch space](#ephemeral-scratch-space). |
 | `--port-forward HOST:GUEST` | (none) | Forward a host port to a guest port. Repeatable: `--port-forward 8080:80 --port-forward 2222:22`. |
 | `--qemu-bin <PATH>` | `qemu-system-x86_64` (env: `CONFOS_QEMU_BIN`) | QEMU binary to invoke. |

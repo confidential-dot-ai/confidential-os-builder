@@ -2,9 +2,46 @@ use confos::qemu::{select_tier, QemuArgs, QemuTier};
 use std::path::PathBuf;
 
 #[test]
+fn test_qemu_args_host_data() {
+    let mut args = QemuArgs {
+        tier: QemuTier::SevSnp,
+        qemu_bin: "qemu-system-x86_64".into(),
+        igvm: Some("/output/guest.igvm".into()),
+        uki: Some("/output/uki.efi".into()),
+        firmware: Some("/output/OVMF.fd".into()),
+        disk: "/output/disk.raw".into(),
+        disk_format: "raw".into(),
+        smp: 2,
+        memory: "4G".into(),
+        port_forwards: vec![],
+        scratch: None,
+        host_data: None,
+    };
+    let default_args = args.to_args().unwrap();
+    assert!(default_args.contains(&"sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1".into()));
+    assert!(!default_args.iter().any(|arg| arg.contains("host-data=")));
+    let mut data = [0; 32];
+    hex::decode_to_slice(
+        "5404297a589453d854b2eecc4d46bbd4550447761989f9050680015b0920e040",
+        &mut data,
+    )
+    .unwrap();
+    args.host_data = Some(data);
+    assert!(args.to_args().unwrap().contains(&"sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,host-data=VAQpeliUU9hUsu7MTUa71FUER3YZifkFBoABWwkg4EA=".into()));
+    for tier in [QemuTier::Kvm, QemuTier::Emulated] {
+        args.tier = tier;
+        assert_eq!(
+            args.to_args().unwrap_err().to_string(),
+            "--host-data requires the SEV-SNP tier"
+        );
+    }
+}
+
+#[test]
 fn test_qemu_args_basic() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -29,6 +66,7 @@ fn test_qemu_args_basic() {
 fn test_qemu_args_contains_sev_snp() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -51,6 +89,7 @@ fn test_qemu_args_contains_sev_snp() {
 fn test_qemu_args_snp_missing_igvm_errors() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
         uki: None,
@@ -69,6 +108,7 @@ fn test_qemu_args_snp_missing_igvm_errors() {
 fn test_qemu_args_kvm_missing_uki_errors() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
         uki: None,
@@ -87,6 +127,7 @@ fn test_qemu_args_kvm_missing_uki_errors() {
 fn test_qemu_args_no_port_forwards_has_no_netdev() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -108,6 +149,7 @@ fn test_qemu_args_no_port_forwards_has_no_netdev() {
 fn test_qemu_args_single_port_forward() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -129,6 +171,7 @@ fn test_qemu_args_single_port_forward() {
 fn test_qemu_args_multiple_port_forwards() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -152,6 +195,7 @@ fn test_qemu_args_multiple_port_forwards() {
 fn test_qemu_args_kvm_tier() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
         uki: Some(PathBuf::from("/output/uki.efi")),
@@ -175,6 +219,7 @@ fn test_qemu_args_kvm_tier() {
 fn test_qemu_args_emulated_tier() {
     let args = QemuArgs {
         tier: QemuTier::Emulated,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
         uki: Some(PathBuf::from("/output/uki.efi")),
@@ -259,6 +304,7 @@ fn test_validate_memory_rejects_non_numeric() {
 fn test_qemu_args_rejects_comma_in_disk_path() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -278,6 +324,7 @@ fn test_qemu_args_rejects_comma_in_disk_path() {
 fn test_qemu_args_rejects_comma_in_igvm_path() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest,evil.igvm")),
         uki: None,
@@ -297,6 +344,7 @@ fn test_qemu_args_rejects_comma_in_igvm_path() {
 fn test_qemu_args_rejects_comma_in_uki_path() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
         uki: Some(PathBuf::from("/output/uki,bad.efi")),
@@ -316,6 +364,7 @@ fn test_qemu_args_rejects_comma_in_uki_path() {
 fn test_qemu_args_rejects_comma_in_firmware_path() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
         uki: Some(PathBuf::from("/output/uki.efi")),
@@ -337,6 +386,7 @@ fn test_qemu_args_rejects_comma_in_firmware_path() {
 fn test_qemu_args_rejects_unsupported_disk_format() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -356,6 +406,7 @@ fn test_qemu_args_rejects_unsupported_disk_format() {
 fn test_qemu_args_accepts_qcow2_format() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -376,6 +427,7 @@ fn test_qemu_args_accepts_qcow2_format() {
 fn test_qemu_args_disk_is_readonly() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -401,6 +453,7 @@ fn test_qemu_args_disk_is_readonly() {
 fn test_qemu_args_kvm_missing_firmware_errors() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
         uki: Some(PathBuf::from("/output/uki.efi")),
@@ -419,6 +472,7 @@ fn test_qemu_args_kvm_missing_firmware_errors() {
 fn test_qemu_args_emulated_missing_firmware_errors() {
     let args = QemuArgs {
         tier: QemuTier::Emulated,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
         uki: Some(PathBuf::from("/output/uki.efi")),
@@ -437,6 +491,7 @@ fn test_qemu_args_emulated_missing_firmware_errors() {
 fn test_qemu_args_uses_virtio_console() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -477,6 +532,7 @@ fn test_qemu_args_uses_virtio_console() {
 fn test_qemu_args_kvm_uses_virtio_console() {
     let args = QemuArgs {
         tier: QemuTier::Kvm,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: None,
         uki: Some(PathBuf::from("/output/uki.efi")),

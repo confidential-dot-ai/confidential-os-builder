@@ -9,6 +9,7 @@ repository = "https://github.com/confidential-dot-ai/confidential-os-builder"
 [dependencies]
 which = "7"
 anyhow = "1"
+base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 clap-verbosity-flag = "3"
 tracing = "0.1"
