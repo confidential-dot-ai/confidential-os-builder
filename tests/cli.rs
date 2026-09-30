@@ -1,8 +1,9 @@
 use assert_cmd::Command;
 use clap::{Args, FromArgMatches};
 use confos::RunArgs;
+use std::os::unix::fs::PermissionsExt;
 
-fn run_output() -> tempfile::TempDir {
+fn run_output(smp_counts: &[u32]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let manifest = serde_json::json!({
         "version": confos::manifest::MANIFEST_VERSION,
@@ -16,13 +17,91 @@ fn run_output() -> tempfile::TempDir {
             "disk_image": {"path": "disk.raw", "sha256": ""},
             "uki": {"path": "uki.efi", "sha256": ""}
         },
-        "snp_variants": []
+        "snp_variants": smp_counts.iter().map(|smp| serde_json::json!({
+            "smp": smp,
+            "igvm": {"path": format!("guest-smp{smp}.igvm"), "sha256": ""},
+            "measurement": {"snp_launch_digest": format!("digest{smp}"), "algorithm": "sha384", "page_count": 1, "vmsa_count": smp}
+        })).collect::<Vec<_>>()
     });
     std::fs::write(dir.path().join("manifest.json"), manifest.to_string()).unwrap();
     for artifact in ["disk.raw", "uki.efi", "OVMF.fd"] {
         std::fs::write(dir.path().join(artifact), []).unwrap();
     }
     dir
+}
+
+fn non_snp_qemu_stub(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("qemu-stub");
+    std::fs::write(
+        &path,
+        r#"#!/bin/sh
+if [ "$1" = "-object" ] && [ "$2" = "help" ]; then
+    exit 0
+fi
+printf '%s\n' "$@"
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[test]
+fn test_run_smp_override_on_fallback_tier() {
+    for counts in [vec![], vec![2, 4, 8, 16]] {
+        let dir = run_output(&counts);
+        Command::cargo_bin("confos")
+            .unwrap()
+            .arg("run")
+            .arg(dir.path())
+            .arg("--qemu-bin")
+            .arg(non_snp_qemu_stub(dir.path()))
+            .args(["--smp", "3"])
+            .assert()
+            .success()
+            .stdout(predicates::str::contains("-smp\n3\n"))
+            .stdout(predicates::str::contains("Launch digest:").count(0));
+    }
+}
+
+#[test]
+fn test_run_default_smp_on_fallback_tier() {
+    for (counts, expected) in [(vec![], "2"), (vec![4, 2, 8, 16], "4")] {
+        let dir = run_output(&counts);
+        Command::cargo_bin("confos")
+            .unwrap()
+            .arg("run")
+            .arg(dir.path())
+            .arg("--qemu-bin")
+            .arg(non_snp_qemu_stub(dir.path()))
+            .assert()
+            .success()
+            .stdout(predicates::str::contains(format!("-smp\n{expected}\n")))
+            .stdout(predicates::str::contains("Launch digest:").count(0));
+    }
+}
+
+#[test]
+fn test_run_smp_parser_range() {
+    for valid in ["1", "8", "1024"] {
+        assert_eq!(
+            parse_run_args(&["run", "--smp", valid]).unwrap().smp,
+            Some(valid.parse().unwrap())
+        );
+    }
+    for invalid in ["0", "1025", "-1", "not-a-number"] {
+        assert!(parse_run_args(&["run", "--smp", invalid]).is_err());
+    }
+}
+
+#[test]
+fn test_run_help_shows_smp() {
+    Command::cargo_bin("confos")
+        .unwrap()
+        .args(["run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--smp"));
 }
 
 fn parse_run_args(args: &[&str]) -> Result<RunArgs, clap::Error> {
@@ -54,7 +133,7 @@ fn test_run_help_shows_cdrom() {
 
 #[test]
 fn test_run_missing_cdrom_fails_before_qemu_probe() {
-    let dir = run_output();
+    let dir = run_output(&[]);
     let media = dir.path().join("missing.iso");
     Command::cargo_bin("confos")
         .unwrap()
