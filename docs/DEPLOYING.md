@@ -175,7 +175,7 @@ attestation. Treat host-visible plaintext storage as published.
   allowlist — an attacker can keep launching the old, correctly-measured
   image forever.
 - **Keep the manifest with the fleet config.** `confos run` reads `memory`
-  from it (and boots the first `snp_variants[]` entry — there is no variant
-  selector yet); your orchestration should similarly treat the manifest as
+  from it and selects the SNP variant matching `--smp` (the first entry
+  by default); your orchestration should similarly treat the manifest as
   the source of truth for how the image expects to be launched, matching
   the deployed vCPU count to the right `snp_variants[]` entry.

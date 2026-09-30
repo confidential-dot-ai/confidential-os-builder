@@ -9,6 +9,8 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Added
+- `confos run --smp <N>` selects an SNP variant or sets the vCPU count on
+  KVM/emulated tiers. Runner-only; measurements are unchanged.
 - Repeatable `confos run --cdrom <ISO>` attaches read-only launch media.
   Runner-only; measurements are unchanged.
 - `confos run --host-data <HEX>` sets the 32-byte SEV-SNP HOST_DATA field.

@@ -122,7 +122,7 @@ confos build [OPTIONS] [NAME]
 | `--firmware <PATH>` | `output/OVMF.fd` (env: `CONFOS_FIRMWARE`) | OVMF firmware binary used for SNP launch. Must be confos's edk2 build with the `IgvmHobArea` region (region type 0x200) — IGVM construction injects UKI/shim/cert bytes into that area. Ubuntu's stock OVMF does not have this region and will fail IGVM build. |
 | `--tdx-firmware <PATH>` | `/usr/share/ovmf/OVMF.fd` (env: `CONFOS_TDX_FIRMWARE`) | OVMF firmware used for TDX measurement. Must be a build with TDVF code paths compiled in (the `ovmf` package binary works). confos's IGVM-aware firmware does NOT include TDVF — a TDX guest booted on it hangs silently in firmware. The TDX `mrtd` in the manifest is computed from THIS firmware's measured regions (not from `--firmware`, and not a plain file hash — that's `tdx.firmware.sha256`). Ignored when `--platform snp`. |
 | `--memory <SIZE>` | `4G` | VM memory recorded in `manifest.json` (`build.memory`). `confos run` reads this when booting the image; not used at build time. QEMU-style suffix (`512M`, `8G`, `64G`). |
-| `--smp <N>...` | `2 4 8 16` | vCPU counts to build IGVM variants for. Repeatable/space-separated. Each count produces a `guest-smp<N>.igvm` and an `snp_variants[]` manifest entry (SMP count is part of the SNP launch measurement). Recorded in `manifest.json`; `confos run` boots the first entry (see [`confos run`](#confos-run--boot-a-built-vm-in-qemu)). |
+| `--smp <N>...` | `2 4 8 16` | vCPU counts to build IGVM variants for. Repeatable/space-separated. Each count produces a `guest-smp<N>.igvm` and an `snp_variants[]` manifest entry (SMP count is part of the SNP launch measurement). Recorded in `manifest.json`; `confos run --smp N` selects the matching entry (see [`confos run`](#confos-run--boot-a-built-vm-in-qemu)). |
 
 #### Examples
 
@@ -155,6 +155,7 @@ confos run [OPTIONS] [DIR]
 | Arg / flag | Default | Purpose |
 |---|---|---|
 | `DIR` | `output/base` | Output directory from `confos build` (contains `manifest.json`). |
+| `--smp <N>` | First variant, or `2` | vCPU count (1–1024). SEV-SNP selects a matching `snp_variants[]` entry; KVM/emulated tiers use the count directly. |
 | `--cdrom <ISO>` | (none) | Attach an existing file as a read-only SCSI CD. Repeatable, for example `--cdrom op.iso --cdrom cidata.iso`. |
 | `--host-data <HEX>` | (none) | Set SEV-SNP HOST_DATA to exactly 64 lowercase hex characters (32 bytes). Requires the SEV-SNP tier. |
 | `--scratch <SIZE>` | (none) | Attach a fresh ephemeral disk (virtio-block serial `confai-scratch`); the initrd encrypts it with a random key and mounts it as expanded writable space. See [Ephemeral scratch space](#ephemeral-scratch-space). |
@@ -166,12 +167,6 @@ confos run [OPTIONS] [DIR]
 - **SEV-SNP** if QEMU has `sev-snp-guest` + `igvm-cfg` support and `/dev/kvm` is present. Uses the IGVM, reports the launch digest.
 - **KVM** if `/dev/kvm` is present but SNP support is missing. Loads the UKI + OVMF directly. No measurement.
 - **Emulated** otherwise. Same as KVM but in software. Very slow; useful for CI smoke tests only.
-
-On the SEV-SNP tier, `confos run` always boots the **first** `snp_variants[]`
-entry in the manifest — with the default `--smp 2 4 8 16` build that means a
-2-vCPU guest. There is no `--smp` selector on `confos run` yet; to boot a
-different variant on SNP hardware, invoke QEMU directly with the matching
-`guest-smp<N>.igvm` (see [Deploying](docs/DEPLOYING.md)).
 
 Note: `confos run` needs the QEMU system emulator (`qemu-system-x86_64`),
 which `bin/setup` does **not** install (it only installs `qemu-utils`). On
