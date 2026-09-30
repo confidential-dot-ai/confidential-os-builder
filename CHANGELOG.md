@@ -9,6 +9,8 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Added
+- `confos run --host-data <HEX>` sets the 32-byte SEV-SNP HOST_DATA field.
+  Runner-only; measurements are unchanged.
 - Opt-in `general-purpose` CPU and `general-purpose-gpu` GPU image recipes:
   writable package/configuration overlays, key-only SSH, persistent user-data,
   Docker/containerd with bridge networking, GPU CDI and dynamic-count NCCL
