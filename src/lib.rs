@@ -126,6 +126,10 @@ pub struct RunArgs {
     #[arg(long = "cdrom", value_name = "ISO")]
     pub cdroms: Vec<PathBuf>,
 
+    /// vCPU count (1-1024). SEV-SNP requires a matching manifest variant.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=1024))]
+    pub smp: Option<u32>,
+
     /// Attach an ephemeral encrypted scratch disk of this size (e.g. "20G") as
     /// the backing for declared writable state directories. Creates a fresh raw
     /// disk in the output directory and attaches it with serial=confai-scratch.

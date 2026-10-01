@@ -1,4 +1,6 @@
-use crate::manifest::{self, BuildManifest};
+use std::path::PathBuf;
+
+use crate::manifest::{self, BuildManifest, SnpVariant};
 use crate::qemu::{self, QemuArgs, QemuTier};
 use crate::RunArgs;
 
@@ -46,63 +48,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Default to the first variant (smallest SMP after sort, or the build-time
-    // default if `confos igvm` was never run). A future change can add a `--smp`
-    // selector to `confos run`; for now this matches v1 behaviour of "one IGVM
-    // per output dir."
-    let variant = manifest.snp_variants.first();
-
-    // Resolve artifacts based on tier
-    let (igvm_path, uki_path, firmware_path) = match tier {
-        QemuTier::SevSnp => {
-            let v = variant.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no IGVM variants in manifest at {}. Was the image built with --skip-igvm?",
-                    args.dir.display()
-                )
-            })?;
-            let path = args.dir.join(&v.igvm.path);
-            if !path.exists() {
-                anyhow::bail!(
-                    "{} not found in {} (referenced by manifest variant smp={})",
-                    v.igvm.path,
-                    args.dir.display(),
-                    v.smp,
-                );
-            }
-            (Some(path), None, None)
-        }
-        QemuTier::Kvm | QemuTier::Emulated => {
-            anyhow::ensure!(
-                args.host_data.is_none(),
-                "--host-data requires the SEV-SNP tier"
-            );
-            let uki = args.dir.join("uki.efi");
-            if !uki.exists() {
-                anyhow::bail!("uki.efi not found in {}", args.dir.display());
-            }
-            let fw = if let Some(ref cli_fw) = args.firmware {
-                if !cli_fw.exists() {
-                    anyhow::bail!("firmware not found: {}", cli_fw.display());
-                }
-                cli_fw.clone()
-            } else if manifest.inputs.firmware.is_some() {
-                let fw = args.dir.join("OVMF.fd");
-                if !fw.exists() {
-                    anyhow::bail!(
-                        "firmware not found at {} (build copies firmware into the output directory)",
-                        fw.display()
-                    );
-                }
-                fw
-            } else {
-                anyhow::bail!(
-                    "no firmware available — image was built with --skip-igvm. Pass --firmware <path> to run on KVM."
-                );
-            };
-            (None, Some(uki), Some(fw))
-        }
-    };
+    let boot = resolve_boot_config(args, &manifest, tier)?;
 
     // Find disk image
     let disk_path = args.dir.join(format!("disk.{}", manifest.build.format));
@@ -154,20 +100,16 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         None => None,
     };
 
-    // SMP comes from the selected variant; if no variants exist (skip_igvm
-    // builds running on KVM/emulated), fall back to a sensible default.
-    let smp = variant.map(|v| v.smp).unwrap_or(2);
-
     // Launch
     let qemu_args = QemuArgs {
         tier,
         qemu_bin: args.qemu_bin.clone(),
-        igvm: igvm_path,
-        uki: uki_path,
-        firmware: firmware_path,
+        igvm: boot.igvm,
+        uki: boot.uki,
+        firmware: boot.firmware,
         disk: disk_path,
         disk_format: manifest.build.format,
-        smp,
+        smp: boot.smp,
         memory: manifest.build.memory,
         port_forwards,
         scratch: scratch_path,
@@ -179,8 +121,8 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         "Launching VM (smp={}, memory={}, tier={:?})",
         qemu_args.smp, qemu_args.memory, qemu_args.tier
     );
-    if let Some(v) = variant {
-        println!("Launch digest: {}", v.measurement.snp_launch_digest);
+    if let Some(digest) = boot.snp_launch_digest {
+        println!("Launch digest: {digest}");
     }
     if let Some(data) = args.host_data {
         println!("HOST_DATA: {}", hex::encode(data));
@@ -188,6 +130,106 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
 
     qemu::launch(&qemu_args)?;
     Ok(())
+}
+
+struct BootConfig {
+    igvm: Option<PathBuf>,
+    uki: Option<PathBuf>,
+    firmware: Option<PathBuf>,
+    smp: u32,
+    snp_launch_digest: Option<String>,
+}
+
+fn resolve_boot_config(
+    args: &RunArgs,
+    manifest: &BuildManifest,
+    tier: QemuTier,
+) -> anyhow::Result<BootConfig> {
+    match tier {
+        QemuTier::SevSnp => {
+            let v = select_variant(&manifest.snp_variants, args.smp)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no IGVM variants in manifest at {}. Was the image built with --skip-igvm?",
+                    args.dir.display()
+                )
+            })?;
+            let path = args.dir.join(&v.igvm.path);
+            if !path.exists() {
+                anyhow::bail!(
+                    "{} not found in {} (referenced by manifest variant smp={})",
+                    v.igvm.path,
+                    args.dir.display(),
+                    v.smp,
+                );
+            }
+            Ok(BootConfig {
+                igvm: Some(path),
+                uki: None,
+                firmware: None,
+                smp: v.smp,
+                snp_launch_digest: Some(v.measurement.snp_launch_digest.clone()),
+            })
+        }
+        QemuTier::Kvm | QemuTier::Emulated => {
+            anyhow::ensure!(
+                args.host_data.is_none(),
+                "--host-data requires the SEV-SNP tier"
+            );
+            let uki = args.dir.join("uki.efi");
+            if !uki.exists() {
+                anyhow::bail!("uki.efi not found in {}", args.dir.display());
+            }
+            let fw = if let Some(ref cli_fw) = args.firmware {
+                if !cli_fw.exists() {
+                    anyhow::bail!("firmware not found: {}", cli_fw.display());
+                }
+                cli_fw.clone()
+            } else if manifest.inputs.firmware.is_some() {
+                let fw = args.dir.join("OVMF.fd");
+                if !fw.exists() {
+                    anyhow::bail!(
+                        "firmware not found at {} (build copies firmware into the output directory)",
+                        fw.display()
+                    );
+                }
+                fw
+            } else {
+                anyhow::bail!(
+                    "no firmware available — image was built with --skip-igvm. Pass --firmware <path> to run on KVM."
+                );
+            };
+            Ok(BootConfig {
+                igvm: None,
+                uki: Some(uki),
+                firmware: Some(fw),
+                smp: args
+                    .smp
+                    .unwrap_or_else(|| manifest.snp_variants.first().map_or(2, |v| v.smp)),
+                snp_launch_digest: None,
+            })
+        }
+    }
+}
+
+fn select_variant(
+    variants: &[SnpVariant],
+    smp: Option<u32>,
+) -> anyhow::Result<Option<&SnpVariant>> {
+    let Some(smp) = smp else {
+        return Ok(variants.first());
+    };
+    if variants.is_empty() {
+        return Ok(None);
+    }
+    if let Some(variant) = variants.iter().find(|variant| variant.smp == smp) {
+        return Ok(Some(variant));
+    }
+    let available = variants
+        .iter()
+        .map(|variant| variant.smp.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::bail!("no SNP variant for --smp {smp} (manifest has: {available}); add one with: confos igvm <dir> --smp {smp}")
 }
 
 /// Validate manifest fields that flow into QEMU arguments or path construction.
@@ -217,4 +259,107 @@ fn validate_manifest_fields(manifest: &BuildManifest) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::{
+        BuildConfig, FileEntry, ManifestInputs, ManifestOutputs, Measurement, MANIFEST_VERSION,
+    };
+
+    fn variants() -> Vec<SnpVariant> {
+        [2, 4, 8, 16]
+            .into_iter()
+            .map(|smp| SnpVariant {
+                smp,
+                igvm: FileEntry {
+                    path: format!("guest-smp{smp}.igvm"),
+                    sha256: String::new(),
+                },
+                measurement: Measurement {
+                    snp_launch_digest: format!("digest{smp}"),
+                    algorithm: "sha384".into(),
+                    page_count: 1,
+                    vmsa_count: smp,
+                },
+            })
+            .collect()
+    }
+
+    #[test]
+    fn snp_boot_config_uses_one_variant() {
+        let dir = tempfile::tempdir().unwrap();
+        let igvm = dir.path().join("guest-smp8.igvm");
+        std::fs::write(&igvm, []).unwrap();
+        let args = RunArgs {
+            dir: dir.path().to_path_buf(),
+            smp: Some(8),
+            host_data: None,
+            cdroms: vec![],
+            scratch: None,
+            port_forward: vec![],
+            qemu_bin: "unused-qemu".into(),
+            firmware: None,
+        };
+        let entry = FileEntry {
+            path: String::new(),
+            sha256: String::new(),
+        };
+        let manifest = BuildManifest {
+            version: MANIFEST_VERSION,
+            build: BuildConfig {
+                timestamp: String::new(),
+                memory: "2G".into(),
+                format: "raw".into(),
+                platform: "snp".into(),
+            },
+            inputs: ManifestInputs {
+                kernel: None,
+                initrd: entry.clone(),
+                firmware: None,
+                base_image: entry.clone(),
+            },
+            outputs: ManifestOutputs {
+                disk_image: entry.clone(),
+                uki: entry,
+            },
+            snp_variants: variants(),
+            tdx: None,
+        };
+        let boot = resolve_boot_config(&args, &manifest, QemuTier::SevSnp).unwrap();
+        assert_eq!(boot.igvm.as_ref(), Some(&igvm));
+        assert_eq!(boot.smp, 8);
+        assert_eq!(boot.snp_launch_digest.unwrap(), "digest8");
+        assert!(boot.uki.is_none());
+        assert!(boot.firmware.is_none());
+    }
+
+    #[test]
+    fn select_variant_matches_cpu_count() {
+        let variants = variants();
+        let selected = select_variant(&variants, Some(8)).unwrap().unwrap();
+        assert_eq!(selected.smp, 8);
+        assert_eq!(selected.igvm.path, "guest-smp8.igvm");
+        assert_eq!(selected.measurement.snp_launch_digest, "digest8");
+    }
+
+    #[test]
+    fn select_variant_lists_available_counts_on_mismatch() {
+        assert_eq!(select_variant(&variants(), Some(3)).unwrap_err().to_string(),
+            "no SNP variant for --smp 3 (manifest has: 2, 4, 8, 16); add one with: confos igvm <dir> --smp 3");
+    }
+
+    #[test]
+    fn select_variant_defaults_to_first_entry() {
+        let mut variants = variants();
+        variants.swap(0, 1);
+        assert_eq!(select_variant(&variants, None).unwrap().unwrap().smp, 4);
+    }
+
+    #[test]
+    fn select_variant_accepts_empty_variants() {
+        assert!(select_variant(&[], Some(4)).unwrap().is_none());
+        assert!(select_variant(&[], None).unwrap().is_none());
+    }
 }
