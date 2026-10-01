@@ -10,6 +10,7 @@ const ALLOWED_DISK_FORMATS: &[&str] = &["raw", "qcow2"];
 const ALLOWED_PLATFORMS: &[&str] = &["snp", "tdx", "multi", "generic"];
 
 pub fn run(args: &RunArgs) -> anyhow::Result<()> {
+    qemu::validate_cdroms(&args.cdroms)?;
     tracing::info!(dir = %args.dir.display(), "launching VM");
 
     if !args.dir.exists() {
@@ -171,6 +172,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         port_forwards,
         scratch: scratch_path,
         host_data: args.host_data,
+        cdroms: args.cdroms.clone(),
     };
 
     println!(

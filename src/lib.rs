@@ -122,6 +122,10 @@ pub struct RunArgs {
     #[arg(long, value_name = "HEX", value_parser = parse_host_data)]
     pub host_data: Option<[u8; 32]>,
 
+    /// Attach an existing ISO file as a read-only CD-ROM. Repeatable.
+    #[arg(long = "cdrom", value_name = "ISO")]
+    pub cdroms: Vec<PathBuf>,
+
     /// Attach an ephemeral encrypted scratch disk of this size (e.g. "20G") as
     /// the backing for declared writable state directories. Creates a fresh raw
     /// disk in the output directory and attaches it with serial=confai-scratch.

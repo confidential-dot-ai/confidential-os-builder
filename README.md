@@ -155,6 +155,7 @@ confos run [OPTIONS] [DIR]
 | Arg / flag | Default | Purpose |
 |---|---|---|
 | `DIR` | `output/base` | Output directory from `confos build` (contains `manifest.json`). |
+| `--cdrom <ISO>` | (none) | Attach an existing file as a read-only SCSI CD. Repeatable, for example `--cdrom op.iso --cdrom cidata.iso`. |
 | `--host-data <HEX>` | (none) | Set SEV-SNP HOST_DATA to exactly 64 lowercase hex characters (32 bytes). Requires the SEV-SNP tier. |
 | `--scratch <SIZE>` | (none) | Attach a fresh ephemeral disk (virtio-block serial `confai-scratch`); the initrd encrypts it with a random key and mounts it as expanded writable space. See [Ephemeral scratch space](#ephemeral-scratch-space). |
 | `--port-forward HOST:GUEST` | (none) | Forward a host port to a guest port. Repeatable: `--port-forward 8080:80 --port-forward 2222:22`. |
@@ -175,6 +176,15 @@ different variant on SNP hardware, invoke QEMU directly with the matching
 Note: `confos run` needs the QEMU system emulator (`qemu-system-x86_64`),
 which `bin/setup` does **not** install (it only installs `qemu-utils`). On
 Ubuntu: `sudo apt install qemu-system-x86`.
+
+To supply an operator public key on an `opkeydata` volume, place the exact
+public-key bytes in `pubkey`, build the ISO, and bind its digest at launch:
+
+```bash
+genisoimage -V opkeydata -r -J -o op.iso pubkey
+confos run output/NAME --scratch 20G --cdrom op.iso \
+  --host-data "$(sha256sum pubkey | cut -d' ' -f1)"
+```
 
 ### Ephemeral scratch space
 
