@@ -4,9 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish reproducible commit tags after hardware acceptance"
+        description: "Advance latest tags after hardware acceptance of the selected image"
         type: boolean
         default: false
+      image:
+        description: "Image recipe to build; select only hardware-accepted recipes when publishing"
+        type: choice
+        options:
+          - all
+          - general-purpose
+          - general-purpose-gpu
+        default: all
   push:
     paths:
       - .github/workflows/general-purpose.yml
@@ -14,6 +22,7 @@ on:
       - ci/**
       - firmware/**
       - tests/image_profiles.py
+      - tests/general_purpose_attest.py
       - tests/ci_images.py
       - tests/gpu_module_cache.py
       - mkosi/**
@@ -45,9 +54,14 @@ jobs:
         id: select
         env:
           BEFORE: ${{ github.event.before }}
+          SELECTED_IMAGE: ${{ inputs.image }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            images=$(bin/ci-images --all --omit-base)
+            if [ "$SELECTED_IMAGE" = general-purpose ] || [ "$SELECTED_IMAGE" = general-purpose-gpu ]; then
+              images="[\"$SELECTED_IMAGE\"]"
+            else
+              images=$(bin/ci-images --all --omit-base)
+            fi
           else
             images=$(bin/ci-images --base "$BEFORE" --omit-base)
           fi
@@ -56,6 +70,7 @@ jobs:
       - name: Test profile invariants and GPU-count handling
         run: |
           python3 tests/image_profiles.py
+          python3 tests/general_purpose_attest.py
           python3 tests/ci_images.py
           python3 tests/gpu_module_cache.py
           python3 tests/host_deps.py
@@ -253,7 +268,9 @@ jobs:
           CDI_SRC="${IMAGE}:${{ matrix.image }}-${GITHUB_SHA}-candidate-cdi"
           oras copy "$SRC" "${IMAGE}:${{ matrix.image }}-${GITHUB_SHA}"
           oras copy "$CDI_SRC" "${IMAGE}:${{ matrix.image }}-${GITHUB_SHA}-cdi"
-          if [ "$GITHUB_REF" = refs/heads/main ]; then
+          # Main builds publish immutable artifacts for hardware testing.
+          # Mutable aliases move only on an explicit, scoped acceptance run.
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "${{ inputs.publish }}" = true ]; then
             oras copy "$SRC" "${IMAGE}:${{ matrix.image }}-latest"
             oras copy "$CDI_SRC" "${IMAGE}:${{ matrix.image }}-cdi-latest"
           fi

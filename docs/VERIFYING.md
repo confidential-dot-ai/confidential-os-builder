@@ -222,6 +222,70 @@ The `Test kernel AML enforcement` CI job runs this harness on
 checksum-verified source and uploads its logs,
 resolved test configurations and result files.
 
+### SSH host keys of a general-purpose guest
+
+A `general-purpose` guest makes its SSH host keys at every boot, in its
+ephemeral `/etc` overlay, which is guest RAM or a scratch disk encrypted
+under a key that never leaves guest RAM. No manifest can name them, so the
+guest vouches for them itself. Its attest port
+(8400) takes a nonce and nothing else:
+
+```bash
+nonce=$(head -c 32 /dev/urandom | base64)
+curl -s "http://$GUEST:8400/attest" -H 'Content-Type: application/json' \
+    -d "{\"nonce\": \"$nonce\"}" > answer.json
+```
+
+The answer lists the guest's host public keys and carries a quote from
+`attestation-api`:
+
+```json
+{
+  "version": "confos/ssh-host-keys/v1",
+  "ssh_host_keys": ["ecdsa-sha2-nistp256 AAAA...", "ssh-ed25519 AAAA..."],
+  "attestation": {"platform": "tdx", "evidence": {}}
+}
+```
+
+The quote's report data is
+
+    SHA-384( LP("confos/ssh-host-keys/v1") || LP(nonce) || LP(key_1) || ... || LP(key_n) )
+
+`LP(x)` is the length of `x` as a 32-bit big-endian integer followed by `x`.
+The nonce is its 32 raw bytes. `key_i` is the base64 field of the i-th listed
+key, decoded, which is that key's SSH wire encoding, and the keys are taken
+in the order listed. The 48-byte digest is zero-extended to the platform's
+report-data size.
+
+A verifier:
+
+1. recomputes that digest from its own nonce and the keys in the answer;
+2. verifies the quote as described above (signature chain, measurements
+   against the manifest, debug off) and checks that its report data is the
+   digest;
+3. only then writes the keys to a `known_hosts` file kept for that guest and
+   connects with `StrictHostKeyChecking=yes`.
+
+For a GPU image, send `"nvidia_gpu": true` as well. `attestation-api` derives
+the GPU nonce from the report data it is given, so the GPU evidence is bound
+to the same digest.
+
+The endpoint refuses every other field, `report_data` included. Nobody
+outside the guest chooses what one of its quotes covers, so a quote over a
+host key can only have come from the guest that holds the key. In these
+images `attestation-api` listens on `127.0.0.1:8401`, where software inside
+the guest uses it as before.
+
+This shows that the keys were those of a genuine guest, with the measured
+image and launch, when the quote was made. It does not follow the guest
+afterwards: guest root can replace the keys or the endpoint, as it can any
+runtime state (see [the threat model](THREAT_MODEL.md)). Every boot makes new
+keys, so verify again after a restart and after a replacement.
+
+The quote names the image and the launch's key bundle, not one VM. Two guests
+launched from the same image with the same `pubkey` file are alike to a
+verifier.
+
 ## 3. Build reproduction (audit)
 
 The strongest check: rebuild the image yourself and confirm the publisher

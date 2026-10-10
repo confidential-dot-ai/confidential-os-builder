@@ -1,0 +1,40 @@
+[Unit]
+Description=Public attestation endpoint: SSH host keys with a quote over them
+Documentation=https://github.com/confidential-dot-ai/confidential-os-builder/blob/main/docs/VERIFYING.md
+# The keys it commits to are made at first boot, and its quotes come from
+# attestation-api on loopback. An image composed without an attest profile
+# has no attestation-api, and this unit then stays down.
+After=general-purpose-ssh-host-keys.service attestation-api.service network-online.target
+Wants=attestation-api.service network-online.target
+ConditionPathExists=/usr/local/bin/attestation-api
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/confai/general-purpose-attest
+Restart=on-failure
+RestartSec=3
+# It reads world-readable public keys and talks to loopback: no user of its
+# own, no device, no write anywhere.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+# IPv4 only, which also keeps AF_VSOCK to attestation-api.
+RestrictAddressFamilies=AF_INET
+MemoryMax=256M
+# One worker and one bounded read-deadline thread for each of 64 connections.
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

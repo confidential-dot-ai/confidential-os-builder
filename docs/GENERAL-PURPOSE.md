@@ -14,7 +14,10 @@ the hardened base and the serial-autologin `dev` profile.
   OpenMPI and checksum-pinned `nccl-tests`.
 - Git, Python pip/venv, build tools and normal package-manager metadata.
 - Key-only SSH, including the launch-bound `opkeydata` public-key bundle.
-- CPU attestation from `attest`; GPU attestation from `attest-gpu`.
+- CPU attestation from `attest`; GPU attestation from `attest-gpu`. The attest
+  port (8400) takes a nonce only and answers with the SSH host keys and a
+  quote over both; `attestation-api` itself listens on `127.0.0.1:8401`. See
+  [SSH host keys of a general-purpose guest](VERIFYING.md#ssh-host-keys-of-a-general-purpose-guest).
 - Docker bridge/host networking, DNS, forwarding and NAT. No guest egress
   allowlist or inbound firewall policy is installed. Host/provider networking
   and KubeVirt port exposure remain separate responsibilities. Authenticate
@@ -119,7 +122,8 @@ controls when required. Recovery does not attest disk contents.
 
 SSH listens on guest port 22; the operator supplies a Service or public port
 forward. There is no host-root handover or serial-root autologin. Host keys
-regenerate with the ephemeral `/etc` overlay; verify the new fingerprint after
+regenerate with the ephemeral `/etc` overlay at every boot; fetch them with a
+quote from the attest port and verify them again after a restart or a
 replacement. Docker's bridge MTU defaults to 1420 for the tested KubeVirt
 network; lower it if the actual underlay requires that.
 
