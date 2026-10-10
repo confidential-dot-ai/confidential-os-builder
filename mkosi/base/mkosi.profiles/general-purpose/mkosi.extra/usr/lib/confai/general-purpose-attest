@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""The public attestation endpoint of a general-purpose guest.
+
+POST /attest takes a 32-byte nonce and nothing else. The answer holds this
+guest's SSH host public keys and a hardware quote whose report data commits
+to the nonce and to exactly those keys:
+
+    report_data = SHA-384( LP("confos/ssh-host-keys/v1") || LP(nonce) ||
+                           LP(key_1) || ... || LP(key_n) )
+
+LP(x) is the length of x as a 32-bit big-endian integer, then x. key_i is the
+SSH wire encoding of the i-th key the answer lists: the base64 field of its
+line, decoded. The quote itself comes from attestation-api, which this
+profile binds to loopback, so nothing outside the guest chooses what a quote
+covers. docs/VERIFYING.md says what a verifier checks.
+"""
+
+import argparse
+import base64
+import glob
+import hashlib
+import http.client
+import http.server
+import json
+import struct
+import socket
+import sys
+import threading
+import urllib.error
+import urllib.request
+
+LABEL = b"confos/ssh-host-keys/v1"
+NONCE_BYTES = 32
+# A request is a nonce and one flag; anything near this size is not one.
+MAX_BODY_BYTES = 1024
+MAX_HEADER_BYTES = 8192
+MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
+# Absolute header/body read deadline, independent of the hardware quote timeout.
+CLIENT_TIMEOUT_SECONDS = 15
+# How long a request waits for one of the quotes in flight to finish.
+QUEUE_SECONDS = 5
+
+
+class BadRequest(Exception):
+    """The caller's fault; the message goes back to it."""
+
+
+class Unavailable(Exception):
+    """This guest's fault; the detail goes to the journal only."""
+
+
+class HeaderBudget:
+    """Bound aggregate headers before the stdlib parser allocates them."""
+
+    def __init__(self, reader):
+        self.reader = reader
+        self.remaining = MAX_HEADER_BYTES
+
+    def readline(self, size=-1):
+        limit = self.remaining + 1
+        line = self.reader.readline(min(size, limit) if size >= 0 else limit)
+        if len(line) > self.remaining:
+            raise http.client.LineTooLong("request headers")
+        self.remaining -= len(line)
+        return line
+
+
+def lp(field: bytes) -> bytes:
+    return struct.pack(">I", len(field)) + field
+
+
+def report_data(nonce: bytes, key_blobs: list[bytes]) -> bytes:
+    """The 48 bytes a quote for this nonce and these keys commits to."""
+    if len(nonce) != NONCE_BYTES:
+        raise ValueError(f"nonce must be {NONCE_BYTES} bytes, got {len(nonce)}")
+    if not key_blobs:
+        raise ValueError("no host key to commit to")
+    encoded = lp(LABEL) + lp(nonce) + b"".join(lp(blob) for blob in key_blobs)
+    return hashlib.sha384(encoded).digest()
+
+
+def read_host_keys(pattern: str) -> list[tuple[str, bytes]]:
+    """Each host public key as its "type base64" line and its wire encoding,
+    in the order of their file names: the order of the answer and of the
+    commitment."""
+    keys = []
+    for path in sorted(glob.glob(pattern)):
+        try:
+            with open(path, encoding="ascii") as f:
+                key_type, encoded = f.readline().split()[:2]
+            blob = base64.b64decode(encoded, validate=True)
+            named = lp(key_type.encode("ascii"))
+        except (OSError, ValueError) as err:
+            raise Unavailable(f"{path} is not a public key line: {err}") from err
+        # The wire encoding starts with the key type as a length-prefixed
+        # string. A line whose two fields disagree is not a key sshd offers.
+        if blob[:len(named)] != named:
+            raise Unavailable(f"{path}: the key does not match its type {key_type}")
+        keys.append((f"{key_type} {encoded}", blob))
+    if not keys:
+        raise Unavailable(f"no host key matches {pattern}")
+    return keys
+
+
+def parse_request(body: bytes) -> tuple[bytes, bool]:
+    """The nonce and whether GPU evidence is asked for."""
+    try:
+        request = json.loads(body)
+    except ValueError as err:
+        raise BadRequest("the body must be a JSON object") from err
+    if not isinstance(request, dict):
+        raise BadRequest("the body must be a JSON object")
+    # A caller never names what the quote covers: report_data is refused like
+    # any other unknown field. Software inside the guest that sent it here is
+    # told where attestation-api went.
+    unknown = sorted(set(request) - {"nonce", "nvidia_gpu"})
+    if unknown:
+        raise BadRequest(f"unknown field {unknown[0]}: this endpoint takes nonce and nvidia_gpu only; "
+                         "inside the guest, attestation-api is at 127.0.0.1:8401")
+    nonce_b64 = request.get("nonce")
+    if not isinstance(nonce_b64, str):
+        raise BadRequest("nonce must be a base64 string")
+    try:
+        nonce = base64.b64decode(nonce_b64, validate=True)
+    except ValueError as err:
+        raise BadRequest("nonce must be standard base64") from err
+    if len(nonce) != NONCE_BYTES:
+        raise BadRequest(f"nonce must be {NONCE_BYTES} bytes, got {len(nonce)}")
+    gpu = request.get("nvidia_gpu", False)
+    if not isinstance(gpu, bool):
+        raise BadRequest("nvidia_gpu must be true or false")
+    return nonce, gpu
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    server_version = "general-purpose-attest"
+    sys_version = ""
+    timeout = CLIENT_TIMEOUT_SECONDS
+
+    def setup(self):
+        super().setup()
+        self.read_deadline = threading.Timer(CLIENT_TIMEOUT_SECONDS, self.end_slow_read)
+        self.read_deadline.daemon = True
+        self.read_deadline.start()
+
+    def end_slow_read(self):
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def parse_request(self):
+        reader = self.rfile
+        self.rfile = HeaderBudget(reader)
+        try:
+            return super().parse_request()
+        finally:
+            self.rfile = reader
+
+    def finish(self):
+        self.read_deadline.cancel()
+        self.read_deadline.join()
+        super().finish()
+
+    def do_GET(self):
+        self.read_deadline.cancel()
+        if self.path == "/healthz":
+            self.answer(200, {"status": "ok"})
+        else:
+            self.answer(404, {"error": "not found"})
+
+    def do_POST(self):
+        if self.path != "/attest":
+            self.answer(404, {"error": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self.answer(411, {"error": "Content-Length is required"})
+            return
+        if length < 0 or length > MAX_BODY_BYTES:
+            self.answer(413, {"error": f"the body may be {MAX_BODY_BYTES} bytes at most"})
+            return
+        try:
+            body = self.rfile.read(length)
+            self.read_deadline.cancel()
+            nonce, gpu = parse_request(body)
+        except BadRequest as err:
+            self.answer(400, {"error": str(err)})
+            return
+        # A quote takes the hardware a while, so only so many are in flight,
+        # and a caller waits a few seconds for its turn before it is sent away.
+        if not self.server.quotes.acquire(timeout=QUEUE_SECONDS):
+            self.answer(503, {"error": "busy, try again"}, {"Retry-After": "1"})
+            return
+        try:
+            keys = read_host_keys(self.server.host_keys)
+            attestation = self.quote(report_data(nonce, [blob for _, blob in keys]), gpu)
+        except Unavailable as err:
+            self.log_error("attestation unavailable: %s", err)
+            self.answer(502, {"error": "could not obtain attestation evidence"})
+            return
+        finally:
+            self.server.quotes.release()
+        self.answer(200, {
+            "version": LABEL.decode("ascii"),
+            "ssh_host_keys": [line for line, _ in keys],
+            "attestation": attestation,
+        })
+
+    def quote(self, digest: bytes, gpu: bool):
+        """attestation-api's answer for this report data, as it gave it."""
+        body = {"report_data": base64.b64encode(digest).decode("ascii")}
+        if gpu:
+            body["nvidia_gpu"] = True
+        request = urllib.request.Request(
+            self.server.backend, data=json.dumps(body).encode("ascii"),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.server.backend_timeout) as response:
+                evidence = response.read(MAX_EVIDENCE_BYTES + 1)
+                if len(evidence) > MAX_EVIDENCE_BYTES:
+                    raise Unavailable("attestation-api evidence exceeds the response limit")
+                return json.loads(evidence)
+        except urllib.error.HTTPError as err:
+            try:
+                raise Unavailable(f"attestation-api answered {err.code}: {err.read(512)!r}") from err
+            finally:
+                err.close()
+        except (OSError, ValueError) as err:
+            raise Unavailable(f"attestation-api: {err}") from err
+
+    def answer(self, status: int, body: dict, headers: dict | None = None):
+        data = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(data)
+
+
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = 128
+
+    def __init__(self, address, host_keys, backend, backend_timeout, max_quotes, max_connections):
+        super().__init__(address, Handler)
+        self.host_keys = host_keys
+        self.backend = backend
+        self.backend_timeout = backend_timeout
+        self.quotes = threading.BoundedSemaphore(max_quotes)
+        self.connections = threading.BoundedSemaphore(max_connections)
+
+    def process_request(self, request, client_address):
+        # Each connection takes a thread, so past the cap one is closed unread.
+        if not self.connections.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.connections.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.connections.release()
+
+    def handle_error(self, request, client_address):
+        # A caller that hangs up mid-answer is one line, not a traceback.
+        print(f"connection from {client_address[0]} ended: {sys.exc_info()[1]!r}", file=sys.stderr)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--bind", default="0.0.0.0:8400", help="address and port to listen on")
+    parser.add_argument("--backend", default="http://127.0.0.1:8401/attest",
+                        help="attestation-api's /attest, on loopback")
+    parser.add_argument("--host-keys", default="/etc/ssh/ssh_host_*_key.pub",
+                        help="glob of the SSH host public keys")
+    parser.add_argument("--backend-timeout", type=float, default=120,
+                        help="seconds one quote may take")
+    parser.add_argument("--max-quotes", type=int, default=4, help="quotes in flight at once")
+    parser.add_argument("--max-connections", type=int, default=64, help="connections open at once")
+    args = parser.parse_args()
+    host, _, port = args.bind.rpartition(":")
+    server = Server((host, int(port)), args.host_keys, args.backend,
+                    args.backend_timeout, args.max_quotes, args.max_connections)
+    print(f"listening on {server.server_address[0]}:{server.server_address[1]}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

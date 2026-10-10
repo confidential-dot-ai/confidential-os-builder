@@ -15,6 +15,12 @@ build configs, since those invalidate published reference values.
   diagnostics. Uses its own kernel fragment and measurements; hardened base
   and `gpu` defaults are unchanged. Runtime-installed software and persistent
   disk contents are not covered by launch attestation.
+- `general-purpose` images vouch for their SSH host keys. The attest port
+  (8400) is served by `general-purpose-attest`, which takes a 32-byte nonce
+  and nothing else and answers with the guest's host public keys and a quote
+  whose report data commits to both. `attestation-api` listens on
+  `127.0.0.1:8401` in these images, so no caller outside the guest chooses
+  what a quote covers. See [docs/VERIFYING.md](docs/VERIFYING.md).
 - Shared cross-profile package/source/tools caches, input-keyed unsigned
   NVIDIA module reuse, and changed-profile image selection. Fix package-cache
   directories and explicit mkosi output paths; keep final image assembly fresh.

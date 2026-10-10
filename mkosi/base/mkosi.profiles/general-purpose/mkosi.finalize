@@ -3,3 +3,17 @@ set -euo pipefail
 
 # The parent /etc overlay replaces ssh's narrower overlay.
 rm -f "$BUILDROOT/usr/lib/confai/state.d/50-ssh.conf"
+
+# In this profile the attest port belongs to general-purpose-attest, which
+# takes a nonce and nothing else, and attestation-api answers on loopback
+# only: no caller outside the guest picks what a quote covers. The attest
+# profiles bake the public bind, so that one line is rewritten here.
+config="$BUILDROOT/etc/attestation-api/config.toml"
+if [[ -f "$config" ]]; then
+    if [[ "$(grep -c '^bind = "0\.0\.0\.0:8400"$' "$config")" != 1 ]]; then
+        echo "general-purpose: $config does not bind 0.0.0.0:8400 exactly once" >&2
+        exit 1
+    fi
+    rewritten=$(sed 's/^bind = "0\.0\.0\.0:8400"$/bind = "127.0.0.1:8401"/' "$config")
+    printf '%s\n' "$rewritten" > "$config"
+fi

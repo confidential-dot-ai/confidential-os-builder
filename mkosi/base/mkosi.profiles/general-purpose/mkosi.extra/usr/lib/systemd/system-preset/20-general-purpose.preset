@@ -1,4 +1,5 @@
 enable general-purpose-ssh-host-keys.service
+enable general-purpose-attest.service
 enable containerd.service
 enable docker.service
 enable systemd-timesyncd.service
