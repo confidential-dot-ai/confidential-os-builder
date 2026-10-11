@@ -401,6 +401,8 @@ pub fn compute_fingerprint(
     signing_cert: &Path,
     snapshot: &Path,
 ) -> Result<km::Fingerprint> {
+    let fragment_text = fragment.map(fs_err::read_to_string).transpose()?;
+    let acpi_mode = aml::mode(fragment_text.as_deref())?;
     Ok(km::Fingerprint {
         linux_version: version.linux_version.clone(),
         tarball_sha256: version.tarball_sha256.clone(),
@@ -409,7 +411,11 @@ pub fn compute_fingerprint(
         confidential_config_sha256: fetch::sha256_file(Path::new(CVM_FRAGMENT))?,
         module_signing_cert_sha256: fetch::sha256_file(signing_cert)?,
         randstruct_seed_sha256: fetch::sha256_file(Path::new(RANDSTRUCT_SEED))?,
-        trusted_dsdt_sha256: fetch::sha256_file(&aml::dsdt_source(fragment)?)?,
+        acpi_mode,
+        trusted_dsdt_sha256: match acpi_mode {
+            aml::Mode::Trusted => fetch::sha256_file(&aml::dsdt_source(fragment)?)?,
+            aml::Mode::Host => String::new(),
+        },
         trusted_aml_patch_sha256: fetch::sha256_file(Path::new(aml::PATCH))?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
@@ -445,6 +451,28 @@ fn extract_tarball(tarball: &Path, dest: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn fingerprint_records_acpi_mode_and_only_an_enforced_table() {
+        let dir = TempDir::new().unwrap();
+        let version = pinned_version().unwrap();
+        let cert = Path::new(DEFAULT_SIGNING_CERT);
+        let fp = |text: &str| {
+            let fragment = dir.path().join("x.config");
+            fs_err::write(&fragment, text).unwrap();
+            compute_fingerprint(&version, Some(&fragment), cert, &dir.path().join("snap")).unwrap()
+        };
+        let trusted = fp("CONFIG_X=y\n");
+        assert_eq!(trusted.acpi_mode, aml::Mode::Trusted);
+        assert_eq!(
+            trusted.trusted_dsdt_sha256,
+            fetch::sha256_file(Path::new(aml::DSDT_SOURCE)).unwrap()
+        );
+        let host = fp("# confos-acpi: host\n");
+        assert_eq!(host.acpi_mode, aml::Mode::Host);
+        assert_eq!(host.trusted_dsdt_sha256, "");
+        assert_ne!(trusted.to_canonical_json(), host.to_canonical_json());
+    }
 
     #[test]
     fn kernel_cache_hit_still_prepares_tools_without_rebuilding_kernel() {
@@ -526,6 +554,7 @@ mod tests {
             snapshot_config_sha256: "e".repeat(64),
             module_signing_cert_sha256: "f".repeat(64),
             randstruct_seed_sha256: "1".repeat(64),
+            acpi_mode: aml::Mode::Trusted,
             trusted_dsdt_sha256: "2".repeat(64),
             trusted_aml_patch_sha256: "3".repeat(64),
             tools_tree_digest: "4".repeat(64),

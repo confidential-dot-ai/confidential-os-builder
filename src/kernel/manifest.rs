@@ -5,6 +5,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use super::aml::Mode;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct KernelManifest {
@@ -41,7 +43,12 @@ pub struct Fingerprint {
     // rotating it changes vmlinuz. `default` for pre-field manifests.
     #[serde(default)]
     pub randstruct_seed_sha256: String,
-    /// SHA-256 of the canonical trusted ASL source; empty in legacy manifests.
+    /// `host` when the fragment turns the trusted-AML gate off. Omitted for
+    /// the default, so default fingerprints are unchanged.
+    #[serde(default, skip_serializing_if = "Mode::is_trusted")]
+    pub acpi_mode: Mode,
+    /// SHA-256 of the trusted table compiled into the kernel; empty in legacy
+    /// manifests and in `host` mode, where no table is enforced.
     #[serde(default)]
     pub trusted_dsdt_sha256: String,
     /// SHA-256 of the version-specific kernel enforcement patch.
@@ -97,6 +104,7 @@ mod tests {
             module_signing_cert_sha256: "1".repeat(64),
             randstruct_seed_sha256: "2".repeat(64),
             tools_tree_digest: "e".repeat(64),
+            acpi_mode: Mode::Trusted,
             trusted_dsdt_sha256: "4".repeat(64),
             trusted_aml_patch_sha256: "5".repeat(64),
         }

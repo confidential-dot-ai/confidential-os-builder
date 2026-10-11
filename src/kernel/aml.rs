@@ -121,15 +121,24 @@ const MODE_DIRECTIVE: &str = "# confos-acpi:";
 
 /// Which AML the kernel may execute. Chosen per lineage by a directive line
 /// in the caller's fragment, so the choice is part of the fingerprinted input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Mode {
     /// Default: only the built-in `kernel/trusted-dsdt.asl`.
+    #[default]
     Trusted,
     /// `# confos-acpi: host` — the firmware's DSDT/SSDTs run unchanged. Only
     /// for cloud profiles whose host ACPI layout confos cannot pin; the
     /// tables must instead be checked at attestation time (TDX: RTMR[0]
     /// via the CCEL event log). Runtime table loaders stay forbidden.
     Host,
+}
+
+impl Mode {
+    /// Manifests omit the default mode, so default builds keep their JSON.
+    pub fn is_trusted(&self) -> bool {
+        *self == Mode::Trusted
+    }
 }
 
 /// The caller fragment's directive split into words; `None` when absent.
