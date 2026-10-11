@@ -557,6 +557,37 @@ mod tests {
         check_builder_invariants(snapshot, super::super::aml::Mode::Trusted).unwrap();
     }
 
+    /// A cloud lineage's committed snapshot must still carry what its own
+    /// fragment asks for and satisfy the ACPI mode that fragment declares.
+    fn check_cloud_snapshot(fragment: &str, snapshot: &str) {
+        let fragments = [
+            (
+                "required.config",
+                include_str!("../../kernel/required.config"),
+            ),
+            (
+                "hardening.config",
+                include_str!("../../kernel/hardening.config"),
+            ),
+            (
+                "confidential.config",
+                include_str!("../../kernel/confidential.config"),
+            ),
+            ("cloud.config", fragment),
+        ];
+        check_fragment_options(&fragments, snapshot).unwrap();
+        check_builder_invariants(snapshot, super::super::aml::mode(Some(fragment)).unwrap())
+            .unwrap();
+    }
+
+    #[test]
+    fn committed_azure_snapshot_matches_its_fragment() {
+        check_cloud_snapshot(
+            include_str!("../../kernel/azure.config"),
+            include_str!("../../kernel/config-x86_64-azure.snapshot"),
+        );
+    }
+
     #[test]
     fn update_snapshot_overwrites_and_reports_change() {
         let d = TempDir::new().unwrap();
