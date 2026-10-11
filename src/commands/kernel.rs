@@ -132,7 +132,13 @@ fn run_with_tools(
     println!("\n=== Step 0b: Fetching + extracting kernel ===");
     // Discard previous versions' source and objects before a fresh build.
     tools::force_remove_dir_all(&build_dir)?;
-    let kernel_src = extract_pinned_source(&version, &tools_tree, &cache_dir, &build_dir)?;
+    let kernel_src = extract_pinned_source(
+        &version,
+        &tools_tree,
+        &cache_dir,
+        &build_dir,
+        &aml::dsdt_source(fragment)?,
+    )?;
     println!("\n=== Step 0c: Configuring kernel ===");
 
     // Pin the RANDSTRUCT seed: rewrite gen-randstruct-seed.sh to emit our
@@ -245,8 +251,13 @@ pub fn prepare_source(args: &KernelSourceArgs) -> Result<()> {
     let tools_tree = ensure_tools_tree(false, &packages, Path::new(HARNESS_TOOLS_TREE_OUTPUT))?;
     fs_err::create_dir_all(&args.output)?;
     let out_dir = args.output.canonicalize()?;
-    let kernel_src =
-        extract_pinned_source(&version, &tools_tree, &out_dir.join("cache"), &out_dir)?;
+    let kernel_src = extract_pinned_source(
+        &version,
+        &tools_tree,
+        &out_dir.join("cache"),
+        &out_dir,
+        Path::new(aml::DSDT_SOURCE),
+    )?;
     println!("kernel source: {}", kernel_src.display());
     if args.acpi_harness {
         run_acpi_harness(&tools_tree, &out_dir, &version, &args.harness_args)?;
@@ -302,6 +313,7 @@ fn extract_pinned_source(
     tools_tree: &Path,
     cache_dir: &Path,
     dest: &Path,
+    dsdt: &Path,
 ) -> Result<PathBuf> {
     let tarball = fetch::fetch(&version.linux_version, &version.tarball_sha256, cache_dir)?;
     let kernel_src = dest.join(format!("linux-{}", version.linux_version));
@@ -317,7 +329,7 @@ fn extract_pinned_source(
             kernel_src.display()
         ));
     }
-    aml::stage(tools_tree, &kernel_src)?;
+    aml::stage(tools_tree, &kernel_src, dsdt)?;
     Ok(kernel_src)
 }
 
@@ -397,7 +409,7 @@ pub fn compute_fingerprint(
         confidential_config_sha256: fetch::sha256_file(Path::new(CVM_FRAGMENT))?,
         module_signing_cert_sha256: fetch::sha256_file(signing_cert)?,
         randstruct_seed_sha256: fetch::sha256_file(Path::new(RANDSTRUCT_SEED))?,
-        trusted_dsdt_sha256: fetch::sha256_file(Path::new(aml::DSDT_SOURCE))?,
+        trusted_dsdt_sha256: fetch::sha256_file(&aml::dsdt_source(fragment)?)?,
         trusted_aml_patch_sha256: fetch::sha256_file(Path::new(aml::PATCH))?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
