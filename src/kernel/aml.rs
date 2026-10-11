@@ -85,14 +85,63 @@ pub fn stage(tools_tree: &Path, kernel_src: &Path) -> Result<()> {
     config::nspawn(tools_tree, kernel_src, "/build", &[], STAGE_SCRIPT)
 }
 
+/// Fragment line that selects the ACPI policy for a whole kernel lineage.
+const MODE_DIRECTIVE: &str = "# confos-acpi:";
+
+/// Which AML the kernel may execute. Chosen per lineage by a directive line
+/// in the caller's fragment, so the choice is part of the fingerprinted input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Default: only the built-in `kernel/trusted-dsdt.asl`.
+    Trusted,
+    /// `# confos-acpi: host` — the firmware's DSDT/SSDTs run unchanged. Only
+    /// for cloud profiles whose host ACPI layout confos cannot pin; the
+    /// tables must instead be checked at attestation time (TDX: RTMR[0]
+    /// via the CCEL event log). Runtime table loaders stay forbidden.
+    Host,
+}
+
+/// Read the ACPI mode from the caller's fragment; absent means `Trusted`.
+pub fn mode(fragment: Option<&str>) -> Result<Mode> {
+    let mut modes = fragment
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix(MODE_DIRECTIVE))
+        .map(str::trim);
+    let mode = match modes.next() {
+        None | Some("trusted") => Mode::Trusted,
+        Some("host") => Mode::Host,
+        Some(other) => bail!("unknown {MODE_DIRECTIVE} value {other:?}; expected trusted or host"),
+    };
+    if modes.next().is_some() {
+        bail!("more than one {MODE_DIRECTIVE} line in the kernel fragment");
+    }
+    Ok(mode)
+}
+
 /// These invariants apply after all consumer fragments have been merged.
-pub fn verify_config(config: &str) -> Result<()> {
+pub fn verify_config(config: &str, mode: Mode) -> Result<()> {
     let values = config::values(config);
+    if mode == Mode::Host {
+        for symbol in ["CONFIG_ACPI_TRUSTED_AML", "CONFIG_ACPI_CUSTOM_DSDT"] {
+            if values.contains_key(symbol) {
+                bail!("{MODE_DIRECTIVE} host requires {symbol} off; the host DSDT must not be replaced");
+            }
+        }
+        if values.get("CONFIG_ACPI") != Some(&"y") {
+            bail!("{MODE_DIRECTIVE} host requires CONFIG_ACPI=y");
+        }
+        return verify_no_loaders(&values);
+    }
     for (symbol, value) in REQUIRED {
         if values.get(symbol) != Some(&value) {
             bail!("trusted AML requires resolved {symbol}={value}; consumer fragments cannot disable this boundary");
         }
     }
+    verify_no_loaders(&values)
+}
+
+fn verify_no_loaders(values: &std::collections::HashMap<&str, &str>) -> Result<()> {
     for symbol in FORBIDDEN {
         if matches!(values.get(symbol), Some(&"y" | &"m")) {
             bail!("trusted AML forbids {symbol}; alternate table loaders must remain disabled");
@@ -119,25 +168,39 @@ mod tests {
 
     #[test]
     fn rejects_weakened_consumer_configuration() {
-        verify_config(VALID_CONFIG).unwrap();
+        verify_config(VALID_CONFIG, Mode::Trusted).unwrap();
         for required in VALID_CONFIG.lines() {
             let weakened = VALID_CONFIG.replace(required, "");
             assert!(
-                verify_config(&weakened).is_err(),
+                verify_config(&weakened, Mode::Trusted).is_err(),
                 "accepted missing {required}"
             );
         }
-        assert!(verify_config(&VALID_CONFIG.replace(HEADER, "other-dsdt.h")).is_err());
+        assert!(verify_config(&VALID_CONFIG.replace(HEADER, "other-dsdt.h"), Mode::Trusted).is_err());
         for loader in FORBIDDEN {
             for value in ["y", "m"] {
-                assert!(verify_config(&format!("{VALID_CONFIG}{loader}={value}\n")).is_err());
+                assert!(verify_config(&format!("{VALID_CONFIG}{loader}={value}\n"), Mode::Trusted).is_err());
             }
         }
         // A disabled loader is fine; only enabled ones are forbidden.
         verify_config(&format!(
             "{VALID_CONFIG}# CONFIG_ACPI_TABLE_UPGRADE is not set\n"
-        ))
+        ), Mode::Trusted)
         .unwrap();
+    }
+
+    #[test]
+    fn host_mode_is_explicit_and_keeps_loaders_forbidden() {
+        assert_eq!(mode(None).unwrap(), Mode::Trusted);
+        assert_eq!(mode(Some("CONFIG_X=y\n")).unwrap(), Mode::Trusted);
+        assert_eq!(mode(Some("# confos-acpi: host\n")).unwrap(), Mode::Host);
+        assert!(mode(Some("# confos-acpi: off\n")).is_err());
+        assert!(mode(Some("# confos-acpi: host\n# confos-acpi: host\n")).is_err());
+        let host = "CONFIG_ACPI=y\n";
+        verify_config(host, Mode::Host).unwrap();
+        assert!(verify_config(host, Mode::Trusted).is_err());
+        assert!(verify_config(VALID_CONFIG, Mode::Host).is_err());
+        assert!(verify_config(&format!("{host}CONFIG_ACPI_CONFIGFS=y\n"), Mode::Host).is_err());
     }
 
     #[test]
