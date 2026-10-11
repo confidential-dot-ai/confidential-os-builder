@@ -34,20 +34,39 @@ fi
 
 echo "initrd: setting up dm-verity with roothash=$ROOTHASH"
 
-# Wait for virtio disk to appear (up to 30 seconds)
+# Find the verity data and hash partitions by PARTUUID instead of by device
+# name: virtio (vda), SCSI (sda) and NVMe (nvme0n1) all work. systemd-repart
+# derives them from the root hash: data = first 128 bits, hash = last 128
+# bits (SHA-256 root hash). veritysetup still checks every block against the
+# full hash, so a host-supplied partition with a matching UUID cannot pass.
+as_uuid() {
+    printf '%s-%s-%s-%s-%s' "${1:0:8}" "${1:8:4}" "${1:12:4}" "${1:16:4}" "${1:20:12}"
+}
+[ "${#ROOTHASH}" = "64" ] || { echo "FATAL: PARTUUID discovery needs a SHA-256 roothash"; echo b > /proc/sysrq-trigger; exit 1; }
+DATA_UUID=$(as_uuid "${ROOTHASH:0:32}")
+HASH_UUID=$(as_uuid "${ROOTHASH:32:32}")
+
+# Wait for the disk to appear (up to 30 seconds)
 WAITED=0
-while [ ! -e /dev/vda2 ] && [ "$WAITED" -lt 30 ]; do
+DATA_DEV=""
+HASH_DEV=""
+while [ "$WAITED" -lt 30 ]; do
+    DATA_DEV=$(blkid -l -o device -t PARTUUID="$DATA_UUID" 2>/dev/null || true)
+    HASH_DEV=$(blkid -l -o device -t PARTUUID="$HASH_UUID" 2>/dev/null || true)
+    [ -n "$DATA_DEV" ] && [ -n "$HASH_DEV" ] && break
     sleep 1
     WAITED=$((WAITED + 1))
 done
-if [ ! -e /dev/vda2 ]; then
-    echo "FATAL: /dev/vda2 not found after ${WAITED}s"
+if [ -z "$DATA_DEV" ] || [ -z "$HASH_DEV" ]; then
+    echo "FATAL: verity partitions $DATA_UUID/$HASH_UUID not found after ${WAITED}s"
     sleep 5
     echo b > /proc/sysrq-trigger
     exit 1  # fallback if sysrq disabled
 fi
+ROOT_DISK=/sys/class/block/${DATA_DEV#/dev/}/..
+ROOT_DISK=$(basename "$(readlink -f "$ROOT_DISK")")
 
-veritysetup open /dev/vda2 root /dev/vda3 "$ROOTHASH"
+veritysetup open "$DATA_DEV" root "$HASH_DEV" "$ROOTHASH"
 echo "initrd: dm-verity device created at /dev/mapper/root"
 
 # Select the writable-state backing by virtio-block device serial (not a
@@ -61,10 +80,13 @@ echo "initrd: dm-verity device created at /dev/mapper/root"
 # device's purpose in YAML and the guest sees it before boot. See src/qemu.rs
 # for the matching `confos run` path.
 SCRATCH_DEV=""
-for dev in /dev/vdb /dev/vdc /dev/vdd; do
-    [ -e "$dev" ] || continue
-    SERIAL=$(cat "/sys/block/$(basename "$dev")/serial" 2>/dev/null || true)
-    echo "initrd: examining $dev (serial=${SERIAL:-<none>})"
+for sys in /sys/block/*; do
+    dev=/dev/${sys##*/}
+    [ "${sys##*/}" != "$ROOT_DISK" ] || continue
+    [ -b "$dev" ] || continue
+    SERIAL=$(cat "$sys/serial" 2>/dev/null || true)
+    [ -n "$SERIAL" ] || continue
+    echo "initrd: examining $dev (serial=$SERIAL)"
     if [ "$SERIAL" = "confai-scratch" ]; then
         SCRATCH_DEV="$dev"
         break
