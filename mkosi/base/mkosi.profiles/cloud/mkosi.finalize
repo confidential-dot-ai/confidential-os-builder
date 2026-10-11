@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+units="$BUILDROOT/etc/systemd/system"
+
+# systemd-pcrlock builds a TPM PCR policy, and writes it to an NV index in the
+# TPM, for secrets sealed with --tpm2-pcrlock. Nothing in these images seals
+# to the TPM. On a cloud vTPM the units fail every boot (Azure), and Azure
+# keeps vTPM state in host-stored VMGS. Mask every pcrlock unit the image has.
+for unit in "$BUILDROOT"/usr/lib/systemd/system/systemd-pcrlock*; do
+    ln -sfn /dev/null "$units/${unit##*/}"
+done
+
+# Cloud VMs have no user-data disk. general-purpose mounts one by label and
+# makes docker and containerd require it, so every boot waited 90 s for the
+# device. Here their data stays in /var/lib/user-data on the writable state
+# (the initrd's 2G RAM tmpfs, docs/CLOUD.md).
+ln -sfn /dev/null "$units/var-lib-user\x2ddata.automount"
+ln -sfn /dev/null "$units/var-lib-user\x2ddata.mount"
+for service in docker containerd; do
+    dropin="$units/$service.service.d/10-general-purpose-persistent-state.conf"
+    rewritten=$(sed -E -e '/^RequiresMountsFor=/d' -e 's/ ?var-lib-user\\x2ddata\.mount//' -e '/^After=$/d' "$dropin")
+    printf '%s\n' "$rewritten" > "$dropin"
+done

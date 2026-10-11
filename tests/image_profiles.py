@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,41 @@ EXTRA = PROFILE / "mkosi.extra"
 COMMON = ROOT / "mkosi/base/mkosi.profiles/general-purpose"
 COMMON_EXTRA = COMMON / "mkosi.extra"
 READY = "CC State : ON\nMulti-GPU Mode : NVLE\nCC GPUs Ready State : Ready\n"
+
+
+class CloudProfileTests(unittest.TestCase):
+    def test_finalize_masks_pcrlock_and_drops_the_user_data_disk(self):
+        profiles = ROOT / "mkosi/base/mkosi.profiles"
+        with tempfile.TemporaryDirectory() as tmp:
+            buildroot = Path(tmp)
+            units = buildroot / "etc/systemd/system"
+            shutil.copytree(profiles / "general-purpose/mkosi.extra/etc/systemd/system", units)
+            vendor = buildroot / "usr/lib/systemd/system"
+            vendor.mkdir(parents=True)
+            shipped = ["systemd-pcrlock-make-policy.service", "systemd-pcrlock.socket", "systemd-pcrlock@.service", "systemd-pcrphase.service"]
+            for unit in shipped:
+                (vendor / unit).write_text("[Unit]\n")
+            result = subprocess.run(["bash", str(profiles / "cloud/mkosi.finalize")],
+                                    env={**os.environ, "BUILDROOT": tmp}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            def masked(unit):
+                return os.readlink(units / unit) == "/dev/null" if (units / unit).is_symlink() else False
+
+            for unit in shipped[:3]:
+                self.assertTrue(masked(unit), unit)
+            self.assertFalse((units / "systemd-pcrphase.service").exists(), "only pcrlock units are masked")
+            for unit in ("var-lib-user\\x2ddata.mount", "var-lib-user\\x2ddata.automount"):
+                self.assertTrue(masked(unit), unit)
+            for service in ("docker", "containerd"):
+                original = (profiles / f"general-purpose/mkosi.extra/etc/systemd/system/{service}.service.d/10-general-purpose-persistent-state.conf").read_text()
+                dropin = (units / f"{service}.service.d/10-general-purpose-persistent-state.conf").read_text()
+                self.assertNotIn("user\\x2ddata", dropin.replace("/var/lib/user-data", ""))
+                self.assertNotIn("RequiresMountsFor", dropin)
+                # Everything else the general-purpose drop-in sets is kept.
+                kept = [l.replace("var-lib-user\\x2ddata.mount", "").rstrip() for l in original.splitlines()
+                        if not l.startswith("RequiresMountsFor=")]
+                self.assertEqual(dropin.splitlines(), [l for l in kept if l != "After="])
 
 
 class AzureAttestationTests(unittest.TestCase):

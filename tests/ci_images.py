@@ -39,6 +39,7 @@ class SelectionTests(unittest.TestCase):
             self.check([path], ["azure"])
         for path in ("kernel/gcp.config", "kernel/config-x86_64-gcp.snapshot", "mkosi/base/mkosi.profiles/gcp/mkosi.conf"):
             self.check([path], ["gcp"])
+        self.check(["mkosi/base/mkosi.profiles/cloud/mkosi.finalize"], ["azure", "gcp"])
 
     def test_shared_kernel_and_builder(self):
         for path in ("kernel/hardening.config", "kernel/trusted-dsdt.asl", "kernel/version", "mkosi/initrd/mkosi.conf", "src/commands/build.rs", "ci/images.json", ".github/actions/build-cache/action.yml"):

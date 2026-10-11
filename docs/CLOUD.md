@@ -64,8 +64,7 @@ The kernel fragment selects the AML the kernel may run with one
 ## Root and provisioning
 
 - The initrd finds the verity partitions by PARTUUID, so the SCSI (Azure)
-  and NVMe (GCE) boot disks work. A scratch disk is found only on virtio-blk, so cloud
-  images use the 2G RAM state tmpfs.
+  and NVMe (GCE) boot disks work.
 - cloud-init uses the cloud datasource instead of the measured NoCloud seed.
   SSH keys come from cloud metadata and are installed for root
   (Azure's `adminUsername` is not created). They are **not** launch-measured:
@@ -81,6 +80,9 @@ The kernel fragment selects the AML the kernel may run with one
   and GCE reboots it in a loop. The cause is not known; this is a workaround.
   init_on_alloc stays on.
 - Boot with Secure Boot off: systemd-boot (Azure) and the UKI are unsigned.
+- The shared `cloud` profile masks the systemd-pcrlock units (nothing in the
+  image seals secrets to the TPM, and they fail on the Azure vTPM) and drops
+  the general-purpose user-data disk (see below).
 
 ## Boot path
 
@@ -95,6 +97,22 @@ image". The same disk with only `BOOTX64.EFI` replaced by the UKI boots and
 attests (boot and reboot; RTMR[1] matches the direct-UKI prediction). The
 same systemd-boot disk boots on GCE SEV-SNP and on Azure. The firmware then
 measures one image load into RTMR[1] instead of two.
+
+## Known limitations
+
+- **Writable state is a 2G RAM tmpfs.** The initrd uses an encrypted scratch
+  disk only when a virtio-blk disk reports the serial `confai-scratch`. GCE
+  (NVMe) and Azure (SCSI) disks do not, so cloud images keep all writes,
+  including Docker and containerd data under `/var/lib/user-data`, in a 2G
+  tmpfs that is lost on reboot. The size is fixed in the measured initrd
+  (`mkosi/initrd/mkosi.extra/init`, `size=2G`); it is not a profile setting.
+  Matching a cloud data disk (GCE NVMe, Azure LUN) is a follow-up.
+- **No user-data disk.** general-purpose mounts an ext4 disk labelled
+  `user-data`; the `cloud` profile masks that mount so boot does not wait
+  90 s for a disk the cloud VM does not have.
+- **SSH host keys change on every boot.** `/etc` is on the tmpfs state, so
+  pinned clients see a new key after any restart. Persisting or attesting
+  the keys is a follow-up.
 
 ## Attestation
 
