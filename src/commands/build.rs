@@ -386,12 +386,12 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     // sudo_mv above. The pass is fast (a few hundred ms on a 1G UKI +
     // 4G disk) — no disk crypto, no firmware-side simulation beyond
     // MRTD's MEM.PAGE.ADD / MR.EXTEND replay.
+    let disk_bytes = fs_err::read(&disk_path)?;
     let tdx_measurement: Option<manifest::TdxMeasurement> = if platform.needs_tdx() {
         println!("\n=== Step 4b: Computing TDX measurements ===");
         let fw_bytes = tdx_fw_bytes_opt
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("TDX firmware path required for TDX measurement"))?;
-        let disk_bytes = fs_err::read(&disk_path)?;
         let m =
             tdx_measure::measure_uki_topology_invariant(fw_bytes, &uki_bytes, Some(&disk_bytes))
                 .map_err(|e| anyhow::anyhow!("TDX measurement failed: {e}"))?;
@@ -420,6 +420,21 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         );
         None
     };
+
+    // Step 4c: what cloud firmware will measure for this disk (GCE TDX
+    // RTMRs, Azure vTPM PCRs). Depends only on the disk and UKI.
+    println!("\n=== Step 4c: Computing cloud measurements ===");
+    let cloud = manifest::CloudMeasurement::from(
+        &tdx_measure::cloud::measure(&uki_bytes, &disk_bytes)
+            .map_err(|e| anyhow::anyhow!("cloud measurement failed: {e}"))?,
+    );
+    drop(disk_bytes);
+    println!("  boot path:     {}", cloud.boot_path);
+    println!("  GCE RTMR[1]:   {}", cloud.gcp_tdx.rtmr1);
+    println!("  GCE RTMR[2]:   {}", cloud.gcp_tdx.rtmr2);
+    println!("  Azure PCR4:    {}", cloud.azure_vtpm.pcr4);
+    println!("  Azure PCR9:    {}", cloud.azure_vtpm.pcr9);
+    println!("  Azure PCR11:   {}", cloud.azure_vtpm.pcr11);
 
     println!("\n=== Calculating checksums ===");
     // mkosi records checksums for several split artifacts in this file. Do
@@ -525,6 +540,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
         },
         snp_variants: igvm_variants,
         tdx: tdx_measurement,
+        cloud: Some(cloud),
     };
     let manifest_path = output.join("manifest.json");
     manifest::write_manifest(&build_manifest, &manifest_path)?;

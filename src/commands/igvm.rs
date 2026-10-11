@@ -204,6 +204,7 @@ mod tests {
             },
             snp_variants: vec![],
             tdx: None,
+            cloud: None,
         }
     }
 

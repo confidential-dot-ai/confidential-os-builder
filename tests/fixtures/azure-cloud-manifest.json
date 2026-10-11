@@ -1,0 +1,62 @@
+{
+  "version": 3,
+  "build": {
+    "timestamp": "2026-10-11T04:30:28Z",
+    "memory": "8G",
+    "format": "raw",
+    "platform": "tdx"
+  },
+  "inputs": {
+    "kernel": {
+      "linux_version": "6.18.49",
+      "vmlinuz_sha256": "037197071bf464af54ce17279450011fdbdac4348bd89d5f70d2fb3705283086",
+      "required_config_sha256": "ea97d2774893e2d33674db7bab601a2e029402ee3058b1f414fe14ace19618f2",
+      "hardening_config_sha256": "0114a50e7b2695170be396b3820f2dbce940f84e7421414985197de17e4746ee",
+      "kernel_extra_config_sha256": "48510576b243b9a63e4a765a0d555cf94b86314de277f6921d0bb8af415f9010",
+      "snapshot_config_sha256": "ab3cfdcbb73849280530d0da2e52ebf37aca210100f3ea098bd3112b80df3aee",
+      "module_signing_cert_sha256": "7c9f63b0206dc794e5be126b86ce50c68cd33d1c22ecd5979984614c476a986e",
+      "randstruct_seed_sha256": "7d6b81e63586f80ea22920623630caee43ec2eeab3113be606ab75da779ce317",
+      "trusted_dsdt_sha256": "309fd2dfe9b71ce2d31170c06316ca82079b05f9b69a5f183ed8eed58575ca36",
+      "trusted_aml_patch_sha256": "9b26d516d5860cba4aea34248177b4caedf7f0528a7920c697b13723efcc2d77"
+    },
+    "initrd": {
+      "path": "initrd.img",
+      "sha256": "e314fded625fd7145d1d7dc7310f47297681fb21374b1776e067b2d2d19efad3"
+    },
+    "base_image": {
+      "path": "image.raw",
+      "sha256": "a0e87b02f987d65bf5755930b0452fb574f4f31f2e82131fb06a80cd492b86a0"
+    }
+  },
+  "outputs": {
+    "disk_image": {
+      "path": "disk.raw",
+      "sha256": "a0e87b02f987d65bf5755930b0452fb574f4f31f2e82131fb06a80cd492b86a0"
+    },
+    "uki": {
+      "path": "uki.efi",
+      "sha256": "9c3d2ea4a06f91d271b014461a7a9035d4b08184bb19dc70e7aa9a1034653fc4"
+    }
+  },
+  "tdx": {
+    "mrtd": "9309eaae9c151e766de0f97b1d1aaeb76b8c8c366080803943fb566521c8f0cf00a142d8b7b0683ed1d42c5a27198ba1",
+    "rtmr1": "c80516a1414ee4c80d380c7b439edecb49b8f9ad6fe974ba09b0a67d89afc04c58435b11a04218a4376818bbdf0f8c7d",
+    "rtmr2": "cec2bfca41e1864f59795a9b1a2bf17f938d97a3e7bc2382accf2511a491ce9fb6199fb3f96f32f79dbe5954b0b4d9d7",
+    "firmware": {
+      "path": "OVMF.tdx.fd",
+      "sha256": "a7edaeff6fc4bef8924461cb0fb68a194c3595d08ccad2720cca926dea12f7cf"
+    }
+  },
+  "cloud": {
+    "boot_path": "systemd-boot",
+    "gcp_tdx": {
+      "rtmr1": "c80516a1414ee4c80d380c7b439edecb49b8f9ad6fe974ba09b0a67d89afc04c58435b11a04218a4376818bbdf0f8c7d",
+      "rtmr2": "d0e120f52f299741fc6b3f185e7d935447e8a127742915cf45e5015cc4661951e706f8e159c72b136a16ff76cfb35f5c"
+    },
+    "azure_vtpm": {
+      "pcr4": "01a877a78619b163df80fb2cc469de09a74682efcc19b282e211285719cfa51a",
+      "pcr9": "aabf3cb9ccf46c2742a0358c5d8d6466c8b7798584dc985ba7dd1b417cd0c0a9",
+      "pcr11": "bb522ef6ca6baa0497820cc06c22c3c2ba9ec0c9055c00b758a05172b5ff3921"
+    }
+  }
+}
