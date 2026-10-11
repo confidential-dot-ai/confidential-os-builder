@@ -50,6 +50,17 @@ patch participate in the kernel cache fingerprint. Snapshot regeneration
 must use the patched source tree so the added configuration symbol is
 resolved by Kconfig.
 
+### Per-lineage ACPI mode
+
+A `--kernel-config-fragment` may carry one directive line. It is part of the
+fragment, so it is in the kernel fingerprint:
+
+| Directive | Effect |
+|---|---|
+| none, or `# confos-acpi: trusted` | Default. Only `kernel/trusted-dsdt.asl` runs. |
+| `# confos-acpi: trusted TABLE` | Only `TABLE` runs. `TABLE` is a repo-relative `.asl` source, or a raw `.aml` table captured from the target platform. A `.aml` table must be a DSDT with a valid checksum, and is embedded byte for byte. `kernel.trusted_dsdt_sha256` is the hash of `TABLE`. |
+| `# confos-acpi: host` | The gate is off and the firmware's DSDT/SSDTs run. `CONFIG_ACPI_TRUSTED_AML` and `CONFIG_ACPI_CUSTOM_DSDT` must be off. The table loaders above stay forbidden. Use it only where the platform measures ACPI and the verifier checks those measurements (TDX RTMR[0]). Host AML still runs before any verifier sees the quote. |
+
 The patch header's `Linux-Version:` trailer names the kernel its hooks were
 audited on. `kernel/version` must match it, so a pin bump fails the build
 until these enforcement points have been reviewed on the new source and
