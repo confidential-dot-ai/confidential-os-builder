@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Package a confos cloud recipe for import.
+
+  bin/cloud-image gcp   [output/gcp]     -> <out>/cloud/confos-gcp.tar.gz
+  bin/cloud-image azure [output/azure]   -> <out>/cloud/confos-azure.vhd
+
+GCE wants a gzip tar (oldgnu) holding exactly `disk.raw`. Azure wants a fixed
+VHD whose virtual size is a whole MiB. Upload and import commands live in
+bin/cloud-upload-azure, bin/cloud-import-gcp and bin/cloud-import-azure
+(docs/CLOUD.md). Expected measurements are in the build's manifest.json.
+"""
+
+import argparse
+import hashlib
+from pathlib import Path
+import shutil
+import struct
+import subprocess
+import uuid
+
+
+def package(cloud, out):
+    dest = out / "cloud"
+    dest.mkdir(exist_ok=True)
+    disk = out / "disk.raw"
+    if cloud == "gcp":
+        target = dest / "confos-gcp.tar.gz"
+        subprocess.run(["tar", "--format=oldgnu", "-Sczf", str(target), "-C", str(out), "disk.raw"], check=True)
+    else:
+        target = dest / "confos-azure.vhd"
+        shutil.copyfile(disk, target)
+        size = -(-disk.stat().st_size // (1 << 20)) * (1 << 20)
+        with open(target, "r+b") as f:
+            f.truncate(size)
+            f.seek(size)
+            f.write(vhd_footer(size))
+    with open(target, "rb") as f:
+        digest = hashlib.file_digest(f, "sha256").hexdigest()
+    (dest / (target.name + ".sha256")).write_text(f"{digest}  {target.name}\n")
+    print(f"{digest}  {target}")
+
+
+def vhd_footer(size):
+    cylinders, heads, sectors = chs(size // 512)
+    footer = bytearray(struct.pack(
+        ">8sIIQI4sI4sQQHBBII16sB427x", b"conectix", 2, 0x00010000, 0xFFFFFFFFFFFFFFFF, 0,
+        b"cnfs", 0x00010000, b"Wi2k", size, size, cylinders, heads, sectors, 2, 0,
+        uuid.uuid5(uuid.NAMESPACE_URL, f"confos-vhd-{size}").bytes, 0))
+    struct.pack_into(">I", footer, 64, ~sum(footer) & 0xFFFFFFFF)
+    return bytes(footer)
+
+
+def chs(total):
+    """CHS geometry from the VHD specification (appendix)."""
+    total = min(total, 65535 * 16 * 255)
+    if total >= 65535 * 16 * 63:
+        spt, heads = 255, 16
+    else:
+        spt = 17
+        cth = total // spt
+        heads = max((cth + 1023) // 1024, 4)
+        if cth >= heads * 1024 or heads > 16:
+            spt, heads = 31, 16
+            cth = total // spt
+        if cth >= heads * 1024:
+            spt, heads = 63, 16
+    return total // spt // heads, heads, spt
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("cloud", choices=["gcp", "azure"])
+    parser.add_argument("output", nargs="?", help="recipe output directory (default: output/CLOUD)")
+    args = parser.parse_args()
+    package(args.cloud, Path(args.output or f"output/{args.cloud}"))
+
+
+if __name__ == "__main__":
+    main()
