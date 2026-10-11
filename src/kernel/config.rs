@@ -589,6 +589,14 @@ mod tests {
     }
 
     #[test]
+    fn committed_gcp_snapshot_matches_its_fragment() {
+        check_cloud_snapshot(
+            include_str!("../../kernel/gcp.config"),
+            include_str!("../../kernel/config-x86_64-gcp.snapshot"),
+        );
+    }
+
+    #[test]
     fn update_snapshot_overwrites_and_reports_change() {
         let d = TempDir::new().unwrap();
         let a = write(&d, "a", "CONFIG_X=y\n");

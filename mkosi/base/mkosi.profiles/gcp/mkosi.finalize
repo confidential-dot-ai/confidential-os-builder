@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+
+# The base disables cloud-init when no NoCloud seed is baked; this profile
+# uses the GCE datasource instead.
+rm -f "$BUILDROOT/etc/cloud/cloud-init.disabled"
