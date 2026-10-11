@@ -42,9 +42,19 @@ done
 if [ -d /usr/lib64 ]; then
     ln -s usr/lib64 "$fixture_root/lib64"
 fi
-touch "$fixture_root/confos-test-root" "$fixture_root/dev/null" "$fixture_root/dev/vda2"
+touch "$fixture_root/confos-test-root" "$fixture_root/dev/null" "$fixture_root/dev/urandom"
 mount --bind /dev/null "$fixture_root/dev/null"
-printf 'roothash=%064d\n' 0 > "$fixture_root/proc/cmdline"
+mount --bind /dev/urandom "$fixture_root/dev/urandom"
+# Root disk on NVMe (as on GCE), a SCSI disk (as on Azure) and the scratch
+# disk on virtio-blk. Only virtio-blk publishes /sys/block/<dev>/serial;
+# NVMe and SCSI do not, so they are never scratch candidates.
+mknod "$fixture_root/dev/nvme0n1" b 259 0
+mknod "$fixture_root/dev/sda" b 8 0
+mknod "$fixture_root/dev/vdb" b 253 16
+mkdir -p "$fixture_root"/sys/block/{nvme0n1/nvme0n1p2,sda,vdb} "$fixture_root/sys/class/block"
+echo confai-scratch > "$fixture_root/sys/block/vdb/serial"
+ln -s ../../block/nvme0n1/nvme0n1p2 "$fixture_root/sys/class/block/nvme0n1p2"
+printf 'roothash=58ada21469e0c4fe0cf5f9f77e4295f82d510b566286aa0b09a4c044faf842ba\n' > "$fixture_root/proc/cmdline"
 printf '0.00 0.00\n' > "$fixture_root/proc/uptime"
 # A malformed test boot must never write the real host's sysrq-trigger.
 touch "$fixture_root/proc/sysrq-trigger"
@@ -63,10 +73,24 @@ cp tests/immutable_root.py "$fixture_root/tests.py"
 
 cat > "$fixture_root/usr/sbin/veritysetup" <<'SHIM'
 #!/bin/bash
+printf '%s\n' "$@" > /veritysetup-args
+SHIM
+cat > "$fixture_root/usr/sbin/cryptsetup" <<'SHIM'
+#!/bin/bash
+printf '%s\n' "$@" > /cryptsetup-args
+SHIM
+cat > "$fixture_root/usr/sbin/mkfs.ext4" <<'SHIM'
+#!/bin/bash
 exit 0
 SHIM
 cat > "$fixture_root/usr/sbin/blkid" <<'SHIM'
 #!/bin/bash
+# The partition UUIDs systemd-repart wrote for the cmdline roothash (read from
+# the real image with sfdisk), on an NVMe disk.
+case "$*" in
+    "-l -o device -t PARTUUID=58ada214-69e0-c4fe-0cf5-f9f77e4295f8") echo /dev/nvme0n1p2; exit 0 ;;
+    "-l -o device -t PARTUUID=2d510b56-6286-aa0b-09a4-c044faf842ba") echo /dev/nvme0n1p3; exit 0 ;;
+esac
 # No operator-key disk. Expose both NoCloud and ConfigDrive disks to detection.
 if [ "${1:-}" = -L ]; then
     exit 1
@@ -80,6 +104,8 @@ printf '%s\n' "$*" >> /mount-calls
 case "$*" in
     "-t proc proc /proc"|"-t sysfs sysfs /sys"|"-t devtmpfs devtmpfs /dev")
         exit 0 ;;
+    "/dev/mapper/scratch /state")
+        exec /usr/bin/mount -t tmpfs tmpfs /state ;;
     "-o ro /dev/mapper/root /sysroot")
         /usr/bin/mount --bind /image /sysroot
         exec /usr/bin/mount -o remount,bind,ro /sysroot ;;
