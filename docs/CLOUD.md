@@ -29,18 +29,14 @@ The kernel fragment selects the AML the kernel may run with one
   devices it describes (VMBus, vTPM, UARTs) stay at the same addresses.
   Re-capture and rebuild to adopt a new table.
 
-- **GCE** uses `host`: the firmware's DSDT/SSDTs run. This is safe only if
-  the verifier checks RTMR[0]. GCE measures its ACPI tables into RTMR[0]
-  (CCEL event log), so a verifier must pin RTMR[0], or the ACPI event digests
-  in a CCEL bound to the quote, to values reviewed for the machine type.
-  Without that check, the host controls the AML the kernel runs. Even with
-  it, host AML runs before any verifier sees a quote; the check lets a
-  verifier refuse the node, not stop the AML. GCE's DSDT, FACP and TPM SSDT
-  were stable across sizes. `trusted` with a captured GCE DSDT would also
-  work, but the gate drops the TPM SSDT.
-
-A digest allowlist (accept any one of N known host tables) needs a kernel
-patch change. It is not implemented.
+- **GCE** uses `host` on purpose: the firmware's DSDT/SSDTs run, and the
+  verifier pins RTMR[0] per machine type. GCE measures its ACPI tables into
+  RTMR[0] (CCEL event log), so the verifier compares RTMR[0], or the ACPI
+  event digests in a CCEL bound to the quote, with values reviewed for that
+  machine type. Without that check, the host controls the AML the kernel
+  runs. Even with it, host AML runs before any verifier sees a quote; the
+  check lets a verifier refuse the node, not stop the AML. GCE's DSDT, FACP
+  and TPM SSDT were stable across sizes.
 
 ## Root and provisioning
 
