@@ -52,6 +52,28 @@ class CloudProfileTests(unittest.TestCase):
                         if not l.startswith("RequiresMountsFor=")]
                 self.assertEqual(dropin.splitlines(), [l for l in kept if l != "After="])
 
+    def test_ssh_host_keys_are_made_once_and_restored_from_the_store(self):
+        cloud = ROOT / "mkosi/base/mkosi.profiles/cloud/mkosi.extra"
+        script = cloud / "usr/lib/confai/cloud-ssh-host-keys"
+        names = [f"ssh_host_{t}_key" for t in ("rsa", "ecdsa", "ed25519")]
+        with tempfile.TemporaryDirectory() as tmp:
+            store, first, second = (Path(tmp) / d for d in ("esp/confos/ssh-host-keys", "boot1", "boot2"))
+            for boot in (first, second):
+                boot.mkdir()
+                result = subprocess.run(["bash", str(script), str(store), str(boot)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(sorted(p.name for p in store.iterdir()), sorted(names + [n + ".pub" for n in names]))
+            for name in names:
+                for directory in (store, first, second):
+                    self.assertEqual((directory / name).stat().st_mode & 0o777, 0o600, (directory, name))
+                self.assertEqual((first / name).read_bytes(), (second / name).read_bytes(), name)
+                self.assertEqual((first / f"{name}.pub").read_bytes(), (store / f"{name}.pub").read_bytes(), name)
+            derived = subprocess.run(["ssh-keygen", "-y", "-f", str(second / "ssh_host_ed25519_key")],
+                                     capture_output=True, text=True, check=True).stdout.split()[:2]
+            self.assertEqual(derived, (second / "ssh_host_ed25519_key.pub").read_text().split()[:2])
+        config = (cloud / "etc/ssh/sshd_config.d/20-cloud-host-keys.conf").read_text().splitlines()
+        self.assertEqual([l for l in config if l.startswith("HostKey ")], [f"HostKey /etc/ssh/{n}" for n in names])
+
 
 class AzureAttestationTests(unittest.TestCase):
     def test_finalize_sets_cloud_platforms_and_preserves_other_settings(self):

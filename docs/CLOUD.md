@@ -83,6 +83,11 @@ The kernel fragment selects the AML the kernel may run with one
 - The shared `cloud` profile masks the systemd-pcrlock units (nothing in the
   image seals secrets to the TPM, and they fail on the Azure vTPM) and drops
   the general-purpose user-data disk (see below).
+- SSH host keys persist across reboot and stop/start. At boot,
+  `cloud-ssh-host-keys.service` mounts the boot disk's ESP and copies the
+  keys from `/confos/ssh-host-keys/` to `/etc/ssh`. If keys are missing, it
+  generates them and saves them there. A new VM gets new keys. The ESP files
+  are data, not boot entries, so they do not change any measurement.
 
 ## Boot path
 
@@ -110,9 +115,11 @@ measures one image load into RTMR[1] instead of two.
 - **No user-data disk.** general-purpose mounts an ext4 disk labelled
   `user-data`; the `cloud` profile masks that mount so boot does not wait
   90 s for a disk the cloud VM does not have.
-- **SSH host keys change on every boot.** `/etc` is on the tmpfs state, so
-  pinned clients see a new key after any restart. Persisting or attesting
-  the keys is a follow-up.
+- **SSH host keys are stored unencrypted on the boot disk.** Anyone who can
+  read the disk (the cloud provider, a disk snapshot) can copy the private
+  keys and impersonate the VM, even to a client that checked the attested
+  host keys. This is accepted because these images already trust the cloud
+  provider (see the SSH key bullet above).
 
 ## Attestation
 

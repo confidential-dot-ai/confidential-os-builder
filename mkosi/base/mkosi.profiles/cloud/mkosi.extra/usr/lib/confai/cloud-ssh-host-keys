@@ -1,0 +1,41 @@
+#!/bin/bash
+# Keep the SSH host keys on the boot disk's ESP. Cloud writable state is a
+# RAM tmpfs, so keys made in /etc/ssh would change on every boot. The ESP
+# survives reboot and stop/start; a new VM gets a new disk and new keys.
+# The keys sit in /confos/ssh-host-keys, outside EFI/ and loader/, so neither
+# firmware nor systemd-boot loads (or measures) them.
+#
+# Usage: cloud-ssh-host-keys [STORE DEST]
+# Without arguments, STORE is that directory on the ESP and DEST is /etc/ssh.
+set -euo pipefail
+
+# sshd's default host key types; 20-cloud-host-keys.conf lists the same.
+types=(rsa ecdsa ed25519)
+
+if (( $# == 0 )); then
+    esp_type=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+    disk=$(lsblk -nrspo PATH,TYPE "$(findmnt -nvo SOURCE /)" | awk '$2 == "disk" {print $1; exit}')
+    esp=$(lsblk -nrpo PATH,PARTTYPE "$disk" | awk -v type="$esp_type" '$2 == type {print $1; exit}')
+    [[ -n $esp ]] || { echo "cloud-ssh-host-keys: no ESP on $disk" >&2; exit 1; }
+    mnt=/run/cloud-ssh-host-keys
+    mkdir -p -m 0700 "$mnt"
+    mount -t vfat -o rw,nosuid,nodev,noexec,fmask=0077,dmask=0077 "$esp" "$mnt"
+    trap 'umount "$mnt"' EXIT
+    set -- "$mnt/confos/ssh-host-keys" /etc/ssh
+fi
+store=$1
+dest=$2
+
+umask 077
+mkdir -p "$store"
+for type in "${types[@]}"; do
+    name=ssh_host_${type}_key
+    if [[ -s $store/$name && -s $store/$name.pub ]]; then
+        install -m 0600 "$store/$name" "$dest/$name"
+        install -m 0644 "$store/$name.pub" "$dest/$name.pub"
+    else
+        rm -f "$dest/$name" "$dest/$name.pub"
+        ssh-keygen -q -t "$type" -N '' -C '' -f "$dest/$name"
+        cp "$dest/$name" "$dest/$name.pub" "$store/"
+    fi
+done
