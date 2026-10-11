@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""bin/cloud-image packaging."""
+"""bin/cloud-image packaging and bin/cloud-upload-azure against a local page-blob server."""
 
 import gzip
+import http.server
 import os
 from pathlib import Path
 import struct
 import subprocess
 import tarfile
 import tempfile
+import threading
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +63,56 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(checksum, ~(sum(footer) - sum(footer[64:68])) & 0xFFFFFFFF)
         listed = (self.out / "cloud/confos-azure.vhd.sha256").read_text().split()
         self.assertEqual(listed[1], "confos-azure.vhd")
+
+
+class PageBlobServer(http.server.BaseHTTPRequestHandler):
+    def do_PUT(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        self.server.requests.append((self.path, self.headers, body))
+        self.send_response(201)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class UploadTests(unittest.TestCase):
+    def test_blob_equals_the_file_and_zero_chunks_are_skipped(self):
+        chunk = 4 * MIB
+        data = bytearray(2 * chunk + 1024)
+        data[10:14] = b"head"
+        data[2 * chunk + 5:2 * chunk + 9] = b"tail"
+        server = http.server.HTTPServer(("127.0.0.1", 0), PageBlobServer)
+        server.requests = []
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with tempfile.NamedTemporaryFile() as vhd:
+            vhd.write(data)
+            vhd.flush()
+            url = f"http://127.0.0.1:{server.server_port}/c/x.vhd?sig=s"
+            subprocess.run([str(ROOT / "bin/cloud-upload-azure"), url, vhd.name], check=True, capture_output=True)
+        create, *pages = server.requests
+        self.assertEqual(create[0], "/c/x.vhd?sig=s")
+        self.assertEqual(create[1]["x-ms-blob-type"], "PageBlob")
+        self.assertEqual(int(create[1]["x-ms-blob-content-length"]), len(data))
+        blob = bytearray(len(data))
+        for path, headers, body in pages:
+            self.assertEqual(path, "/c/x.vhd?sig=s&comp=page")
+            start, end = map(int, headers["x-ms-range"].removeprefix("bytes=").split("-"))
+            self.assertEqual(end - start + 1, len(body))
+            blob[start:end + 1] = body
+        self.assertEqual(blob, data)
+        self.assertEqual(len(pages), 2, "the all-zero middle chunk must be skipped")
+
+    def test_refuses_a_file_that_is_not_whole_sectors(self):
+        with tempfile.NamedTemporaryFile() as vhd:
+            vhd.write(b"x" * 1000)
+            vhd.flush()
+            result = subprocess.run([str(ROOT / "bin/cloud-upload-azure"), "http://127.0.0.1:9/x?s", vhd.name],
+                                    capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":
