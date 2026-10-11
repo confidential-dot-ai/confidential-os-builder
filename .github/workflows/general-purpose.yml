@@ -87,11 +87,17 @@ jobs:
     runs-on: big-build-runner
     # Cold-cache builds took up to 55 min on a healthy mirror.
     timeout-minutes: 120
-    env:
-      KERNEL_FRAGMENT: ${{ matrix.image == 'general-purpose' && 'general-purpose' || 'general-purpose-gpu' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Select the recipe's kernel fragment
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          fragment=$(jq -er --arg image "$IMAGE" '.[$image].kernel' ci/images.json)
+          fragment=${fragment#kernel/}
+          echo "KERNEL_FRAGMENT=${fragment%.config}" >> "$GITHUB_ENV"
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
