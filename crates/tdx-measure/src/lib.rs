@@ -14,7 +14,8 @@
 //!   cmdline, osrel, uname, sbat).
 //!
 //! Also parses CCEL (CC Event Log) blobs and replays them against a
-//! TDREPORT for consistency verification.
+//! TDREPORT for consistency verification, and predicts what cloud firmware
+//! measures for a disk (GCE TDX RTMRs, Azure vTPM PCRs; see [`cloud`]).
 //!
 //! See the `tdx-measure` binary in `main.rs` for the user-facing CLI.
 //! Library callers can use the per-module APIs directly:
@@ -28,7 +29,9 @@
 //! `PROGRESS.md`; the modules below match live TDX hardware exactly
 //! for the documented boot flow.
 
+pub mod alg;
 pub mod ccel;
+pub mod cloud;
 pub mod esp;
 pub mod pe;
 pub mod rtmr;
