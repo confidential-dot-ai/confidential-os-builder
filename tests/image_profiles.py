@@ -165,7 +165,8 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
             self.assertIn(f"CONFIG_{symbol}=y", workload)
         shared = (ROOT / "kernel/general-purpose.config").read_text()
         self.assertTrue((ROOT / "kernel/general-purpose-gpu.config").read_text().endswith(shared))
-        self.assertTrue((ROOT / "kernel/azure.config").read_text().endswith(shared))
+        for cloud in ("azure", "gcp"):
+            self.assertTrue((ROOT / f"kernel/{cloud}.config").read_text().endswith(shared))
         for symbol in ("CHECKPOINT_RESTORE", "KCMP", "USERFAULTFD", "FUSE_FS", "TUN"):
             self.assertIn(f"# CONFIG_{symbol} is not set", shared)
         self.assertIn("CONFIG_MSEAL_SYSTEM_MAPPINGS=y", shared)
