@@ -9,6 +9,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -245,6 +246,56 @@ def boot():
     return _booted
 
 
+# Sysfs paths of disks as the clouds present them (Azure DC2es_v6 and GCE
+# c3-standard-4, 2026-10-12). Azure: OS disk controller ...781a, data disk
+# controller ...781b; the device link ends in the SCSI address H:C:T:L.
+AZURE_VMBUS = "LNXSYSTM:00/LNXSYBUS:00/ACPI0004:00/MSFT1000:00"
+AZURE_OS_LUN0 = f"{AZURE_VMBUS}/f8b3781a-1e82-4818-a1c3-63d806ec15bb/host0/target0:0:0/0:0:0:0"
+AZURE_DATA = f"{AZURE_VMBUS}/f8b3781b-1e82-4818-a1c3-63d806ec15bb/host1/target1:0:0"
+GCE_NVME = "pci0000:00/0000:00:04.0/nvme/nvme0"
+RESULTS = ("/cryptsetup-args", "/mount-calls", "/switch-root-args", "/veritysetup-args")
+
+
+def boot_with_disks(disks):
+    """Run the init again with /sys/block holding only the root disk and DISKS.
+
+    DISKS maps a block device name to (sysfs device path or None, serial or
+    None). The boot runs in a private mount namespace with its own /sys, and
+    the shared boot()'s result files are restored afterwards. Returns the
+    init output and the cryptsetup arguments (None when nothing was opened).
+    """
+    boot()
+    saved = {path: Path(path).read_bytes() for path in RESULTS if Path(path).exists()}
+    Path("/cryptsetup-args").unlink()
+    sysfs = Path(tempfile.mkdtemp(dir="/tmp"))
+    try:
+        (sysfs / "block/nvme0n1/nvme0n1p2").mkdir(parents=True)
+        (sysfs / "class/block").mkdir(parents=True)
+        (sysfs / "class/block/nvme0n1p2").symlink_to("../../block/nvme0n1/nvme0n1p2")
+        for minor, (name, (device, serial)) in enumerate(disks.items(), start=32):
+            block = sysfs / "block" / name
+            block.mkdir()
+            if serial:
+                (block / "serial").write_text(serial + "\n")
+            if device:
+                (sysfs / "devices" / device).mkdir(parents=True)
+                (block / "device").symlink_to(os.path.relpath(sysfs / "devices" / device, block))
+            if not Path("/dev", name).exists():
+                os.mknod(f"/dev/{name}", stat.S_IFBLK | 0o600, os.makedev(8, minor))
+        booted = run(
+            "unshare", "--mount", "--propagation", "private", "/bin/bash", "-c",
+            f"mount --bind {sysfs} /sys && exec /bin/bash /init-under-test",
+        )
+        opened = Path("/cryptsetup-args")
+        return booted, opened.read_text().split() if opened.exists() else None
+    finally:
+        shutil.rmtree(sysfs)
+        for path in RESULTS:
+            Path(path).unlink(missing_ok=True)
+        for path, content in saved.items():
+            Path(path).write_bytes(content)
+
+
 class DiskDiscoveryTests(unittest.TestCase):
     def test_verity_partitions_are_found_by_roothash_partuuid(self):
         booted = boot()
@@ -258,6 +309,29 @@ class DiskDiscoveryTests(unittest.TestCase):
         booted = boot()
         self.assertEqual(booted.returncode, 0, booted.stdout)
         self.assertIn("/dev/vdb", Path("/cryptsetup-args").read_text().split())
+
+    def test_azure_data_disk_at_lun_0_is_the_scratch_disk(self):
+        booted, opened = boot_with_disks({
+            "sda": (AZURE_OS_LUN0, None),
+            "sdb": (f"{AZURE_DATA}/1:0:0:1", None),
+            "sdc": (f"{AZURE_DATA}/1:0:0:0", None),
+        })
+        self.assertEqual(booted.returncode, 0, booted.stdout)
+        self.assertIn("initrd: scratch disk /dev/sdc (Azure data disk LUN 0)", booted.stdout)
+        self.assertIn("/dev/sdc", opened)
+        self.assertIn("plain", opened)
+
+    def test_other_cloud_disks_leave_state_in_tmpfs(self):
+        # The Azure OS-disk controller's LUN 0, another data LUN and a GCE NVMe
+        # data disk (no serial, device name only in NVMe Identify data).
+        booted, opened = boot_with_disks({
+            "nvme0n2": (GCE_NVME, None),
+            "sda": (AZURE_OS_LUN0, None),
+            "sdb": (f"{AZURE_DATA}/1:0:0:10", None),
+        })
+        self.assertEqual(booted.returncode, 0, booted.stdout)
+        self.assertIsNone(opened)
+        self.assertIn("no scratch disk found", booted.stdout)
 
 
 class WritableStateTests(unittest.TestCase):

@@ -13,7 +13,7 @@ done
 # Cloud VMs have no user-data disk. general-purpose mounts one by label and
 # makes docker and containerd require it, so every boot waited 90 s for the
 # device. Here their data stays in /var/lib/user-data on the writable state
-# (the initrd's 2G RAM tmpfs, docs/CLOUD.md).
+# (an Azure LUN 0 scratch disk or the initrd's 2G RAM tmpfs, docs/CLOUD.md).
 ln -sfn /dev/null "$units/var-lib-user\x2ddata.automount"
 ln -sfn /dev/null "$units/var-lib-user\x2ddata.mount"
 for service in docker containerd; do

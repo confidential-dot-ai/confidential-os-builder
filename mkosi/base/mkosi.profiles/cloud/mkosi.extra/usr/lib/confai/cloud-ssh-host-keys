@@ -1,7 +1,8 @@
 #!/bin/bash
 # Keep the SSH host keys on the boot disk's ESP. Cloud writable state is a
-# RAM tmpfs, so keys made in /etc/ssh would change on every boot. The ESP
-# survives reboot and stop/start; a new VM gets a new disk and new keys.
+# RAM tmpfs or a scratch disk erased at boot, so keys made in /etc/ssh would
+# change on every boot. The ESP survives reboot and stop/start; a new VM gets
+# a new disk and new keys.
 # The keys sit in /confos/ssh-host-keys, outside EFI/ and loader/, so neither
 # firmware nor systemd-boot loads (or measures) them.
 #

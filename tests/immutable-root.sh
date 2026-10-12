@@ -45,9 +45,9 @@ fi
 touch "$fixture_root/confos-test-root" "$fixture_root/dev/null" "$fixture_root/dev/urandom"
 mount --bind /dev/null "$fixture_root/dev/null"
 mount --bind /dev/urandom "$fixture_root/dev/urandom"
-# Root disk on NVMe (as on GCE), a SCSI disk (as on Azure) and the scratch
-# disk on virtio-blk. Only virtio-blk publishes /sys/block/<dev>/serial;
-# NVMe and SCSI do not, so they are never scratch candidates.
+# Root disk on NVMe (as on GCE), a SCSI disk without an Azure data-disk
+# address and the scratch disk on virtio-blk (serial confai-scratch). Tests
+# that need other disks boot again with their own /sys (boot_with_disks).
 mknod "$fixture_root/dev/nvme0n1" b 259 0
 mknod "$fixture_root/dev/sda" b 8 0
 mknod "$fixture_root/dev/vdb" b 253 16

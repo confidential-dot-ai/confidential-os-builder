@@ -69,25 +69,47 @@ ROOT_DISK=$(basename "$(readlink -f "$ROOT_DISK")")
 veritysetup open "$DATA_DEV" root "$HASH_DEV" "$ROOTHASH"
 echo "initrd: dm-verity device created at /dev/mapper/root"
 
-# Select the writable-state backing by virtio-block device serial (not a
-# serial port). QEMU exposes this per-device identifier through the virtio
-# descriptor, and Linux publishes it at /sys/block/<dev>/serial before I/O:
-#   serial=confai-scratch -> ephemeral, encrypted with a random in-RAM key
-#   anything else / none  -> 2G RAM tmpfs (writes lost on reboot)
+# Select the writable-state backing. A disk other than the boot disk is the
+# scratch disk when the platform marks it before boot:
+#   virtio-blk serial confai-scratch: QEMU exposes this per-device serial (not
+#     a serial port) through the virtio descriptor, and Linux publishes it at
+#     /sys/block/<dev>/serial before I/O. KubeVirt passes Disk.serial from the
+#     VM spec to QEMU, so the cluster declares the device's purpose in YAML.
+#     See src/qemu.rs for the matching `confos run` path.
+#   Azure data disk at LUN 0: Azure attaches data disks to the VMBus SCSI
+#     controller f8b3781b-1e82-4818-a1c3-63d806ec15bb (the OS disk sits on
+#     f8b3781a-...). The /sys/block/<dev>/device link ends in the SCSI
+#     address H:C:T:L, whose last field is the LUN.
+# Neither needs pre-formatting or udev. Any other disk is ignored and the state
+# lives in a 2G RAM tmpfs (writes lost on reboot). GCE disks are not matched:
+# their device name is only in the NVMe Identify Namespace data, which needs
+# an ioctl tool this initrd does not have (docs/CLOUD.md).
 #
-# Unlike a filesystem label, the serial requires no pre-formatting. KubeVirt
-# passes Disk.serial from the VM spec to QEMU, so the cluster declares the
-# device's purpose in YAML and the guest sees it before boot. See src/qemu.rs
-# for the matching `confos run` path.
+# The matched disk is erased on every boot.
+AZURE_DATA_DISKS=f8b3781b-1e82-4818-a1c3-63d806ec15bb
+scratch_reason() {
+    local serial device
+    serial=$(cat "$1/serial" 2>/dev/null || true)
+    if [ "$serial" = "confai-scratch" ]; then
+        echo "virtio-blk serial $serial"
+        return 0
+    fi
+    device=$(readlink -f "$1/device" 2>/dev/null || true)
+    case "$device" in
+        */"$AZURE_DATA_DISKS"/*)
+            if [ "${device##*:}" = 0 ]; then echo "Azure data disk LUN 0"; fi ;;
+    esac
+    return 0
+}
+
 SCRATCH_DEV=""
 for sys in /sys/block/*; do
     dev=/dev/${sys##*/}
     [ "${sys##*/}" != "$ROOT_DISK" ] || continue
     [ -b "$dev" ] || continue
-    SERIAL=$(cat "$sys/serial" 2>/dev/null || true)
-    [ -n "$SERIAL" ] || continue
-    echo "initrd: examining $dev (serial=$SERIAL)"
-    if [ "$SERIAL" = "confai-scratch" ]; then
+    reason=$(scratch_reason "$sys")
+    if [ -n "$reason" ]; then
+        echo "initrd: scratch disk $dev ($reason)"
         SCRATCH_DEV="$dev"
         break
     fi
@@ -97,7 +119,7 @@ done
 # and falling back to tmpfs.
 mount_state_backing() {
     if [ -n "$SCRATCH_DEV" ]; then
-        echo "initrd: found confai-scratch disk at $SCRATCH_DEV — ephemeral encrypted state"
+        echo "initrd: $SCRATCH_DEV holds ephemeral encrypted state"
         # Generate a per-boot key held only in guest RAM. SNP and TDX protect
         # that memory from the host; a plain VM provides no such guarantee.
         mkdir -p /run
@@ -112,7 +134,7 @@ mount_state_backing() {
         mkfs.ext4 -q /dev/mapper/scratch
         mount /dev/mapper/scratch "$1"
     else
-        echo "initrd: no confai-scratch disk found — 2G RAM tmpfs (writes lost on reboot)"
+        echo "initrd: no scratch disk found — 2G RAM tmpfs (writes lost on reboot)"
         mount -t tmpfs tmpfs "$1" -o size=2G,nosuid,nodev
     fi
 }

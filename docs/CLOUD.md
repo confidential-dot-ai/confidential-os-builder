@@ -103,15 +103,37 @@ attests (boot and reboot; RTMR[1] matches the direct-UKI prediction). The
 same systemd-boot disk boots on GCE SEV-SNP and on Azure. The firmware then
 measures one image load into RTMR[1] instead of two.
 
+## Scratch disk
+
+Without a scratch disk, writable state (including Docker and containerd data
+under `/var/lib/user-data`) lives in a 2G RAM tmpfs that is lost on reboot.
+The size is fixed in the measured initrd (`mkosi/initrd/mkosi.extra/init`,
+`size=2G`); it is not a profile setting.
+
+- **Azure:** attach a data disk at LUN 0 when the VM is created
+  (`az vm create --data-disk-sizes-gb 64`, or `az vm disk attach --lun 0`
+  before start). The initrd finds it without udev: the disk's
+  `/sys/block/<dev>/device` link points at the VMBus SCSI controller Azure
+  uses for data disks (`f8b3781b-1e82-4818-a1c3-63d806ec15bb`; the OS disk is
+  on `f8b3781a-...`) and ends in the SCSI address, whose last field is the
+  LUN. As with `confos run --scratch`, the initrd opens it with dm-crypt
+  (plain mode, a random key held only in guest RAM), formats it and puts the
+  state directories on it. **The LUN 0 disk is erased on every boot**: do
+  not attach a disk you want to keep at LUN 0. A disk attached at LUN 0 while
+  the VM runs is used from the next boot.
+- **GCE:** not supported yet; state stays in the tmpfs. GCE NVMe disks all
+  report the serial and model `nvme_card-pd`; the device name
+  (`--create-disk=device-name=...`) is only in the NVMe Identify Namespace
+  data, in the vendor-specific bytes from offset 384 (a JSON object with
+  `device_name`, which Google's `google_nvme_id` udev helper reads). Reading
+  it needs an NVMe admin ioctl. The initrd has no tool for that, and Ubuntu's
+  `nvme-cli` would pull `uuid-runtime`, `adduser` and `systemd` into the
+  initrd every image shares. Matching by namespace number instead would erase
+  whichever data disk happens to be attached second. Follow-up: a small
+  static tool in the initrd that reads those bytes.
+
 ## Known limitations
 
-- **Writable state is a 2G RAM tmpfs.** The initrd uses an encrypted scratch
-  disk only when a virtio-blk disk reports the serial `confai-scratch`. GCE
-  (NVMe) and Azure (SCSI) disks do not, so cloud images keep all writes,
-  including Docker and containerd data under `/var/lib/user-data`, in a 2G
-  tmpfs that is lost on reboot. The size is fixed in the measured initrd
-  (`mkosi/initrd/mkosi.extra/init`, `size=2G`); it is not a profile setting.
-  Matching a cloud data disk (GCE NVMe, Azure LUN) is a follow-up.
 - **No user-data disk.** general-purpose mounts an ext4 disk labelled
   `user-data`; the `cloud` profile masks that mount so boot does not wait
   90 s for a disk the cloud VM does not have.
