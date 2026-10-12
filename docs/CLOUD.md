@@ -129,7 +129,9 @@ They come from `tdx_measure::cloud`. Its tests check the prediction against
 evidence the clouds produced: a GCE quote and CC event log (event by event)
 and an Azure signed vTPM quote. The boot path matters: firmware that loads
 systemd-boot and then the UKI logs two image loads; a disk whose
-`BOOTX64.EFI` is the UKI logs one. confos disks use systemd-boot.
+`BOOTX64.EFI` is the UKI logs one. The `gcp` image boots the UKI directly
+(`boot_path: "direct-uki"`, see "Boot path"); other confos images use
+systemd-boot.
 
 Verifiers take firmware-owned values from the provider, not from the build:
 on GCE, MRTD via Google's signed launch endorsement and RTMR[0] per machine

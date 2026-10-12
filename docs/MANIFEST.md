@@ -172,7 +172,7 @@ change them. See [CLOUD.md](CLOUD.md).
 
 | Field | Meaning |
 |---|---|
-| `boot_path` | What `\EFI\BOOT\BOOTX64.EFI` on the disk is: `systemd-boot` (firmware loads systemd-boot, which loads the UKI: two image-load events) or `direct-uki` (the UKI itself: one) |
+| `boot_path` | What `\EFI\BOOT\BOOTX64.EFI` on the disk is: `systemd-boot` (firmware loads systemd-boot, which loads the UKI: two image-load events) or `direct-uki` (the UKI itself: one; `gcp` images) |
 | `gcp_tdx.rtmr1` | Expected RTMR[1] on a GCE TDX VM (SHA-384): "Calling EFI Application", separator, GPT, one Authenticode event per loaded PE, the two ExitBootServices events. Equal to `tdx.rtmr1` for the same boot path |
 | `gcp_tdx.rtmr2` | Expected RTMR[2] on GCE (SHA-384): systemd-stub's UKI section events only. GCE does not log the kernel EFI stub's command-line and initrd events into the CC log, so this differs from `tdx.rtmr2` |
 | `azure_vtpm.pcr4` | Expected vTPM PCR4 on an Azure CVM (SHA-256 bank): "Calling EFI Application", separator, one Authenticode event per loaded PE |

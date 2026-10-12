@@ -1,10 +1,12 @@
 //! RTMR[1] for the two ESP layouts confos builds: systemd-boot at
 //! `\EFI\BOOT\BOOTX64.EFI`, which loads the UKI (the default), or the UKI
-//! itself at that path (`Bootloader=uki`, the `gcp` profile).
+//! itself at that path (`Bootloader=uki`, the `gcp` profile). The local TDX
+//! prediction and the GCE prediction in the manifest's cloud block agree.
 
 use std::io::{Cursor, Write};
 
 use sha2::{Digest, Sha384};
+use tdx_measure::cloud::{measure, BootPath};
 use tdx_measure::pe::authenticode_sha384;
 use tdx_measure::rtmr::compute_rtmr1_uki;
 
@@ -111,14 +113,27 @@ fn rtmr1(disk: &[u8], loads: &[&[u8]]) -> Vec<u8> {
 fn uki_as_bootx64_logs_one_image_load() {
     let uki = uki();
     let disk = disk(&uki);
-    let rtmr1_value = compute_rtmr1_uki(&uki, &[], Some(&disk)).unwrap();
-    assert_eq!(rtmr1_value, rtmr1(&disk, &[&uki]));
+    let expected = rtmr1(&disk, &[&uki]);
+    assert_eq!(compute_rtmr1_uki(&uki, &[], Some(&disk)).unwrap(), expected);
+    let cloud = measure(&uki, &disk).unwrap();
+    assert_eq!(cloud.boot_path, BootPath::DirectUki);
+    assert_eq!(cloud.gcp_tdx.rtmr1, expected);
+}
+
+#[test]
+fn a_different_uki_at_bootx64_is_rejected() {
+    let other = pe(&[(".linux", b"another kernel")]);
+    let err = measure(&uki(), &disk(&other)).unwrap_err();
+    assert!(format!("{err:#}").contains("not the UKI given"), "{err:#}");
 }
 
 #[test]
 fn systemd_boot_as_bootx64_logs_it_before_the_uki() {
     let (uki, bootloader) = (uki(), systemd_boot());
     let disk = disk(&bootloader);
-    let rtmr1_value = compute_rtmr1_uki(&uki, &[], Some(&disk)).unwrap();
-    assert_eq!(rtmr1_value, rtmr1(&disk, &[&bootloader, &uki]));
+    let expected = rtmr1(&disk, &[&bootloader, &uki]);
+    assert_eq!(compute_rtmr1_uki(&uki, &[], Some(&disk)).unwrap(), expected);
+    let cloud = measure(&uki, &disk).unwrap();
+    assert_eq!(cloud.boot_path, BootPath::SystemdBoot);
+    assert_eq!(cloud.gcp_tdx.rtmr1, expected);
 }
