@@ -54,7 +54,21 @@ The kernel fragment selects the AML the kernel may run with one
   kernel resets in the TDX MapGPA hypercall that shares the SWIOTLB buffer,
   and GCE reboots it in a loop. The cause is not known; this is a workaround.
   init_on_alloc stays on.
-- Boot with Secure Boot off: systemd-boot and the UKI are unsigned.
+- Boot with Secure Boot off: systemd-boot (Azure) and the UKI are unsigned.
+
+## Boot path
+
+The `azure` image boots like every other confos image: the firmware starts
+systemd-boot at `\EFI\BOOT\BOOTX64.EFI`, and systemd-boot starts the UKI.
+The `gcp` image sets `Bootloader=uki`, so `\EFI\BOOT\BOOTX64.EFI` is the
+UKI itself and the ESP has no systemd-boot.
+
+This is for GCE's TDX firmware only. On c3-standard-4 TDX, a gcp image with
+systemd-boot hangs right after the firmware prints "UEFI: Attempting to start
+image". The same disk with only `BOOTX64.EFI` replaced by the UKI boots and
+attests (boot and reboot; RTMR[1] matches the direct-UKI prediction). The
+same systemd-boot disk boots on GCE SEV-SNP and on Azure. The firmware then
+measures one image load into RTMR[1] instead of two.
 
 ## Attestation
 
