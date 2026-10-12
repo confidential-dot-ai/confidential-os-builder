@@ -48,6 +48,9 @@ The kernel fragment selects the AML the kernel may run with one
   (Azure's `adminUsername` is not created). They are **not** launch-measured:
   whoever controls the cloud account can add a key. On GCE, only `ssh-keys`
   lines for the user `cloudinit` are accepted (`cloudinit:ssh-ed25519 ...`).
+  The GCE datasource reads metadata from `169.254.169.254`, not
+  `metadata.google.internal`: names do not resolve yet in cloud-init's first
+  stage, and with the name it waited 30 s for DHCP on `sit0` every boot.
 - Serial console: 8250 built in, `console=ttyS0,115200n8`, no serial login.
   On Azure, enable boot diagnostics at VM create to read it.
 - GCE only: the cmdline carries `init_on_free=0`. With init_on_free on, the
