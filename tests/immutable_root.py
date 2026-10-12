@@ -12,7 +12,9 @@ import threading
 import unittest
 from unittest import mock
 
-from cloudinit import helpers, sources, stages, url_helper
+from cloudinit import distros, helpers, sources, stages, url_helper
+from cloudinit.config import cc_locale
+from cloudinit.distros import debian
 from cloudinit.sources import DataSourceNoCloud
 
 SEED = Path("/var/lib/cloud/seed/nocloud")
@@ -144,6 +146,18 @@ class CloudInitPolicyTests(unittest.TestCase):
                         self.assertEqual(requests, [], "host URL was fetched")
                         devices.assert_not_called()
                         disk_mount.assert_not_called()
+
+    def test_image_locale_lets_the_locale_module_run_without_changes(self):
+        # Ubuntu links /etc/default/locale to the image's /etc/locale.conf,
+        # and cloud-init parses it as shell assignments. A bare value there
+        # made the module raise, so every cloud-init boot ended in error.
+        # /etc is read-only on the booted image: nothing may be regenerated.
+        distro = distros.fetch("ubuntu")("ubuntu", {}, helpers.Paths({}))
+        cloud = mock.Mock(distro=distro, get_locale=distro.get_locale)
+        with mock.patch.object(debian.subp, "subp") as subp:
+            cc_locale.handle("locale", self.cfg, cloud, [])
+        subp.assert_not_called()
+        self.assertEqual(distro.get_locale(), "C.UTF-8")
 
     def test_finalization_controls_activation_and_preserves_disable_marker(self):
         # DMI and disks remain hostile for every activation case.
