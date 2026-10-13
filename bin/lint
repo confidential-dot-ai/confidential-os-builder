@@ -47,7 +47,7 @@ if ! grep -q 'if ! echo 1 > "$dev/reset"' "$flr_helper"; then
     exit 1
 fi
 
-# Every apt source must point at snapshot.ubuntu.com by URI (#96): Mirror=
+# Every apt source must point at one snapshot.ubuntu.com timestamp (#96): Mirror=
 # leaves the security pocket live, and both mkosi's Snapshot= and apt's
 # deb822 Snapshot: field keep live repos reachable — all fail open, v27's
 # ToolsTreeSnapshot= included (same deb822 field, wider scope). The pin
@@ -77,16 +77,26 @@ if [ -n "$rawinstall" ]; then
     exit 1
 fi
 
-pin='^URIs: https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z$'
+pin='^URIs: mirror\+file:/etc/apt/mirrors/ubuntu\.list$'
+# The mirror list holds one snapshot timestamp twice: our copy of it
+# (bin/mirror-apt-snapshot) first, snapshot.ubuntu.com second.
+apt_mirror=https://confosaptmirrorae526a.blob.core.windows.net/ubuntu
 for conf in mkosi/*/mkosi.conf; do
     dir=$(dirname "$conf")
     sources="$dir/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources"
+    mirrors="$dir/mkosi.sandbox/etc/apt/mirrors/ubuntu.list"
     # An image that installs packages without the pinned sources file lets
     # mkosi generate live sources in its place. One pattern, two duties:
     # at least one pinned URIs: line exists, and no URIs: line deviates.
     if git grep -qE '^Packages=' -- "$dir/*.conf"; then
         if ! grep -qE "$pin" "$sources" 2>/dev/null || grep -E '^URIs:' "$sources" 2>/dev/null | grep -vqE "$pin"; then
-            echo "bin/lint: every URIs: line in $sources must be a pinned snapshot.ubuntu.com timestamp" >&2
+            echo "bin/lint: every URIs: line in $sources must be mirror+file:/etc/apt/mirrors/ubuntu.list" >&2
+            exit 1
+        fi
+        stamp=$(awk -F'\t' '$2 == "priority:2" { sub(/^https:\/\/snapshot\.ubuntu\.com\/ubuntu\//, "", $1); print $1 }' "$mirrors" 2>/dev/null)
+        if ! [[ "$stamp" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] \
+            || [ "$(cat "$mirrors")" != "$(printf '%s/%s\tpriority:1\nhttps://snapshot.ubuntu.com/ubuntu/%s\tpriority:2' "$apt_mirror" "$stamp" "$stamp")" ]; then
+            echo "bin/lint: $mirrors must list exactly $apt_mirror/<timestamp> (priority:1) and https://snapshot.ubuntu.com/ubuntu/<same timestamp> (priority:2)" >&2
             exit 1
         fi
         # Every pocket of the dir's own Release= must ride the pinned URI —

@@ -36,6 +36,7 @@ bin/confos build
 | `lib.rs` | Shared argument structs and `BuildPlatform` (snp/tdx/both) |
 | `commands/build.rs` | The pipeline above. Per-build file injections (cloud-init, `--extra`, dev-profile console) go into a temporary `mkosi.local/` overlay removed by an RAII guard; the mkosi initrd has its gzip timestamp normalized and is written as `initrd.img`, whose exact bytes feed the UKI and both measurement paths |
 | `commands/kernel.rs` | Kernel build orchestration and cache check; compile the trusted ASL with the pinned tools tree and apply the version-specific AML enforcement patch before kernel configuration/compilation |
+| `commands/kernel/tools_tree.rs` | The kernel-builder tools tree: rebuild stamp, input digest and mkosi call. CI's tools cache keys hash this file, not `kernel.rs` |
 | `commands/run.rs` | Boot an output dir in QEMU |
 | `commands/igvm.rs` | Re-render IGVM SMP variants for an existing build |
 | `commands/push.rs`, `commands/pull.rs` | OCI transfer via `oras` |

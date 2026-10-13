@@ -220,7 +220,8 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
         for tree in ("base", "initrd", "kernel-builder"):
             sandbox = ROOT / "mkosi" / tree / "mkosi.sandbox/etc/apt"
             self.assertIn('Acquire::Languages "none";', (sandbox / "apt.conf.d/81-no-translations").read_text())
-            self.assertIn("https://snapshot.ubuntu.com/ubuntu/", (sandbox / "sources.list.d/mkosi.sources").read_text())
+            self.assertIn("URIs: mirror+file:/etc/apt/mirrors/ubuntu.list", (sandbox / "sources.list.d/mkosi.sources").read_text())
+            self.assertIn("https://snapshot.ubuntu.com/ubuntu/", (sandbox / "mirrors/ubuntu.list").read_text())
 
     def test_cache_directories_match_shared_actions_paths(self):
         action = (ROOT / ".github/actions/build-cache/action.yml").read_text()

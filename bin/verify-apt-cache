@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+"""Delete restored apt cache files that the pinned, signed snapshot indexes do not vouch for.
+
+apt reuses a .deb in its archives directory when only the name and size match
+the index; it does not check the SHA256. On `apt-get update`, an unchanged
+InRelease also keeps the cached Packages lists without rehashing them. A
+restored CI cache is therefore checked here before mkosi runs:
+
+- InRelease for every pinned URI/suite in mkosi/*/mkosi.sandbox sources is
+  fetched fresh (from the mirror list's entries in priority order) and
+  checked with gpgv against the Ubuntu archive keyring.
+- Each mkosi metadata cache must hold only lists whose SHA256 matches the
+  InRelease files of its own image's sources; otherwise the whole metadata
+  cache is deleted. apt's binary
+  caches (*.bin) and partial downloads are always deleted; apt rebuilds them.
+- Each cached .deb must match name and SHA256 of an entry in a verified
+  Packages index of a pinned component; otherwise it is deleted.
+
+Deleted files are fetched again by apt. A bad signature or index deletes the
+whole cache. Network errors exit non-zero without using or deleting the cache.
+
+Usage: bin/verify-apt-cache [--root DIR] [--keyring FILE] [--arch ARCH]
+"""
+
+import argparse
+import functools
+import hashlib
+import lzma
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class Untrusted(Exception):
+    pass
+
+
+def fetch(url):
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                return response.read()
+        except OSError as error:
+            if attempt == 4 or getattr(error, "code", None) == 404 or isinstance(getattr(error, "reason", None), FileNotFoundError):
+                raise
+            print(f"verify-apt-cache: retrying {url}: {error}", file=sys.stderr)
+            time.sleep(10 * (attempt + 1))
+
+
+@functools.cache
+def fetch_any(bases, path):
+    """path from the first base URL that serves it, like apt's mirror method."""
+    for base in bases:
+        try:
+            return fetch(f"{base}/{path}")
+        except OSError as error:
+            print(f"verify-apt-cache: {base}/{path}: {error}", file=sys.stderr)
+            failure = error
+    raise failure
+
+
+def mirrors(sandbox, uri):
+    """Base URLs apt fetches a source URI from: a mirror+file: list's entries
+    by ascending priority, or the URI itself."""
+    if not uri.startswith("mirror+file:"):
+        return (uri.rstrip("/"),)
+    entries = []
+    for line in (sandbox / uri.removeprefix("mirror+file:").lstrip("/")).read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            url, *tags = line.split()
+            priority = next((int(t[len("priority:"):]) for t in tags if t.startswith("priority:")), sys.maxsize)
+            entries.append((priority, url.rstrip("/")))
+    return tuple(url for _, url in sorted(entries, key=lambda entry: entry[0]))
+
+
+def sources(root):
+    """image dir -> (uri, base URLs, suite, components) for each binary source of its sandbox tree."""
+    found = {}
+    for path in sorted(root.glob("mkosi/*/mkosi.sandbox/etc/apt/sources.list.d/*.sources")):
+        sandbox = path.parents[3]
+        for stanza in path.read_text().split("\n\n"):
+            fields = {}
+            for line in stanza.splitlines():
+                if line and not line.startswith(("#", " ")) and ":" in line:
+                    key, value = line.split(":", 1)
+                    fields[key] = value.split()
+            if "deb" in fields.get("Types", []):
+                for uri in fields["URIs"]:
+                    for suite in fields["Suites"]:
+                        entry = (uri.rstrip("/"), mirrors(sandbox, uri), suite, tuple(fields["Components"]))
+                        found.setdefault(sandbox.parent, set()).add(entry)
+    return {tree: sorted(entries) for tree, entries in found.items()}
+
+
+def apt_filename(uri):
+    """apt's URItoFileName: drop the scheme, quote reserved characters, '/' -> '_'."""
+    name = uri.split(":", 1)[-1].removeprefix("//")
+    name = "".join(f"%{ord(c):02x}" if c in '\\|{}[]<>"^~_=!@#$%*' else c for c in name)
+    return name.replace("/", "_")
+
+
+def signed_release(raw, keyring):
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp, "InRelease")
+        src.write_bytes(raw)
+        result = subprocess.run(
+            ["gpgv", "--keyring", str(keyring), "--output", "-", str(src)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+    if result.returncode:
+        raise Untrusted(f"InRelease signature: {result.stderr.decode().strip()}")
+    hashes, section = {}, None
+    for line in result.stdout.decode().splitlines():
+        if not line.startswith(" "):
+            section = line.split(":", 1)[0]
+        elif section == "SHA256":
+            digest, _, path = line.split()
+            hashes[path] = digest
+    return hashes
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def empty(directory):
+    for path in directory.iterdir():
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
+def quote(field):
+    return "".join(f"%{ord(c):02x}" if c in "_:" else c for c in field)
+
+
+def debs_in(index):
+    """apt's archive file name -> SHA256 for each stanza of a Packages index."""
+    debs, fields = {}, {}
+    for line in index.splitlines() + [b""]:
+        if not line:
+            if "Package" in fields and "SHA256" in fields:
+                name = "_".join(quote(fields[k]) for k in ("Package", "Version", "Architecture"))
+                debs.setdefault(name + ".deb", set()).add(fields["SHA256"])
+            fields = {}
+        elif line[:1] not in (b" ", b"\t"):
+            key, _, value = line.decode(errors="replace").partition(":")
+            if key in ("Package", "Version", "Architecture", "SHA256"):
+                fields[key] = value.strip()
+    return debs
+
+
+def verify(root, keyring, arch):
+    archives = root / "mkosi/mkosi.pkgcache/cache/apt/archives"
+    metadata = sorted(root.glob("mkosi/*/mkosi.cache/*.metadata.cache"))
+    if not metadata and not archives.is_dir():
+        return
+
+    expected, packages = {}, []
+    for tree, pinned in sources(root).items():
+        known = expected.setdefault(tree, {})
+        for uri, bases, suite, components in pinned:
+            dists = f"dists/{suite}"
+            raw = fetch_any(bases, f"{dists}/InRelease")
+            hashes = signed_release(raw, keyring)
+            known[apt_filename(f"{uri}/{dists}/InRelease")] = hashlib.sha256(raw).hexdigest()
+            for path, digest in hashes.items():
+                known[apt_filename(f"{uri}/{dists}/{path}")] = digest
+            for component in components:
+                path = f"{component}/binary-{arch}/Packages"
+                if path not in hashes or f"{path}.xz" not in hashes:
+                    raise Untrusted(f"{bases[0]}/{dists}/InRelease does not list {path}")
+                packages.append((tree, apt_filename(f"{uri}/{dists}/{path}"), bases, f"{dists}/{path}", hashes[f"{path}.xz"]))
+
+    lists = {}
+    for cache in metadata:
+        tree = cache.parents[1]
+        try:
+            for path in (cache / "lib/apt/lists").iterdir():
+                if path.name == "lock":
+                    continue
+                if path.is_dir() and not path.is_symlink():
+                    empty(path)
+                    continue
+                if not path.is_file() or path.is_symlink() or expected.get(tree, {}).get(path.name) != sha256(path):
+                    raise Untrusted(f"unverified list {path.name}")
+                lists[tree, path.name] = path
+            for binary in cache.glob("cache/**/*.bin"):
+                binary.unlink()
+        except Untrusted as error:
+            print(f"verify-apt-cache: deleting {cache.name}: {error}", file=sys.stderr)
+            shutil.rmtree(cache)
+            lists = {k: v for k, v in lists.items() if cache not in v.parents}
+
+    if not archives.is_dir():
+        return
+    allowed = {}
+    for tree, name, bases, path, digest in packages:
+        listed = lists.get((tree, name))
+        if listed:
+            index = listed.read_bytes()
+        else:
+            compressed = fetch_any(bases, f"{path}.xz")
+            if hashlib.sha256(compressed).hexdigest() != digest:
+                raise Untrusted(f"{bases[0]}/{path}.xz does not match InRelease")
+            index = lzma.decompress(compressed)
+        for name, digests in debs_in(index).items():
+            allowed.setdefault(name, set()).update(digests)
+
+    kept = deleted = 0
+    for path in archives.iterdir():
+        if path.name == "lock":
+            continue
+        if path.is_dir() and not path.is_symlink():
+            empty(path)
+            continue
+        if path.is_file() and not path.is_symlink() and sha256(path) in allowed.get(path.name, ()):
+            kept += 1
+            continue
+        path.unlink()
+        deleted += 1
+        print(f"verify-apt-cache: deleted {path.name}", file=sys.stderr)
+    print(f"verify-apt-cache: kept {kept} verified packages, deleted {deleted}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--root", type=Path, default=ROOT, help="checkout holding mkosi/ (default: this repo)")
+    parser.add_argument("--keyring", type=Path, default=Path("/usr/share/keyrings/ubuntu-archive-keyring.gpg"))
+    parser.add_argument("--arch", default="amd64", help="dpkg architecture of the cached packages")
+    args = parser.parse_args()
+    try:
+        verify(args.root, args.keyring, args.arch)
+    except OSError as error:
+        sys.exit(f"verify-apt-cache: {error}; the restored cache was not used")
+    except Untrusted as error:
+        print(f"verify-apt-cache: {error}; deleting the whole package cache", file=sys.stderr)
+        shutil.rmtree(args.root / "mkosi/mkosi.pkgcache", ignore_errors=True)
+        for cache in args.root.glob("mkosi/*/mkosi.cache/*.metadata.cache"):
+            shutil.rmtree(cache)
+
+
+if __name__ == "__main__":
+    main()
