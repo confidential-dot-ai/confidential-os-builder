@@ -3,6 +3,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::kernel::aml::Mode;
+
 /// Current manifest schema version. v3 splits SNP measurements (which vary
 /// per vCPU count) into `snp_variants[]` and adds a singleton `tdx` block
 /// of TDX reference measurements. The TDX block is SMP-and-memory-invariant
@@ -118,13 +120,35 @@ pub struct KernelInputs {
     // RANDSTRUCT seed — a reproduction input (#85). `default` for older manifests.
     #[serde(default)]
     pub randstruct_seed_sha256: String,
-    /// SHA-256 of the canonical trusted ASL source. Required, not defaulted:
-    /// a manifest without it describes a kernel that still honours host AML,
-    /// and reading it as a gated build would hide that.
-    pub trusted_dsdt_sha256: String,
+    /// `host` when the kernel runs the firmware's ACPI tables
+    /// (`# confos-acpi: host`). Omitted for the default trusted mode.
+    #[serde(default, skip_serializing_if = "Mode::is_trusted")]
+    pub acpi_mode: Mode,
+    /// SHA-256 of the trusted table compiled into the kernel. Required in
+    /// trusted mode: a manifest without it comes from a builder whose kernel
+    /// still honoured host AML, and reading it as a gated build would hide
+    /// that. Absent in host mode, where no table is enforced
+    /// ([`KernelInputs::check_acpi`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trusted_dsdt_sha256: Option<String>,
     /// SHA-256 of the version-specific kernel enforcement patch. Required for
     /// the same reason.
     pub trusted_aml_patch_sha256: String,
+}
+
+impl KernelInputs {
+    /// A trusted-mode kernel names its table; a host-mode kernel names none.
+    pub fn check_acpi(&self) -> anyhow::Result<()> {
+        match (self.acpi_mode, &self.trusted_dsdt_sha256) {
+            (Mode::Trusted, Some(_)) | (Mode::Host, None) => Ok(()),
+            (Mode::Trusted, None) => anyhow::bail!(
+                "kernel inputs lack trusted_dsdt_sha256; the kernel may honour host AML"
+            ),
+            (Mode::Host, Some(_)) => {
+                anyhow::bail!("kernel inputs name a trusted DSDT but acpi_mode is host")
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -188,6 +212,9 @@ pub fn read_manifest(path: &Path) -> anyhow::Result<BuildManifest> {
         }
     }
     let manifest: BuildManifest = serde_json::from_str(&content)?;
+    if let Some(kernel) = &manifest.inputs.kernel {
+        kernel.check_acpi()?;
+    }
     Ok(manifest)
 }
 
@@ -195,25 +222,57 @@ pub fn read_manifest(path: &Path) -> anyhow::Result<BuildManifest> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn kernel_inputs_require_the_trusted_aml_hashes() {
-        let gated = serde_json::json!({
+    fn kernel_inputs(extra: serde_json::Value) -> anyhow::Result<KernelInputs> {
+        let mut inputs = serde_json::json!({
             "linux_version": "6.18.49",
             "vmlinuz_sha256": "a",
             "required_config_sha256": "b",
             "hardening_config_sha256": "c",
             "snapshot_config_sha256": "d",
-            "trusted_dsdt_sha256": "e",
             "trusted_aml_patch_sha256": "f",
         });
-        serde_json::from_value::<KernelInputs>(gated.clone()).unwrap();
-        for missing in ["trusted_dsdt_sha256", "trusted_aml_patch_sha256"] {
-            let mut pre_gate = gated.clone();
-            pre_gate.as_object_mut().unwrap().remove(missing);
-            assert!(
-                serde_json::from_value::<KernelInputs>(pre_gate).is_err(),
-                "accepted a manifest without {missing}"
-            );
-        }
+        inputs
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let inputs: KernelInputs = serde_json::from_value(inputs)?;
+        inputs.check_acpi()?;
+        Ok(inputs)
+    }
+
+    #[test]
+    fn kernel_inputs_require_the_trusted_aml_hashes() {
+        kernel_inputs(serde_json::json!({"trusted_dsdt_sha256": "e"})).unwrap();
+        assert!(
+            kernel_inputs(serde_json::json!({})).is_err(),
+            "accepted a manifest without trusted_dsdt_sha256"
+        );
+        let mut no_patch = serde_json::to_value(
+            kernel_inputs(serde_json::json!({"trusted_dsdt_sha256": "e"})).unwrap(),
+        )
+        .unwrap();
+        no_patch
+            .as_object_mut()
+            .unwrap()
+            .remove("trusted_aml_patch_sha256");
+        assert!(serde_json::from_value::<KernelInputs>(no_patch).is_err());
+    }
+
+    #[test]
+    fn host_acpi_kernel_records_the_mode_and_no_table() {
+        let host = kernel_inputs(serde_json::json!({"acpi_mode": "host"})).unwrap();
+        let json = serde_json::to_value(&host).unwrap();
+        assert_eq!(json["acpi_mode"], "host");
+        assert!(json.get("trusted_dsdt_sha256").is_none());
+        assert!(kernel_inputs(
+            serde_json::json!({"acpi_mode": "host", "trusted_dsdt_sha256": "e"})
+        )
+        .is_err());
+        // The default mode is not written, so default manifests keep their JSON.
+        let trusted = kernel_inputs(serde_json::json!({"trusted_dsdt_sha256": "e"})).unwrap();
+        assert!(serde_json::to_value(&trusted)
+            .unwrap()
+            .get("acpi_mode")
+            .is_none());
     }
 }

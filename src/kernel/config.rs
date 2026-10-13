@@ -113,18 +113,19 @@ pub fn run_configure_phase(
     }
     let resolved = kernel_dir_abs.join(".config");
     verify_fragment_options(&fragments, &resolved)?;
-    verify_builder_invariants(&resolved)
+    let extra_text = extra_abs.as_ref().map(fs_err::read_to_string).transpose()?;
+    verify_builder_invariants(&resolved, super::aml::mode(extra_text.as_deref())?)
 }
 
 /// Assertions confos makes about every resolved `.config`, whatever the
 /// fragments asked for. Unlike `verify_fragment_options` — which checks that
 /// each fragment got what it requested — these hold even when a fragment
 /// requested the opposite, so a consumer cannot opt out of them.
-fn verify_builder_invariants(resolved: &Path) -> Result<()> {
-    check_builder_invariants(&fs_err::read_to_string(resolved)?)
+fn verify_builder_invariants(resolved: &Path, acpi: super::aml::Mode) -> Result<()> {
+    check_builder_invariants(&fs_err::read_to_string(resolved)?, acpi)
 }
 
-fn check_builder_invariants(config: &str) -> Result<()> {
+fn check_builder_invariants(config: &str, acpi: super::aml::Mode) -> Result<()> {
     // MODULE_SIG_ALL=y makes the kernel build sign in-tree modules, which
     // requires a private key at build time: with no MODULE_SIG_KEY set the
     // build GENKEYs one per run and embeds its certificate in vmlinux, so
@@ -157,7 +158,7 @@ fn check_builder_invariants(config: &str) -> Result<()> {
              instead (docs/module-signing.md)."
         );
     }
-    super::aml::verify_config(config)
+    super::aml::verify_config(config, acpi)
 }
 
 /// Fail if the resolved `.config` disagrees with what the fragments
@@ -553,7 +554,7 @@ mod tests {
         ];
         let snapshot = include_str!("../../kernel/config-x86_64.snapshot");
         check_fragment_options(&fragments, snapshot).unwrap();
-        check_builder_invariants(snapshot).unwrap();
+        check_builder_invariants(snapshot, super::super::aml::Mode::Trusted).unwrap();
     }
 
     #[test]
@@ -586,7 +587,7 @@ mod tests {
             "CONFIG_MODULE_SIG=y\n# CONFIG_MODULE_SIG_ALL is not set\n",
         ] {
             let resolved = write(&d, "resolved", body);
-            let err = verify_builder_invariants(&resolved)
+            let err = verify_builder_invariants(&resolved, super::super::aml::Mode::Trusted)
                 .unwrap_err()
                 .to_string();
             assert!(err.contains("CONFIG_MODULE_SIG_KEY"), "{err}");
@@ -601,7 +602,7 @@ mod tests {
             "resolved",
             "CONFIG_MODULES=y\nCONFIG_MODULE_SIG_ALL=y\n",
         );
-        let err = verify_builder_invariants(&resolved)
+        let err = verify_builder_invariants(&resolved, super::super::aml::Mode::Trusted)
             .unwrap_err()
             .to_string();
         assert!(err.contains("CONFIG_MODULE_SIG_ALL=y"), "{err}");
@@ -620,7 +621,7 @@ mod tests {
                 "resolved",
                 &format!("{body}{}", crate::kernel::aml::VALID_CONFIG),
             );
-            verify_builder_invariants(&resolved).unwrap();
+            verify_builder_invariants(&resolved, super::super::aml::Mode::Trusted).unwrap();
         }
     }
 

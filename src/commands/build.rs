@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::kernel::aml::Mode;
 use crate::{
     igvm, is_safe_name, kernel_cache, manifest, qemu, tools, BuildArgs, BuildPlatform, SyncInput,
 };
@@ -478,7 +479,11 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                     .module_signing_cert_sha256
                     .clone(),
                 randstruct_seed_sha256: kernel.manifest.inputs.randstruct_seed_sha256.clone(),
-                trusted_dsdt_sha256: kernel.manifest.inputs.trusted_dsdt_sha256.clone(),
+                acpi_mode: kernel.manifest.inputs.acpi_mode,
+                trusted_dsdt_sha256: match kernel.manifest.inputs.acpi_mode {
+                    Mode::Trusted => Some(kernel.manifest.inputs.trusted_dsdt_sha256.clone()),
+                    Mode::Host => None,
+                },
                 trusted_aml_patch_sha256: kernel.manifest.inputs.trusted_aml_patch_sha256.clone(),
             }),
             initrd: manifest::FileEntry {
