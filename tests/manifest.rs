@@ -63,6 +63,7 @@ fn sample_manifest() -> BuildManifest {
         },
         snp_variants: vec![sample_variant(4, "aabbcc")],
         tdx: None,
+        cloud: None,
     }
 }
 

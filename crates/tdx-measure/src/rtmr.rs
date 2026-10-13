@@ -9,6 +9,8 @@ use std::str;
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha384};
 
+use crate::alg::HashAlg;
+
 pub(crate) fn sha384(data: &[u8]) -> Vec<u8> {
     Sha384::new_with_prefix(data).finalize().to_vec()
 }
@@ -129,7 +131,7 @@ pub fn compute_rtmr3_workloads(canonical_digests: &[String]) -> Vec<u8> {
 ///      Required when a disk is present; the TDVF spec mandates it.
 ///   4. EV_EFI_BOOT_SERVICES_APPLICATION — Authenticode hash of
 ///      `\EFI\BOOT\BOOTX64.EFI` (systemd-boot). Absent when BOOTX64.EFI
-///      is the UKI itself (the `gcp` profile): the firmware then loads one PE.
+///      is the UKI itself: the firmware then loads one PE.
 ///   5. EV_EFI_BOOT_SERVICES_APPLICATION — Authenticode hash of the
 ///      UKI .efi (loaded by systemd-boot via LoadImage).
 ///   6. EV_EFI_ACTION "Exit Boot Services Invocation" — TDVF
@@ -148,58 +150,29 @@ pub fn compute_rtmr1_uki(
     _sections: &[(String, Vec<u8>)],
     disk_image: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    let mut rtmr1_log = vec![
-        sha384(b"Calling EFI Application from Boot Option"),
-        sha384(&[0x00, 0x00, 0x00, 0x00]), // EV_SEPARATOR
-    ];
-
-    // Steps 3-5 only fire when there's a disk image; without one, TDVF
-    // wouldn't be loading anything off a disk in the first place and
-    // the boot path would look totally different. The function's two
-    // call sites in the confos pipeline always pass `Some`.
+    // With a disk, the firmware logs the GPT and every PE it loads; the boot
+    // path (systemd-boot -> UKI, or the UKI itself as BOOTX64.EFI) decides
+    // how many. Without one (unit tests, `-kernel`-style boots) only the UKI.
     if let Some(disk) = disk_image {
-        // EV_EFI_GPT_EVENT
-        rtmr1_log.push(compute_gpt_event_hash(disk)?);
-
-        // EV_EFI_BOOT_SERVICES_APPLICATION — systemd-boot.
-        // The bootloader is BYTE-IDENTICAL at /EFI/BOOT/BOOTX64.EFI and
-        // /EFI/systemd/systemd-bootx64.efi (mkosi places the same binary
-        // at both paths). TDVF chases the removable-media fallback first
-        // because the variable store is fresh and no Boot#### entry
-        // points to the systemd subdir. When BOOTX64.EFI is the UKI itself
-        // (Bootloader=uki), the only image load is the UKI's, below.
-        let bootloader = crate::esp::read_esp_file(disk, crate::esp::FALLBACK_BOOTLOADER_PATH)
-            .with_context(|| {
-                format!(
-                    "extracting bootloader {} from disk image for RTMR[1] computation",
-                    crate::esp::FALLBACK_BOOTLOADER_PATH
-                )
-            })?;
-        if bootloader != uki_data {
-            let bootloader_auth_hash = crate::pe::authenticode_sha384(&bootloader)
-                .context("Authenticode hash of systemd-boot PE")?;
-            rtmr1_log.push(bootloader_auth_hash);
-        }
+        let boot = crate::cloud::BootDigests::from_image(uki_data, disk, HashAlg::Sha384)?;
+        return Ok(measure_log(&boot.tdx_rtmr1_events()));
     }
-
-    // EV_EFI_BOOT_SERVICES_APPLICATION — the UKI itself.
     let uki_auth_hash =
         crate::pe::authenticode_sha384(uki_data).context("Authenticode hash of UKI PE")?;
-    rtmr1_log.push(uki_auth_hash);
-
-    rtmr1_log.push(sha384(b"Exit Boot Services Invocation"));
-    rtmr1_log.push(sha384(b"Exit Boot Services Returned with Success"));
-
-    Ok(measure_log(&rtmr1_log))
+    Ok(measure_log(&[
+        sha384(b"Calling EFI Application from Boot Option"),
+        sha384(&[0x00, 0x00, 0x00, 0x00]), // EV_SEPARATOR
+        uki_auth_hash,
+        sha384(b"Exit Boot Services Invocation"),
+        sha384(b"Exit Boot Services Returned with Success"),
+    ]))
 }
 
-/// Compute the GPT event hash from a raw disk image.
-///
-/// The EFI_GPT_DATA structure measured by OVMF:
+/// The EFI_GPT_DATA bytes the firmware hashes into EV_EFI_GPT_EVENT:
 ///   - GPT header (92 bytes from LBA 1)
 ///   - NumberOfPartitions (u64)
 ///   - Valid partition entries (128 bytes each)
-fn compute_gpt_event_hash(disk: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn gpt_event_data(disk: &[u8]) -> Result<Vec<u8>> {
     if disk.len() < 1024 {
         anyhow::bail!("Disk image too small for GPT");
     }
@@ -274,7 +247,7 @@ fn compute_gpt_event_hash(disk: &[u8]) -> Result<Vec<u8>> {
         gpt_event.extend_from_slice(entry);
     }
 
-    Ok(sha384(&gpt_event))
+    Ok(gpt_event)
 }
 
 /// UKI sections measured by the UEFI stub, in canonical order.
@@ -293,6 +266,16 @@ const UKI_MEASUREMENT_ORDER: &[&str] = &[
 pub fn precompute_rtmr2_digests(
     sections: &[(String, Vec<u8>)],
 ) -> Result<Vec<(String, String, Vec<u8>)>> {
+    stub_digests(sections, HashAlg::Sha384)
+}
+
+/// The UKI boot's stub events hashed with `alg`, in log order: systemd-stub's
+/// section events (kind `name`/`data`), then the kernel EFI stub's command
+/// line (`loadopts`) and assembled initrd (`initrd`) events.
+pub(crate) fn stub_digests(
+    sections: &[(String, Vec<u8>)],
+    alg: HashAlg,
+) -> Result<Vec<(String, String, Vec<u8>)>> {
     let section_map: HashMap<&str, &[u8]> = sections
         .iter()
         .map(|(name, data)| (name.as_str(), data.as_slice()))
@@ -303,11 +286,11 @@ pub fn precompute_rtmr2_digests(
     for &sect_name in UKI_MEASUREMENT_ORDER {
         if let Some(&sect_data) = section_map.get(sect_name) {
             // Section name: ASCII + NUL terminator
-            let name_digest = sha384(&[sect_name.as_bytes(), b"\x00"].concat());
+            let name_digest = alg.hash(&[sect_name.as_bytes(), b"\x00"].concat());
             digests.push(("name".into(), sect_name.into(), name_digest));
 
             // Section data: virtual_size bytes
-            let data_digest = sha384(sect_data);
+            let data_digest = alg.hash(sect_data);
             digests.push(("data".into(), sect_name.into(), data_digest));
         }
     }
@@ -324,7 +307,7 @@ pub fn precompute_rtmr2_digests(
             .collect();
         utf16.extend_from_slice(&[0x00, 0x00]); // UTF-16 NUL terminator
 
-        let loadopts_digest = sha384(&utf16);
+        let loadopts_digest = alg.hash(&utf16);
         digests.push(("loadopts".into(), "cmdline".into(), loadopts_digest));
     }
 
@@ -334,7 +317,7 @@ pub fn precompute_rtmr2_digests(
         (section_map.get(".initrd"), section_map.get(".osrel"))
     {
         let combined = build_assembled_initrd(initrd_data, osrel_data);
-        let initrd_digest = sha384(&combined);
+        let initrd_digest = alg.hash(&combined);
         digests.push(("initrd".into(), "assembled".into(), initrd_digest));
     }
 
@@ -626,7 +609,7 @@ mod tests {
     #[test]
     fn test_gpt_event_hash_too_small() {
         let disk = vec![0u8; 512]; // too small
-        let result = compute_gpt_event_hash(&disk);
+        let result = gpt_event_data(&disk);
         assert!(result.is_err());
     }
 
@@ -634,7 +617,7 @@ mod tests {
     fn test_gpt_event_hash_bad_signature() {
         let disk = vec![0u8; 2048];
         // No "EFI PART" signature at offset 512
-        let result = compute_gpt_event_hash(&disk);
+        let result = gpt_event_data(&disk);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()

@@ -29,6 +29,57 @@ pub struct BuildManifest {
     /// under the policy that excludes RTMR[0]. `None` when the build excluded TDX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tdx: Option<TdxMeasurement>,
+    /// What cloud firmware measures for this disk and UKI. `None` in
+    /// manifests written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<CloudMeasurement>,
+}
+
+/// Expected registers of this image under cloud firmware, from
+/// `tdx_measure::cloud` (docs/CLOUD.md, docs/MANIFEST.md). Firmware-owned
+/// registers (MRTD, RTMR[0], PCR0-3/7) are not here: verifiers take them
+/// from the cloud provider.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CloudMeasurement {
+    /// `systemd-boot` or `direct-uki`: what `\EFI\BOOT\BOOTX64.EFI` is.
+    pub boot_path: String,
+    /// GCE TDX, SHA-384 hex.
+    pub gcp_tdx: GcpTdx,
+    /// Azure CVM vTPM SHA-256 bank, hex.
+    pub azure_vtpm: AzureVtpm,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GcpTdx {
+    pub rtmr1: String,
+    pub rtmr2: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AzureVtpm {
+    pub pcr4: String,
+    pub pcr9: String,
+    pub pcr11: String,
+}
+
+impl From<&tdx_measure::cloud::CloudMeasurement> for CloudMeasurement {
+    fn from(m: &tdx_measure::cloud::CloudMeasurement) -> Self {
+        CloudMeasurement {
+            boot_path: m.boot_path.as_str().to_string(),
+            gcp_tdx: GcpTdx {
+                rtmr1: hex::encode(&m.gcp_tdx.rtmr1),
+                rtmr2: hex::encode(&m.gcp_tdx.rtmr2),
+            },
+            azure_vtpm: AzureVtpm {
+                pcr4: hex::encode(&m.azure_vtpm.pcr4),
+                pcr9: hex::encode(&m.azure_vtpm.pcr9),
+                pcr11: hex::encode(&m.azure_vtpm.pcr11),
+            },
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -274,5 +325,33 @@ mod tests {
             .unwrap()
             .get("acpi_mode")
             .is_none());
+    }
+
+    /// The Azure 0.1.2 build manifest with the cloud block this builder adds
+    /// (values as measured on Azure Standard_DC2es_v6).
+    #[test]
+    fn cloud_block_round_trips_and_is_optional() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/azure-cloud-manifest.json"
+        );
+        let manifest = read_manifest(Path::new(fixture)).unwrap();
+        let cloud = manifest.cloud.as_ref().unwrap();
+        assert_eq!(cloud.boot_path, "systemd-boot");
+        assert_eq!(
+            cloud.azure_vtpm.pcr4,
+            "01a877a78619b163df80fb2cc469de09a74682efcc19b282e211285719cfa51a"
+        );
+        write_manifest(&manifest, &path).unwrap();
+        let reread = read_manifest(&path).unwrap();
+        assert_eq!(reread.cloud, manifest.cloud);
+
+        let mut older: serde_json::Value =
+            serde_json::from_str(&fs_err::read_to_string(fixture).unwrap()).unwrap();
+        older.as_object_mut().unwrap().remove("cloud");
+        fs_err::write(&path, older.to_string()).unwrap();
+        assert!(read_manifest(&path).unwrap().cloud.is_none());
     }
 }

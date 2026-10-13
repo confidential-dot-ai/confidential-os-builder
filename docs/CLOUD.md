@@ -114,3 +114,27 @@ The TD's MRTD and RTMRs belong to the paravisor (RTMR[0-3] are zero). The
 image's code identity is in vTPM PCR4/9/11. MRTD differs between Azure hosts:
 two values were seen on one VM across a deallocate, so a verifier needs an
 allow-list of paravisor MRTDs, not one pin.
+
+## Measurements
+
+Every build's `manifest.json` has a `cloud` block (docs/MANIFEST.md) with
+the registers the image itself controls on each cloud:
+
+| Cloud | Registers | Covers |
+|---|---|---|
+| GCE TDX | `gcp_tdx.rtmr1`, `gcp_tdx.rtmr2` (SHA-384) | boot chain (systemd-boot/UKI Authenticode, GPT), UKI sections |
+| Azure CVM | `azure_vtpm.pcr4`, `pcr9`, `pcr11` (SHA-256 vTPM bank) | boot chain, kernel cmdline + initrd, UKI sections |
+
+They come from `tdx_measure::cloud`. Its tests check the prediction against
+evidence the clouds produced: a GCE quote and CC event log (event by event)
+and an Azure signed vTPM quote. The boot path matters: firmware that loads
+systemd-boot and then the UKI logs two image loads; a disk whose
+`BOOTX64.EFI` is the UKI logs one. The `gcp` image boots the UKI directly
+(`boot_path: "direct-uki"`, see "Boot path"); other confos images use
+systemd-boot.
+
+Verifiers take firmware-owned values from the provider, not from the build:
+on GCE, MRTD via Google's signed launch endorsement and RTMR[0] per machine
+type; on Azure, the paravisor's MRTD from an allow-list (it changes between
+hosts) and PCR0-3/7 from Hyper-V UEFI. On Azure, RTMR[3] is zero (the
+paravisor owns the TD), so a launch-config binding must use a vTPM PCR.

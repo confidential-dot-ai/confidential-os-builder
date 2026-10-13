@@ -4,3 +4,5 @@ set -euo pipefail
 set -x
 
 cargo nextest run "${@:---no-fail-fast}"
+# tdx-measure is its own workspace; its tests include the cloud-evidence checks.
+cargo nextest run --manifest-path crates/tdx-measure/Cargo.toml --no-fail-fast

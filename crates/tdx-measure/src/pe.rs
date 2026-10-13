@@ -1,4 +1,4 @@
-//! PE/COFF parsing and Authenticode SHA-384 hash computation.
+//! PE/COFF parsing and Authenticode hash computation.
 //!
 //! The Authenticode hash excludes the PE checksum field and the
 //! certificate table directory entry, then hashes headers followed
@@ -8,7 +8,8 @@ use std::mem;
 use std::str;
 
 use anyhow::{bail, Context, Result};
-use sha2::{Digest, Sha384};
+
+use crate::alg::HashAlg;
 
 fn read_le<T: FromLeBytes>(data: &[u8], offset: usize) -> Result<T> {
     let size = mem::size_of::<T>();
@@ -49,6 +50,11 @@ impl FromLeBytes for u32 {
 /// This is what UEFI uses when measuring PE images into RTMRs.
 /// It excludes the checksum field and certificate table entry.
 pub fn authenticode_sha384(data: &[u8]) -> Result<Vec<u8>> {
+    authenticode(data, HashAlg::Sha384)
+}
+
+/// Compute the PE Authenticode hash with `alg` (SHA-256 for a vTPM PCR bank).
+pub fn authenticode(data: &[u8], alg: HashAlg) -> Result<Vec<u8>> {
     let lfanew: u32 = read_le(data, 0x3C)?;
     let pe_sig_offset = usize::try_from(lfanew).context("PE offset exceeds addressable range")?;
 
@@ -101,7 +107,7 @@ pub fn authenticode_sha384(data: &[u8]) -> Result<Vec<u8>> {
         );
     }
 
-    let mut hasher = Sha384::new();
+    let mut hasher = alg.hasher();
 
     // Hash headers, skipping checksum and cert table entry
     hasher.update(&data[..checksum_offset]);
