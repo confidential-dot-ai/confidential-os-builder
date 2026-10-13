@@ -197,23 +197,52 @@ class CloudInitPolicyTests(unittest.TestCase):
                 )
 
 
-class WritableStateTests(unittest.TestCase):
-    def test_colliding_profile_paths_have_independent_writable_state(self):
+# The harness disk layout (tests/immutable-root.sh): the real partition UUIDs
+# systemd-repart wrote for roothash 58ada214... (Azure image 0.1.2), on NVMe.
+ROOTHASH = "58ada21469e0c4fe0cf5f9f77e4295f82d510b566286aa0b09a4c044faf842ba"
+_booted = None
+
+
+def boot():
+    """Run the init under test once against the fixture image; tests share it."""
+    global _booted
+    if _booted is None:
         image = Path("/image")
         state = image / "usr/lib/confai/state.d"
         shutil.copytree("/default-state.d", state)
         (state / "50-one.conf").write_text("opt/a-b\n")
         # A duplicate across files, CRLF, and a final unterminated line.
         (state / "60-two.conf").write_bytes(b"opt/a/b\r\nopt/a-b")
-        directories = ("var", "home", "root", "tmp", "opt/a-b", "opt/a/b")
-        for directory in (*directories, "run", "etc"):
+        for directory in ("var", "home", "root", "tmp", "opt/a-b", "opt/a/b", "run", "etc"):
             (image / directory).mkdir(parents=True, exist_ok=True)
         (image / "root").chmod(0o700)
         (image / "tmp").chmod(0o1777)
         (image / "opt/a-b").chmod(0o750)
         os.chown(image / "opt/a-b", 123, 456)
+        _booted = run("/bin/bash", "/init-under-test")
+    return _booted
 
-        booted = run("/bin/bash", "/init-under-test")
+
+class DiskDiscoveryTests(unittest.TestCase):
+    def test_verity_partitions_are_found_by_roothash_partuuid(self):
+        booted = boot()
+        self.assertEqual(booted.returncode, 0, booted.stdout)
+        self.assertEqual(
+            Path("/veritysetup-args").read_text().split(),
+            ["open", "/dev/nvme0n1p2", "root", "/dev/nvme0n1p3", ROOTHASH],
+        )
+
+    def test_scratch_disk_is_found_by_serial_when_root_is_not_virtio(self):
+        booted = boot()
+        self.assertEqual(booted.returncode, 0, booted.stdout)
+        self.assertIn("/dev/vdb", Path("/cryptsetup-args").read_text().split())
+
+
+class WritableStateTests(unittest.TestCase):
+    def test_colliding_profile_paths_have_independent_writable_state(self):
+        image = Path("/image")
+        directories = ("var", "home", "root", "tmp", "opt/a-b", "opt/a/b")
+        booted = boot()
         self.assertEqual(booted.returncode, 0, booted.stdout)
         self.assertEqual(
             Path("/switch-root-args").read_text(), "/sysroot\n/sbin/init\n"
