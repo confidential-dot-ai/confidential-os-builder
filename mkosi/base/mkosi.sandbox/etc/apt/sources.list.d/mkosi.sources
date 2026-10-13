@@ -1,7 +1,9 @@
-# Every pocket pinned to snapshot.ubuntu.com by URI; without this file mkosi
-# generates a live-security list. Canonical rationale: bin/lint (#96).
+# Every pocket pinned to one snapshot.ubuntu.com timestamp by URI; without
+# this file mkosi generates a live-security list. Canonical rationale:
+# bin/lint (#96). The mirror list serves that snapshot from our copy first
+# (bin/mirror-apt-snapshot) and from snapshot.ubuntu.com second.
 Types: deb deb-src
-URIs: https://snapshot.ubuntu.com/ubuntu/20261011T000000Z
+URIs: mirror+file:/etc/apt/mirrors/ubuntu.list
 Suites: resolute resolute-updates resolute-security
 Components: main universe
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg

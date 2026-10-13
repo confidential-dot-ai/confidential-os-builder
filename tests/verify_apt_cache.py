@@ -108,6 +108,20 @@ class VerifyAptCacheTests(unittest.TestCase):
         self.assertFalse((self.root / "mkosi/mkosi.pkgcache").exists())
         self.assertFalse(self.lists.exists())
 
+    def test_mirror_list_falls_back_and_names_lists_like_apt(self):
+        sandbox = self.root / "mkosi/base/mkosi.sandbox"
+        mirror_list = sandbox / "etc/apt/mirrors/ubuntu.list"
+        mirror_list.parent.mkdir(parents=True)
+        mirror_list.write_text(f"{(self.tmp / 'repo').as_uri()}\tpriority:2\n{(self.tmp / 'empty').as_uri()}\tpriority:1\n")
+        sources = sandbox / "etc/apt/sources.list.d/mkosi.sources"
+        uri = (self.tmp / "repo").as_uri()
+        sources.write_text(sources.read_text().replace(f"URIs: {uri}", "URIs: mirror+file:/etc/apt/mirrors/ubuntu.list"))
+        for path in self.lists.glob("*_*"):
+            path.rename(path.with_name(path.name.replace(module.apt_filename(uri), "_etc_apt_mirrors_ubuntu.list")))
+        self.run_script()
+        self.assertEqual((self.archives / DEB).read_bytes(), self.deb)
+        self.assertEqual(len(list(self.lists.glob("_etc_apt_mirrors_ubuntu.list_dists_resolute_*"))), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
