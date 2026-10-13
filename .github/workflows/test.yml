@@ -26,6 +26,7 @@ jobs:
                   python3 tests/ci_images.py
                   python3 tests/gpu_module_cache.py
                   python3 tests/host_deps.py
+                  python3 tests/verify_apt_cache.py
 
     kernel-checksum:
         name: Test kernel.org checksum verification

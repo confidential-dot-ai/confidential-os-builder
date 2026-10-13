@@ -97,6 +97,11 @@ runs:
         key: ${{ steps.keys.outputs.packages }}
         restore-keys: ${{ steps.keys.outputs.packages-prefix }}
 
+    - name: Drop cached packages and lists the signed snapshot indexes do not vouch for
+      if: inputs.phase == 'restore'
+      shell: bash
+      run: bin/verify-apt-cache
+
     - name: Restore NVIDIA downloads and unsigned modules
       if: inputs.phase == 'restore' && inputs.gpu == 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
