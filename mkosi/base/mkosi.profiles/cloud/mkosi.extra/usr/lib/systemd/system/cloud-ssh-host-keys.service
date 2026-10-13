@@ -1,0 +1,12 @@
+[Unit]
+Description=Restore SSH host keys from the ESP, generating them on first boot
+Documentation=https://github.com/confidential-dot-ai/confidential-os-builder/blob/main/docs/CLOUD.md
+# general-purpose-ssh-host-keys.service then finds the keys and skips.
+Before=ssh.service general-purpose-ssh-host-keys.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/confai/cloud-ssh-host-keys
+
+[Install]
+WantedBy=multi-user.target

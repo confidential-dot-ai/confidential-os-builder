@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,63 @@ EXTRA = PROFILE / "mkosi.extra"
 COMMON = ROOT / "mkosi/base/mkosi.profiles/general-purpose"
 COMMON_EXTRA = COMMON / "mkosi.extra"
 READY = "CC State : ON\nMulti-GPU Mode : NVLE\nCC GPUs Ready State : Ready\n"
+
+
+class CloudProfileTests(unittest.TestCase):
+    def test_finalize_masks_pcrlock_and_drops_the_user_data_disk(self):
+        profiles = ROOT / "mkosi/base/mkosi.profiles"
+        with tempfile.TemporaryDirectory() as tmp:
+            buildroot = Path(tmp)
+            units = buildroot / "etc/systemd/system"
+            shutil.copytree(profiles / "general-purpose/mkosi.extra/etc/systemd/system", units)
+            vendor = buildroot / "usr/lib/systemd/system"
+            vendor.mkdir(parents=True)
+            shipped = ["systemd-pcrlock-make-policy.service", "systemd-pcrlock.socket", "systemd-pcrlock@.service", "systemd-pcrphase.service"]
+            for unit in shipped:
+                (vendor / unit).write_text("[Unit]\n")
+            result = subprocess.run(["bash", str(profiles / "cloud/mkosi.finalize")],
+                                    env={**os.environ, "BUILDROOT": tmp}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            def masked(unit):
+                return os.readlink(units / unit) == "/dev/null" if (units / unit).is_symlink() else False
+
+            for unit in shipped[:3]:
+                self.assertTrue(masked(unit), unit)
+            self.assertFalse((units / "systemd-pcrphase.service").exists(), "only pcrlock units are masked")
+            for unit in ("var-lib-user\\x2ddata.mount", "var-lib-user\\x2ddata.automount"):
+                self.assertTrue(masked(unit), unit)
+            for service in ("docker", "containerd"):
+                original = (profiles / f"general-purpose/mkosi.extra/etc/systemd/system/{service}.service.d/10-general-purpose-persistent-state.conf").read_text()
+                dropin = (units / f"{service}.service.d/10-general-purpose-persistent-state.conf").read_text()
+                self.assertNotIn("user\\x2ddata", dropin.replace("/var/lib/user-data", ""))
+                self.assertNotIn("RequiresMountsFor", dropin)
+                # Everything else the general-purpose drop-in sets is kept.
+                kept = [l.replace("var-lib-user\\x2ddata.mount", "").rstrip() for l in original.splitlines()
+                        if not l.startswith("RequiresMountsFor=")]
+                self.assertEqual(dropin.splitlines(), [l for l in kept if l != "After="])
+
+    def test_ssh_host_keys_are_made_once_and_restored_from_the_store(self):
+        cloud = ROOT / "mkosi/base/mkosi.profiles/cloud/mkosi.extra"
+        script = cloud / "usr/lib/confai/cloud-ssh-host-keys"
+        names = [f"ssh_host_{t}_key" for t in ("rsa", "ecdsa", "ed25519")]
+        with tempfile.TemporaryDirectory() as tmp:
+            store, first, second = (Path(tmp) / d for d in ("esp/confos/ssh-host-keys", "boot1", "boot2"))
+            for boot in (first, second):
+                boot.mkdir()
+                result = subprocess.run(["bash", str(script), str(store), str(boot)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(sorted(p.name for p in store.iterdir()), sorted(names + [n + ".pub" for n in names]))
+            for name in names:
+                for directory in (store, first, second):
+                    self.assertEqual((directory / name).stat().st_mode & 0o777, 0o600, (directory, name))
+                self.assertEqual((first / name).read_bytes(), (second / name).read_bytes(), name)
+                self.assertEqual((first / f"{name}.pub").read_bytes(), (store / f"{name}.pub").read_bytes(), name)
+            derived = subprocess.run(["ssh-keygen", "-y", "-f", str(second / "ssh_host_ed25519_key")],
+                                     capture_output=True, text=True, check=True).stdout.split()[:2]
+            self.assertEqual(derived, (second / "ssh_host_ed25519_key.pub").read_text().split()[:2])
+        config = (cloud / "etc/ssh/sshd_config.d/20-cloud-host-keys.conf").read_text().splitlines()
+        self.assertEqual([l for l in config if l.startswith("HostKey ")], [f"HostKey /etc/ssh/{n}" for n in names])
 
 
 class AzureAttestationTests(unittest.TestCase):

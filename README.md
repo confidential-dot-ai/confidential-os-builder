@@ -205,7 +205,8 @@ sees only ciphertext and cannot recover the contents after shutdown. A
 plain-VM run provides neither guarantee because the host can inspect guest
 memory. In production, attach your own block device with
 `serial=confai-scratch` on the virtio-blk device instead of using `--scratch` (see
-[Deploying](docs/DEPLOYING.md#storage) for the QEMU arguments).
+[Deploying](docs/DEPLOYING.md#storage) for the QEMU arguments). On Azure, the
+initrd uses a data disk at LUN 0 the same way ([Cloud images](docs/CLOUD.md#scratch-disk)).
 
 Confidential OS Builder currently has no persistent-disk convention: everything in the guest is
 either measured-and-read-only or ephemeral. A workload that needs durable

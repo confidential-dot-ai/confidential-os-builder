@@ -64,8 +64,7 @@ The kernel fragment selects the AML the kernel may run with one
 ## Root and provisioning
 
 - The initrd finds the verity partitions by PARTUUID, so the SCSI (Azure)
-  and NVMe (GCE) boot disks work. A scratch disk is found only on virtio-blk, so cloud
-  images use the 2G RAM state tmpfs.
+  and NVMe (GCE) boot disks work.
 - cloud-init uses the cloud datasource instead of the measured NoCloud seed.
   SSH keys come from cloud metadata and are installed for root
   (Azure's `adminUsername` is not created). They are **not** launch-measured:
@@ -81,6 +80,14 @@ The kernel fragment selects the AML the kernel may run with one
   and GCE reboots it in a loop. The cause is not known; this is a workaround.
   init_on_alloc stays on.
 - Boot with Secure Boot off: systemd-boot (Azure) and the UKI are unsigned.
+- The shared `cloud` profile masks the systemd-pcrlock units (nothing in the
+  image seals secrets to the TPM, and they fail on the Azure vTPM) and drops
+  the general-purpose user-data disk (see below).
+- SSH host keys persist across reboot and stop/start. At boot,
+  `cloud-ssh-host-keys.service` mounts the boot disk's ESP and copies the
+  keys from `/confos/ssh-host-keys/` to `/etc/ssh`. If keys are missing, it
+  generates them and saves them there. A new VM gets new keys. The ESP files
+  are data, not boot entries, so they do not change any measurement.
 
 ## Boot path
 
@@ -95,6 +102,46 @@ image". The same disk with only `BOOTX64.EFI` replaced by the UKI boots and
 attests (boot and reboot; RTMR[1] matches the direct-UKI prediction). The
 same systemd-boot disk boots on GCE SEV-SNP and on Azure. The firmware then
 measures one image load into RTMR[1] instead of two.
+
+## Scratch disk
+
+Without a scratch disk, writable state (including Docker and containerd data
+under `/var/lib/user-data`) lives in a 2G RAM tmpfs that is lost on reboot.
+The size is fixed in the measured initrd (`mkosi/initrd/mkosi.extra/init`,
+`size=2G`); it is not a profile setting.
+
+- **Azure:** attach a data disk at LUN 0 when the VM is created
+  (`az vm create --data-disk-sizes-gb 64`, or `az vm disk attach --lun 0`
+  before start). The initrd finds it without udev: the disk's
+  `/sys/block/<dev>/device` link points at the VMBus SCSI controller Azure
+  uses for data disks (`f8b3781b-1e82-4818-a1c3-63d806ec15bb`; the OS disk is
+  on `f8b3781a-...`) and ends in the SCSI address, whose last field is the
+  LUN. As with `confos run --scratch`, the initrd opens it with dm-crypt
+  (plain mode, a random key held only in guest RAM), formats it and puts the
+  state directories on it. **The LUN 0 disk is erased on every boot**: do
+  not attach a disk you want to keep at LUN 0. A disk attached at LUN 0 while
+  the VM runs is used from the next boot.
+- **GCE:** not supported yet; state stays in the tmpfs. GCE NVMe disks all
+  report the serial and model `nvme_card-pd`; the device name
+  (`--create-disk=device-name=...`) is only in the NVMe Identify Namespace
+  data, in the vendor-specific bytes from offset 384 (a JSON object with
+  `device_name`, which Google's `google_nvme_id` udev helper reads). Reading
+  it needs an NVMe admin ioctl. The initrd has no tool for that, and Ubuntu's
+  `nvme-cli` would pull `uuid-runtime`, `adduser` and `systemd` into the
+  initrd every image shares. Matching by namespace number instead would erase
+  whichever data disk happens to be attached second. Follow-up: a small
+  static tool in the initrd that reads those bytes.
+
+## Known limitations
+
+- **No user-data disk.** general-purpose mounts an ext4 disk labelled
+  `user-data`; the `cloud` profile masks that mount so boot does not wait
+  90 s for a disk the cloud VM does not have.
+- **SSH host keys are stored unencrypted on the boot disk.** Anyone who can
+  read the disk (the cloud provider, a disk snapshot) can copy the private
+  keys and impersonate the VM, even to a client that checked the attested
+  host keys. This is accepted because these images already trust the cloud
+  provider (see the SSH key bullet above).
 
 ## Attestation
 

@@ -21,14 +21,14 @@
     "memory": "128G"
   },
   "azure": {
-    "profiles": ["ssh", "general-purpose", "attest", "azure"],
+    "profiles": ["ssh", "general-purpose", "attest", "cloud", "azure"],
     "kernel": "kernel/azure.config",
     "extra_kernel_inputs": ["kernel/general-purpose.config", "kernel/acpi/azure-dsdt.aml"],
     "platform": "tdx",
     "memory": "8G"
   },
   "gcp": {
-    "profiles": ["ssh", "general-purpose", "attest", "gcp"],
+    "profiles": ["ssh", "general-purpose", "attest", "cloud", "gcp"],
     "kernel": "kernel/gcp.config",
     "extra_kernel_inputs": ["kernel/general-purpose.config"],
     "platform": "tdx",
