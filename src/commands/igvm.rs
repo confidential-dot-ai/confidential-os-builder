@@ -37,9 +37,9 @@ pub fn run(args: &IgvmArgs) -> anyhow::Result<()> {
     }
     let mut build_manifest = manifest::read_manifest(&manifest_path)?;
 
-    // Read inputs once
-    let fw_bytes = fs_err::read(&args.firmware)?;
-    let uki_bytes = fs_err::read(&uki_path)?;
+    // Check sealed inputs before reusing an existing measured variant. A
+    // valid old IGVM hash alone cannot establish that these inputs match it.
+    let (fw_bytes, uki_bytes) = prepare_inputs(args, &mut build_manifest)?;
 
     println!("Generating IGVM files for SMP counts: {:?}", args.smp);
 
@@ -110,10 +110,49 @@ pub fn run(args: &IgvmArgs) -> anyhow::Result<()> {
     // diff between two manifest.json files is meaningful even if the user
     // happened to invoke `--smp 8 2 4` versus `--smp 2 4 8`.
     build_manifest.snp_variants.sort_by_key(|v| v.smp);
+    build_manifest.build.platform = if build_manifest.tdx.is_some() {
+        "both"
+    } else {
+        "snp"
+    }
+    .to_string();
     manifest::write_manifest(&build_manifest, &manifest_path)?;
 
     println!("\nDone. IGVM files written to {}", args.dir.display());
     Ok(())
+}
+
+fn prepare_inputs(
+    args: &IgvmArgs,
+    build: &mut BuildManifest,
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    let uki = args.dir.join("uki.efi");
+    if manifest::sha256_file(&uki)? != build.outputs.uki.sha256 {
+        anyhow::bail!(
+            "UKI differs from the sealed manifest; build a new image before deriving SNP variants"
+        );
+    }
+    let firmware_hash = manifest::sha256_file(&args.firmware)?;
+    if let Some(recorded) = &build.inputs.firmware {
+        if recorded.sha256 != firmware_hash {
+            anyhow::bail!("SNP firmware differs from the sealed manifest; refusing to reuse its launch measurements");
+        }
+    } else if !build.snp_variants.is_empty() {
+        anyhow::bail!("existing SNP variants have no recorded firmware identity; derive them again from the original sealed output");
+    }
+    let output_firmware = args.dir.join("OVMF.fd");
+    if output_firmware.exists() {
+        if manifest::sha256_file(&output_firmware)? != firmware_hash {
+            anyhow::bail!("output OVMF.fd differs from the supplied SNP firmware");
+        }
+    } else {
+        fs_err::copy(&args.firmware, &output_firmware)?;
+    }
+    build.inputs.firmware = Some(FileEntry {
+        path: "OVMF.fd".into(),
+        sha256: firmware_hash,
+    });
+    Ok((fs_err::read(&output_firmware)?, fs_err::read(&uki)?))
 }
 
 /// Replace any existing variant with the same SMP count, or append if absent.
@@ -182,6 +221,69 @@ mod tests {
                 vmsa_count: smp,
             },
         }
+    }
+
+    #[test]
+    fn deriving_snp_records_firmware_and_rejects_sealed_input_drift() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let external = tempfile::TempDir::new().unwrap();
+        let uki = directory.path().join("uki.efi");
+        let firmware = external.path().join("firmware.fd");
+        fs_err::write(&uki, b"SEALED-UKI").unwrap();
+        fs_err::write(&firmware, b"PINNED-SNP-FIRMWARE").unwrap();
+        let args = IgvmArgs {
+            dir: directory.path().to_owned(),
+            firmware: firmware.clone(),
+            smp: vec![2],
+        };
+        let mut build = empty_manifest();
+        build.inputs.firmware = None;
+        build.outputs.uki.sha256 = manifest::sha256_file(&uki).unwrap();
+        let inputs = prepare_inputs(&args, &mut build).unwrap();
+        assert_eq!(
+            inputs,
+            (b"PINNED-SNP-FIRMWARE".to_vec(), b"SEALED-UKI".to_vec())
+        );
+        assert_eq!(build.inputs.firmware.as_ref().unwrap().path, "OVMF.fd");
+        assert_eq!(
+            fs_err::read(directory.path().join("OVMF.fd")).unwrap(),
+            b"PINNED-SNP-FIRMWARE"
+        );
+        prepare_inputs(&args, &mut build).unwrap();
+
+        fs_err::write(&firmware, b"OTHER-FIRMWARE").unwrap();
+        assert!(prepare_inputs(&args, &mut build)
+            .unwrap_err()
+            .to_string()
+            .contains("SNP firmware differs"));
+        fs_err::write(&firmware, b"PINNED-SNP-FIRMWARE").unwrap();
+        fs_err::write(&uki, b"UNSEALED-UKI").unwrap();
+        assert!(prepare_inputs(&args, &mut build)
+            .unwrap_err()
+            .to_string()
+            .contains("UKI differs"));
+    }
+
+    #[test]
+    fn existing_variants_without_firmware_provenance_fail_closed() {
+        let directory = tempfile::TempDir::new().unwrap();
+        let uki = directory.path().join("uki.efi");
+        let firmware = directory.path().join("firmware.fd");
+        fs_err::write(&uki, b"UKI").unwrap();
+        fs_err::write(&firmware, b"FW").unwrap();
+        let args = IgvmArgs {
+            dir: directory.path().to_owned(),
+            firmware,
+            smp: vec![2],
+        };
+        let mut build = empty_manifest();
+        build.outputs.uki.sha256 = manifest::sha256_file(&uki).unwrap();
+        build.inputs.firmware = None;
+        build.snp_variants.push(variant(2, "old"));
+        assert!(prepare_inputs(&args, &mut build)
+            .unwrap_err()
+            .to_string()
+            .contains("no recorded firmware identity"));
     }
 
     #[test]
