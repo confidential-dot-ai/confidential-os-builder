@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Upload a packaged confos VHD (bin/cloud-image azure) as an Azure page blob.
+
+  bin/cloud-upload-azure 'https://ACCOUNT.blob.core.windows.net/CONTAINER/NAME.vhd?SAS' output/azure/cloud/confos-azure.vhd
+
+The SAS token needs create and write permission. Compute Gallery imports a VHD
+only from a page blob. All-zero 4 MiB chunks are skipped: a new page blob
+reads as zeros, so the blob still equals the file. Standard library only, so
+it runs on a build host without the Azure CLI.
+"""
+
+import argparse
+import os
+import urllib.request
+
+API_VERSION = "2021-08-06"
+CHUNK = 4 << 20  # the Put Page maximum
+
+
+def put(url, headers, data=b""):
+    request = urllib.request.Request(url, data=data, method="PUT",
+                                     headers={"x-ms-version": API_VERSION, "Content-Length": str(len(data)), **headers})
+    with urllib.request.urlopen(request, timeout=120):
+        pass
+
+
+def upload(url, path):
+    size = os.path.getsize(path)
+    if size % 512:
+        raise SystemExit(f"{path}: {size} bytes is not a multiple of 512; package it with bin/cloud-image azure")
+    put(url, {"x-ms-blob-type": "PageBlob", "x-ms-blob-content-length": str(size)})
+    written = 0
+    with open(path, "rb") as f:
+        for offset in range(0, size, CHUNK):
+            chunk = f.read(CHUNK)
+            if chunk.count(0) == len(chunk):
+                continue
+            put(f"{url}&comp=page", {"x-ms-page-write": "update",
+                                     "x-ms-range": f"bytes={offset}-{offset + len(chunk) - 1}"}, chunk)
+            written += len(chunk)
+    print(f"uploaded {size} bytes ({written} non-zero)")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("url", help="page blob URL with a SAS query string")
+    parser.add_argument("vhd")
+    args = parser.parse_args()
+    if "?" not in args.url:
+        raise SystemExit("the blob URL needs a SAS query string")
+    upload(args.url, args.vhd)
+
+
+if __name__ == "__main__":
+    main()

@@ -13,6 +13,29 @@ bin/build-image azure          # output/azure
 bin/build-image gcp            # output/gcp
 ```
 
+## Packaging and import
+
+```bash
+# GCE: gzip tar (oldgnu) holding exactly disk.raw
+bin/cloud-image gcp output/gcp                       # output/gcp/cloud/confos-gcp.tar.gz
+gcloud storage cp output/gcp/cloud/confos-gcp.tar.gz gs://BUCKET/
+bin/cloud-import-gcp NAME gs://BUCKET/confos-gcp.tar.gz --project P
+
+# Azure: fixed VHD, virtual size a whole MiB, uploaded as a page blob
+bin/cloud-image azure output/azure                   # output/azure/cloud/confos-azure.vhd
+bin/cloud-upload-azure 'https://ACCOUNT.blob.core.windows.net/vhds/confos.vhd?SAS' \
+    output/azure/cloud/confos-azure.vhd
+bin/cloud-import-azure RG GALLERY DEFINITION VERSION STORAGE_ACCOUNT_ID \
+    https://ACCOUNT.blob.core.windows.net/vhds/confos.vhd
+```
+
+Each package is written with a `.sha256` file. The GCE image gets the guest
+OS features `TDX_CAPABLE`, `UEFI_COMPATIBLE`, `GVNIC` and
+`VIRTIO_SCSI_MULTIQUEUE`. The Azure image is a Gen2 Compute Gallery image
+with `SecurityType=ConfidentialVMSupported`. Create VMs with Secure Boot off
+(systemd-boot and the UKI are unsigned). Packaging and upload do not change
+the disk bytes, so the measurements in `manifest.json` still apply.
+
 Azure SEV-SNP (DCasv5/ECasv5) uses the same paravisor and image, and the
 attestation service accepts `az-snp`, but no confos image has booted there yet.
 

@@ -1,0 +1,17 @@
+#!/bin/bash
+# Import a packaged confos Azure VHD (bin/cloud-image azure) that is
+# already uploaded as a page blob (bin/cloud-upload-azure), as a Gen2 ConfidentialVMSupported Compute
+# Gallery image. Usage:
+#   bin/cloud-import-azure RG GALLERY DEFINITION VERSION STORAGE_ACCOUNT_ID VHD_URL [LOCATION]
+# Boot with Secure Boot off: the image's systemd-boot and UKI are unsigned.
+set -euo pipefail
+[ $# -ge 6 ] || { sed -n 2,7p "$0"; exit 2; }
+rg=$1 gallery=$2 def=$3 ver=$4 account=$5 url=$6 location=${7:-westeurope}
+az sig show -g "$rg" -r "$gallery" >/dev/null 2>&1 || az sig create -g "$rg" -r "$gallery" -l "$location" -o none
+az sig image-definition show -g "$rg" -r "$gallery" -i "$def" >/dev/null 2>&1 ||
+    az sig image-definition create -g "$rg" -r "$gallery" -i "$def" -l "$location" \
+        --publisher confos --offer confos --sku "$def" --os-type Linux --os-state Generalized \
+        --hyper-v-generation V2 --features SecurityType=ConfidentialVMSupported -o none
+az sig image-version create -g "$rg" -r "$gallery" -i "$def" -e "$ver" -l "$location" \
+    --os-vhd-storage-account "$account" --os-vhd-uri "$url" -o none
+az sig image-version show -g "$rg" -r "$gallery" -i "$def" -e "$ver" --query id -o tsv

@@ -1,0 +1,9 @@
+#!/bin/bash
+# Import a packaged confos GCE image (bin/cloud-image gcp) that is
+# already uploaded to Cloud Storage. Usage:
+#   bin/cloud-import-gcp IMAGE_NAME gs://BUCKET/confos-gcp.tar.gz [extra gcloud flags, e.g. --project P --labels k=v]
+set -euo pipefail
+[ $# -ge 2 ] || { sed -n 2,5p "$0"; exit 2; }
+name=$1 uri=$2; shift 2
+gcloud compute images create "$name" --source-uri "$uri" \
+    --guest-os-features=TDX_CAPABLE,UEFI_COMPATIBLE,GVNIC,VIRTIO_SCSI_MULTIQUEUE "$@"
