@@ -84,7 +84,8 @@ jobs:
         leg: [a, b]
     needs: validate
     runs-on: big-build-runner
-    timeout-minutes: 60
+    # Cold-cache builds took up to 55 min on a healthy mirror.
+    timeout-minutes: 120
     env:
       KERNEL_FRAGMENT: ${{ matrix.image == 'general-purpose' && 'general-purpose' || 'general-purpose-gpu' }}
     steps:

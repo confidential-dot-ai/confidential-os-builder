@@ -39,7 +39,7 @@ runs:
         PHASE: ${{ inputs.phase }}
         VARIANT: ${{ inputs.variant }}
         LEG: ${{ inputs.leg }}
-        TOOLS: ${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**', 'src/commands/kernel.rs') }}
+        TOOLS: ${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**', 'src/commands/kernel/tools_tree.rs') }}
         KERNEL: ${{ hashFiles('kernel/version', 'kernel/required.config', 'kernel/hardening.config', 'kernel/confidential.config', 'kernel/*.seed', 'kernel/*.asl', 'kernel/patches/**', 'kernel/module-signing.crt', inputs.fragment, inputs.snapshot, 'src/commands/kernel.rs', 'src/kernel/**') }}
         PIN: ${{ hashFiles('mkosi/base/mkosi.sandbox/**', 'mkosi/initrd/mkosi.sandbox/**', 'mkosi/kernel-builder/mkosi.sandbox/**') }}
         SOURCE: ${{ hashFiles('kernel/version') }}
