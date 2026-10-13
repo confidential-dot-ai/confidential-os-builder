@@ -59,26 +59,23 @@ DefinitionBlock ("dsdt.aml", "DSDT", 1, "CONFAI", "TRUSTED ", 0x00000002)
                     0x0000000000000000, 0x0000000800000000, 0x000000FFFFFFFFFF,
                     0x0000000000000000, 0x000000F800000000)
 
-                /* 64-bit MMIO window (high): 2TiB..64TiB. Covers wherever OVMF
-                 * places very large device BARs. B200 resizable BAR2 is
-                 * 256GiB; one GPU needs a ~384GiB bridge window, so 8 GPUs need
-                 * ~3TiB. OVMF's placement base depends on its 64-bit MMIO
-                 * aperture: with the default aperture it lands near 56TiB;
-                 * raising it (fw_cfg opt/ovmf/X-PciMmio64Mb, needed to fit 4+
-                 * of these BARs plus the boot-disk BAR) relocates it toward
-                 * ~2TiB. This single wide window covers both. RAM can never
-                 * reach 2TiB on supported hosts, so unlike the low window it is
-                 * immune to Linux's RAM-conflict drop; 64TiB is the 46-bit
-                 * physical-address ceiling of this host's CPUs. Without it,
-                 * multi-GPU guests fail driver probe with "BAR0 is 0M @ 0x0"
-                 * (kernel can't claim the firmware-placed BARs: "can't claim;
-                 * no compatible bridge window"). NOTE: 4+ GPUs ALSO require the
-                 * OVMF aperture raise above — the window here is necessary but
-                 * not sufficient on its own. */
+                /* 64-bit MMIO window (high): 2TiB..256TiB. Firmware placement
+                 * depends on guest physical-address width and the OVMF MMIO
+                 * aperture. Observed placements include 56TiB on a 256GiB
+                 * guest and 224TiB on a 1TiB guest. The former 64TiB ceiling
+                 * excluded the latter's virtio BARs, preventing boot-disk
+                 * discovery even without GPUs.
+                 *
+                 * This is a resource-accounting window, not a declaration of
+                 * available physical-address bits. It must remain disjoint
+                 * from guest System RAM; configurations reaching this window
+                 * need a different layout. Large GPU BARs still require a
+                 * sufficient OVMF aperture (fw_cfg opt/ovmf/X-PciMmio64Mb);
+                 * widening _CRS alone does not size that aperture. */
                 QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     Cacheable, ReadWrite,
-                    0x0000000000000000, 0x0000020000000000, 0x00003FFFFFFFFFFF,
-                    0x0000000000000000, 0x00003E0000000000)
+                    0x0000000000000000, 0x0000020000000000, 0x0000FFFFFFFFFFFF,
+                    0x0000000000000000, 0x0000FE0000000000)
             })
         }
     }
