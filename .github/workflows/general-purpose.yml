@@ -188,6 +188,7 @@ jobs:
           fragment: kernel/${{ env.KERNEL_FRAGMENT }}.config
           snapshot: kernel/config-x86_64-${{ env.KERNEL_FRAGMENT }}.snapshot
           gpu: ${{ matrix.image == 'general-purpose-gpu' }}
+          publish: ${{ job.status == 'success' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
 
       - name: Upload reproducibility evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

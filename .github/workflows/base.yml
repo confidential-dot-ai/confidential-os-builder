@@ -120,6 +120,7 @@ jobs:
           kernel-ready: ${{ steps.kernel.outcome == 'success' }}
           variant: base
           leg: ${{ inputs.leg || 'single' }}
+          publish: ${{ job.status == 'success' && inputs.gate != true && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
 
       - name: Make base-only tools cache-readable
         if: always()

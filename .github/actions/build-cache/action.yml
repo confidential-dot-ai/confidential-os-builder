@@ -25,6 +25,9 @@ inputs:
   compiled-kernel:
     description: Restore/save compiled kernel artifacts (disable for source-only jobs)
     default: 'true'
+  publish:
+    description: On save, push the package pool to GHCR if this apt pin has none yet (trusted refs only)
+    default: 'false'
 outputs:
   kernel-key:
     description: Input-keyed kernel cache key
@@ -54,6 +57,7 @@ runs:
         echo "source=${RUNNER_OS}-confos-source-v2-${SOURCE}" >> "$GITHUB_OUTPUT"
         echo "packages=${RUNNER_OS}-confos-packages-v2-${PIN}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${VARIANT}-${LEG}" >> "$GITHUB_OUTPUT"
         echo "packages-prefix=${RUNNER_OS}-confos-packages-v2-${PIN}-" >> "$GITHUB_OUTPUT"
+        echo "packages-image=ghcr.io/${GITHUB_REPOSITORY,,}/apt-packages:${PIN}" >> "$GITHUB_OUTPUT"
         echo "nvidia=${RUNNER_OS}-confos-nvidia-v2-${NVIDIA}-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
         echo "nvidia-prefix=${RUNNER_OS}-confos-nvidia-v2-${NVIDIA}-" >> "$GITHUB_OUTPUT"
         echo "cuda=${RUNNER_OS}-confos-cuda-v2-${CUDA}" >> "$GITHUB_OUTPUT"
@@ -85,6 +89,32 @@ runs:
           ${{ inputs.snapshot }}
         key: ${{ steps.keys.outputs.kernel }}
         restore-keys: ${{ steps.keys.outputs.kernel-prefix }}
+
+    - name: Setup ORAS
+      if: inputs.phase == 'restore' || inputs.publish == 'true'
+      uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+    - name: Pull the package pool published for this apt pin
+      # Survives Actions cache eviction. Missing or unreadable artifacts fall
+      # through to the Actions cache and then the mirror; verify-apt-cache
+      # below checks whatever either source restored.
+      if: inputs.phase == 'restore'
+      shell: bash
+      env:
+        IMAGE: ${{ steps.keys.outputs.packages-image }}
+        TOKEN: ${{ github.token }}
+      run: |
+        set -uo pipefail
+        tmp=$(mktemp -d)
+        if oras pull --output "$tmp" "$IMAGE" \
+            || printf '%s' "$TOKEN" | oras pull --username "$GITHUB_ACTOR" --password-stdin --output "$tmp" "$IMAGE"; then
+          tar --zstd -xf "$tmp/apt-packages.tar.zst" --wildcards \
+            mkosi/mkosi.pkgcache 'mkosi/*/mkosi.cache/*.metadata.cache' \
+            || echo "Could not unpack $IMAGE; continuing without it"
+        else
+          echo "No published package pool at $IMAGE; continuing without it"
+        fi
+        rm -rf "$tmp"
 
     - name: Restore growing distro package pool (not profile-specific)
       if: inputs.phase == 'restore'
@@ -179,3 +209,28 @@ runs:
       with:
         path: mkosi/base/mkosi.cache/general-purpose-gpu-inputs
         key: ${{ steps.keys.outputs.cuda }}
+
+    - name: Publish the package pool for this apt pin
+      # Callers pass publish=true only for successful main or
+      # workflow_dispatch builds, never for pull requests. The first
+      # successful publisher for a pin wins; a concurrent duplicate push
+      # replaces it with an equally verified pool.
+      if: inputs.phase == 'save' && inputs.publish == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        IMAGE: ${{ steps.keys.outputs.packages-image }}
+        TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        printf '%s' "$TOKEN" | oras login "${IMAGE%%/*}" --username "$GITHUB_ACTOR" --password-stdin
+        if oras manifest fetch "$IMAGE" >/dev/null 2>&1; then
+          echo "$IMAGE already exists"
+          exit 0
+        fi
+        out=$(mktemp -d)
+        tar --zstd -cf "$out/apt-packages.tar.zst" --exclude='*.bin' --exclude='partial/*' --exclude=lock \
+          mkosi/mkosi.pkgcache mkosi/*/mkosi.cache/*.metadata.cache
+        cd "$out"
+        oras push "$IMAGE" --artifact-type application/vnd.confos.apt-packages.v1 apt-packages.tar.zst
+        du -h apt-packages.tar.zst
