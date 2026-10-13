@@ -7,9 +7,11 @@ InRelease also keeps the cached Packages lists without rehashing them. A
 restored CI cache is therefore checked here before mkosi runs:
 
 - InRelease for every pinned URI/suite in mkosi/*/mkosi.sandbox sources is
-  fetched fresh and checked with gpgv against the Ubuntu archive keyring.
-- Each mkosi metadata cache must hold only lists whose SHA256 matches those
-  InRelease files; otherwise the whole metadata cache is deleted. apt's binary
+  fetched fresh (from the mirror list's entries in priority order) and
+  checked with gpgv against the Ubuntu archive keyring.
+- Each mkosi metadata cache must hold only lists whose SHA256 matches the
+  InRelease files of its own image's sources; otherwise the whole metadata
+  cache is deleted. apt's binary
   caches (*.bin) and partial downloads are always deleted; apt rebuilds them.
 - Each cached .deb must match name and SHA256 of an entry in a verified
   Packages index of a pinned component; otherwise it is deleted.
@@ -21,6 +23,7 @@ Usage: bin/verify-apt-cache [--root DIR] [--keyring FILE] [--arch ARCH]
 """
 
 import argparse
+import functools
 import hashlib
 import lzma
 from pathlib import Path
@@ -29,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,16 +48,43 @@ def fetch(url):
             with urllib.request.urlopen(url, timeout=60) as response:
                 return response.read()
         except OSError as error:
-            if attempt == 4:
+            if attempt == 4 or getattr(error, "code", None) == 404 or isinstance(getattr(error, "reason", None), FileNotFoundError):
                 raise
             print(f"verify-apt-cache: retrying {url}: {error}", file=sys.stderr)
             time.sleep(10 * (attempt + 1))
 
 
+@functools.cache
+def fetch_any(bases, path):
+    """path from the first base URL that serves it, like apt's mirror method."""
+    for base in bases:
+        try:
+            return fetch(f"{base}/{path}")
+        except OSError as error:
+            print(f"verify-apt-cache: {base}/{path}: {error}", file=sys.stderr)
+            failure = error
+    raise failure
+
+
+def mirrors(sandbox, uri):
+    """Base URLs apt fetches a source URI from: a mirror+file: list's entries
+    by ascending priority, or the URI itself."""
+    if not uri.startswith("mirror+file:"):
+        return (uri.rstrip("/"),)
+    entries = []
+    for line in (sandbox / uri.removeprefix("mirror+file:").lstrip("/")).read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            url, *tags = line.split()
+            priority = next((int(t[len("priority:"):]) for t in tags if t.startswith("priority:")), sys.maxsize)
+            entries.append((priority, url.rstrip("/")))
+    return tuple(url for _, url in sorted(entries, key=lambda entry: entry[0]))
+
+
 def sources(root):
-    """(uri, suite, components) for every binary source in the pinned sandbox trees."""
-    found = set()
+    """image dir -> (uri, base URLs, suite, components) for each binary source of its sandbox tree."""
+    found = {}
     for path in sorted(root.glob("mkosi/*/mkosi.sandbox/etc/apt/sources.list.d/*.sources")):
+        sandbox = path.parents[3]
         for stanza in path.read_text().split("\n\n"):
             fields = {}
             for line in stanza.splitlines():
@@ -63,13 +94,14 @@ def sources(root):
             if "deb" in fields.get("Types", []):
                 for uri in fields["URIs"]:
                     for suite in fields["Suites"]:
-                        found.add((uri.rstrip("/"), suite, tuple(fields["Components"])))
-    return sorted(found)
+                        entry = (uri.rstrip("/"), mirrors(sandbox, uri), suite, tuple(fields["Components"]))
+                        found.setdefault(sandbox.parent, set()).add(entry)
+    return {tree: sorted(entries) for tree, entries in found.items()}
 
 
 def apt_filename(uri):
     """apt's URItoFileName: drop the scheme, quote reserved characters, '/' -> '_'."""
-    name = uri.split("://", 1)[-1]
+    name = uri.split(":", 1)[-1].removeprefix("//")
     name = "".join(f"%{ord(c):02x}" if c in '\\|{}[]<>"^~_=!@#$%*' else c for c in name)
     return name.replace("/", "_")
 
@@ -136,22 +168,25 @@ def verify(root, keyring, arch):
     if not metadata and not archives.is_dir():
         return
 
-    pinned, expected, packages = sources(root), {}, []
-    for uri, suite, components in pinned:
-        dists = f"{uri}/dists/{suite}"
-        raw = fetch(f"{dists}/InRelease")
-        hashes = signed_release(raw, keyring)
-        expected[apt_filename(f"{dists}/InRelease")] = hashlib.sha256(raw).hexdigest()
-        for path, digest in hashes.items():
-            expected[apt_filename(f"{dists}/{path}")] = digest
-        for component in components:
-            path = f"{component}/binary-{arch}/Packages"
-            if path not in hashes or f"{path}.xz" not in hashes:
-                raise Untrusted(f"{dists}/InRelease does not list {path}")
-            packages.append((dists, path, hashes))
+    expected, packages = {}, []
+    for tree, pinned in sources(root).items():
+        known = expected.setdefault(tree, {})
+        for uri, bases, suite, components in pinned:
+            dists = f"dists/{suite}"
+            raw = fetch_any(bases, f"{dists}/InRelease")
+            hashes = signed_release(raw, keyring)
+            known[apt_filename(f"{uri}/{dists}/InRelease")] = hashlib.sha256(raw).hexdigest()
+            for path, digest in hashes.items():
+                known[apt_filename(f"{uri}/{dists}/{path}")] = digest
+            for component in components:
+                path = f"{component}/binary-{arch}/Packages"
+                if path not in hashes or f"{path}.xz" not in hashes:
+                    raise Untrusted(f"{bases[0]}/{dists}/InRelease does not list {path}")
+                packages.append((tree, apt_filename(f"{uri}/{dists}/{path}"), bases, f"{dists}/{path}", hashes[f"{path}.xz"]))
 
     lists = {}
     for cache in metadata:
+        tree = cache.parents[1]
         try:
             for path in (cache / "lib/apt/lists").iterdir():
                 if path.name == "lock":
@@ -159,9 +194,9 @@ def verify(root, keyring, arch):
                 if path.is_dir() and not path.is_symlink():
                     empty(path)
                     continue
-                if not path.is_file() or path.is_symlink() or expected.get(path.name) != sha256(path):
+                if not path.is_file() or path.is_symlink() or expected.get(tree, {}).get(path.name) != sha256(path):
                     raise Untrusted(f"unverified list {path.name}")
-                lists[path.name] = path
+                lists[tree, path.name] = path
             for binary in cache.glob("cache/**/*.bin"):
                 binary.unlink()
         except Untrusted as error:
@@ -172,14 +207,14 @@ def verify(root, keyring, arch):
     if not archives.is_dir():
         return
     allowed = {}
-    for dists, path, hashes in packages:
-        listed = lists.get(apt_filename(f"{dists}/{path}"))
+    for tree, name, bases, path, digest in packages:
+        listed = lists.get((tree, name))
         if listed:
             index = listed.read_bytes()
         else:
-            compressed = fetch(f"{dists}/{path}.xz")
-            if hashlib.sha256(compressed).hexdigest() != hashes[f"{path}.xz"]:
-                raise Untrusted(f"{dists}/{path}.xz does not match InRelease")
+            compressed = fetch_any(bases, f"{path}.xz")
+            if hashlib.sha256(compressed).hexdigest() != digest:
+                raise Untrusted(f"{bases[0]}/{path}.xz does not match InRelease")
             index = lzma.decompress(compressed)
         for name, digests in debs_in(index).items():
             allowed.setdefault(name, set()).update(digests)

@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+"""Copy the pinned snapshot.ubuntu.com pockets into our own apt mirror.
+
+Every pocket in mkosi/*/mkosi.sandbox sources reads from a mirror list
+(mirror+file:) whose first entry is our mirror and whose last entry is
+snapshot.ubuntu.com at the same timestamp. This script fills the first from
+the last, path for path, so apt sees the same signed repository:
+
+- InRelease (checked with gpgv against the Ubuntu archive keyring), Release
+  and Release.gpg of every pinned suite;
+- the indices apt fetches for those sources (Packages.xz per architecture,
+  Sources.xz for deb-src), checked against the InRelease SHA256 and stored
+  both at their path and at by-hash/SHA256/<digest>;
+- the .debs found under --cache directories (e.g. mkosi.pkgcache) whose
+  name and SHA256 match a verified Packages index, stored at their pool path.
+  A cached package that no index vouches for at its cached version is
+  refreshed: the newer candidate of each pinned pocket set is fetched from
+  snapshot.ubuntu.com and hash-checked;
+- --package NAME: the candidate of NAME in every pinned set that has it.
+
+Ubuntu's files are uploaded unchanged; nothing is re-signed. Uploads go to
+Azure Blob Storage by plain HTTPS PUT and are skipped when a blob with the
+same size and MD5 already exists (anonymous HEAD; the container is public).
+Credentials: AZURE_STORAGE_SAS, a container SAS with create+write.
+
+Usage: bin/mirror-apt-snapshot [--root DIR] [--cache DIR]... [--package NAME]...
+                               [--keyring FILE] [--arch ARCH] [--jobs N] [--work DIR] [--dry-run]
+"""
+
+import argparse
+import base64
+import functools
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import lzma
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+UPSTREAM = "https://snapshot.ubuntu.com/"
+
+
+class Untrusted(Exception):
+    pass
+
+
+def log(message):
+    print(f"mirror-apt-snapshot: {message}", file=sys.stderr, flush=True)
+
+
+def fetch(url, dest=None):
+    """GET url into memory (or into the file dest); retries with backoff."""
+    for attempt in range(8):
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response:
+                if dest is None:
+                    return response.read()
+                with open(dest, "wb") as out:
+                    while block := response.read(1 << 20):
+                        out.write(block)
+                return dest
+        except OSError as error:
+            if isinstance(error, urllib.error.HTTPError) and error.code == 404 or attempt == 7:
+                raise
+            log(f"retrying {url}: {error}")
+            time.sleep(min(15 * (attempt + 1), 120))
+
+
+def fetch_any(bases, path, dest=None):
+    """path from the first base URL that serves it (our mirror, then upstream)."""
+    for base in bases:
+        try:
+            return fetch(f"{base}/{path}", dest)
+        except OSError as error:
+            failure = error
+    raise failure
+
+
+def stanzas(path):
+    for stanza in path.read_text().split("\n\n"):
+        fields = {}
+        for line in stanza.splitlines():
+            if line and not line.startswith(("#", " ")) and ":" in line:
+                key, value = line.split(":", 1)
+                fields[key] = value.split()
+        if fields:
+            yield fields
+
+
+def mirror_pair(sandbox, uri):
+    """(our mirror URL, upstream snapshot URL) for a mirror+file: source URI."""
+    if not uri.startswith("mirror+file:"):
+        raise SystemExit(f"mirror-apt-snapshot: {uri} is not a mirror+file: list")
+    entries = []
+    for line in (sandbox / uri.removeprefix("mirror+file:").lstrip("/")).read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            entries.append(line.split()[0].rstrip("/"))
+    ours, upstream = entries[0], entries[-1]
+    if not upstream.startswith(UPSTREAM) or ours.rsplit("/", 1)[1] != upstream.rsplit("/", 1)[1]:
+        raise SystemExit(f"mirror-apt-snapshot: {uri} must list our mirror first and the same snapshot last")
+    return ours, upstream
+
+
+class Suite:
+    """One pinned suite: where it comes from, where it goes, what apt reads."""
+
+    def __init__(self, ours, upstream, suite):
+        self.ours, self.upstream, self.suite = ours, upstream, suite
+        self.components, self.arches, self.source = set(), set(), False
+
+    @property
+    def dists(self):
+        return f"dists/{self.suite}"
+
+
+def pinned_suites(root, arch):
+    suites = {}
+    for path in sorted(root.glob("mkosi/*/mkosi.sandbox/etc/apt/sources.list.d/*.sources")):
+        sandbox = path.parents[3]
+        for fields in stanzas(path):
+            for uri in fields.get("URIs", []):
+                ours, upstream = mirror_pair(sandbox, uri)
+                for name in fields["Suites"]:
+                    suite = suites.setdefault((ours, name), Suite(ours, upstream, name))
+                    suite.components.update(fields["Components"])
+                    if "deb" in fields["Types"]:
+                        suite.arches.update(fields.get("Architectures", [arch]))
+                    suite.source |= "deb-src" in fields["Types"]
+    return list(suites.values())
+
+
+def gpgv(keyring, *files):
+    result = subprocess.run(
+        ["gpgv", "--keyring", str(keyring), "--output", "-", *map(str, files)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise Untrusted(f"signature of {files[0].name}: {result.stderr.decode().strip()}")
+    return result.stdout
+
+
+def release_hashes(text):
+    hashes, section = {}, None
+    for line in text.decode().splitlines():
+        if not line.startswith(" "):
+            section = line.split(":", 1)[0]
+        elif section == "SHA256":
+            digest, size, path = line.split()
+            hashes[path] = (digest, int(size))
+    return hashes
+
+
+# dpkg version ordering (deb-version(7)), for picking apt's candidate.
+def _order(c):
+    if c == "~":
+        return -1
+    if c.isdigit():
+        return 0
+    if c.isalpha():
+        return ord(c)
+    return ord(c) + 256
+
+
+def _compare_part(a, b):
+    while a or b:
+        na = re.match(r"[^\d]*", a).group()
+        nb = re.match(r"[^\d]*", b).group()
+        for x, y in zip(list(na) + [""] * len(nb), list(nb) + [""] * len(na)):
+            ox, oy = (_order(x) if x else 0), (_order(y) if y else 0)
+            if ox != oy:
+                return ox - oy
+        a, b = a[len(na):], b[len(nb):]
+        da = re.match(r"\d*", a).group()
+        db = re.match(r"\d*", b).group()
+        if int(da or 0) != int(db or 0):
+            return int(da or 0) - int(db or 0)
+        a, b = a[len(da):], b[len(db):]
+    return 0
+
+
+def version_key(version):
+    epoch, _, rest = version.partition(":") if ":" in version else ("0", "", version)
+    upstream, _, revision = rest.rpartition("-") if "-" in rest else (rest, "", "")
+    return int(epoch or 0), upstream, revision
+
+
+def compare_versions(a, b):
+    ea, ua, ra = version_key(a)
+    eb, ub, rb = version_key(b)
+    return (ea - eb) or _compare_part(ua, ub) or _compare_part(ra, rb)
+
+
+candidate_order = functools.cmp_to_key(compare_versions)
+
+
+def candidate_key(entry):
+    return candidate_order(entry["Version"])
+
+
+def quote(field):
+    return "".join(f"%{ord(c):02x}" if c in "_:" else c for c in field)
+
+
+def packages_in(index):
+    """Stanzas of a Packages index as dicts of the fields we use."""
+    wanted = ("Package", "Version", "Architecture", "Filename", "Size", "SHA256")
+    fields = {}
+    for line in index.splitlines() + [b""]:
+        if not line:
+            if all(k in fields for k in wanted):
+                fields["deb"] = "_".join(quote(fields[k]) for k in ("Package", "Version", "Architecture")) + ".deb"
+                yield fields
+            fields = {}
+        elif line[:1] not in (b" ", b"\t"):
+            key, _, value = line.decode(errors="replace").partition(":")
+            if key in wanted:
+                fields[key] = value.strip()
+
+
+def digests(path):
+    sha, md5 = hashlib.sha256(), hashlib.md5()
+    with open(path, "rb") as f:
+        while block := f.read(1 << 20):
+            sha.update(block)
+            md5.update(block)
+    return sha.hexdigest(), md5.digest()
+
+
+class Uploader:
+    def __init__(self, dry_run):
+        self.sas = os.environ.get("AZURE_STORAGE_SAS", "").lstrip("?")
+        if not (self.sas or dry_run):
+            raise SystemExit("mirror-apt-snapshot: set AZURE_STORAGE_SAS")
+        self.dry_run = dry_run
+        self.lock = threading.Lock()
+        self.stats = {"uploaded": 0, "uploaded_bytes": 0, "present": 0, "present_bytes": 0}
+
+    def count(self, kind, size):
+        with self.lock:
+            self.stats[kind] += 1
+            self.stats[f"{kind}_bytes"] += size
+
+    def present(self, url, size, md5=None):
+        """A blob of this size (and MD5, when given) exists at url."""
+        url = urllib.parse.quote(url, safe=":/+~")
+        request = urllib.request.Request(url, method="HEAD")
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    return (int(response.headers["Content-Length"]) == size
+                            and (md5 is None or response.headers.get("Content-MD5") == base64.b64encode(md5).decode()))
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    return False
+                if attempt == 4:
+                    raise
+            except OSError:
+                if attempt == 4:
+                    raise
+            time.sleep(5 * (attempt + 1))
+
+    def put(self, url, path):
+        """Upload the file at path to the blob url unless it is already there."""
+        size = path.stat().st_size
+        md5 = digests(path)[1]
+        if self.present(url, size, md5):
+            self.count("present", size)
+            return
+        if self.dry_run:
+            log(f"would upload {url} ({size} bytes)")
+            self.count("uploaded", size)
+            return
+        headers = {
+            "x-ms-version": "2021-08-06",
+            "x-ms-blob-type": "BlockBlob",
+            "x-ms-blob-content-md5": base64.b64encode(md5).decode(),
+            "Content-MD5": base64.b64encode(md5).decode(),
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(size),
+        }
+        target = f"{urllib.parse.quote(url, safe=':/+~')}?{self.sas}"
+        for attempt in range(6):
+            try:
+                with open(path, "rb") as body:
+                    request = urllib.request.Request(target, data=body, method="PUT", headers=headers)
+                    with urllib.request.urlopen(request, timeout=600):
+                        pass
+                self.count("uploaded", size)
+                if self.stats["uploaded"] % 100 == 0:
+                    log(f"uploaded {self.stats['uploaded']} files ({self.stats['uploaded_bytes'] >> 20} MiB)")
+                return
+            except OSError as error:
+                if attempt == 5 or isinstance(error, urllib.error.HTTPError) and error.code in (401, 403):
+                    raise
+                log(f"retrying upload of {url}: {error}")
+                time.sleep(10 * (attempt + 1))
+
+
+class Mirror:
+    def __init__(self, args):
+        self.args = args
+        self.uploader = Uploader(args.dry_run)
+        self.work = args.work or Path(tempfile.mkdtemp(prefix="mirror-apt-snapshot."))
+        self.work.mkdir(parents=True, exist_ok=True)
+        self.pool = ThreadPoolExecutor(args.jobs)
+        self.missing = []
+
+    def stage(self, name, data):
+        path = self.work / hashlib.sha256(name.encode()).hexdigest()
+        path.write_bytes(data)
+        return path
+
+    def suite_files(self, suite):
+        """Fetch and verify one suite's release files and the indices apt reads.
+
+        Everything is checked against the signed InRelease, so it is read from
+        our mirror when present and from snapshot.ubuntu.com otherwise."""
+        log(f"indices: {suite.dists} at {suite.ours.rsplit('/', 1)[1]}")
+        bases = (suite.ours, suite.upstream)
+        staged = {}
+        for name in ("InRelease", "Release", "Release.gpg"):
+            staged[name] = self.stage(f"{suite.upstream}/{suite.dists}/{name}", fetch_any(bases, f"{suite.dists}/{name}"))
+        inrelease, release, signature = staged.values()
+        hashes = release_hashes(gpgv(self.args.keyring, inrelease))
+        gpgv(self.args.keyring, signature, release)
+        if release_hashes(release.read_bytes()) != hashes:
+            raise Untrusted(f"{suite.upstream}/{suite.dists}: Release and InRelease differ")
+
+        wanted = []
+        for component in sorted(suite.components):
+            wanted += [f"{component}/binary-{arch}/Packages.xz" for arch in sorted(suite.arches)]
+            if suite.source:
+                wanted.append(f"{component}/source/Sources.xz")
+        indices = {}
+        for path in wanted:
+            if path not in hashes:
+                raise Untrusted(f"{suite.upstream}/{suite.dists}/InRelease does not list {path}")
+            digest, size = hashes[path]
+            staged = self.work / digest
+            if not staged.is_file() or digests(staged)[0] != digest:
+                fetch_any(bases, f"{suite.dists}/{path}", staged)
+                if staged.stat().st_size != size or digests(staged)[0] != digest:
+                    raise Untrusted(f"{suite.upstream}/{suite.dists}/{path} does not match InRelease")
+            indices[path] = (staged, digest)
+        return (inrelease, release, signature), indices
+
+    def run(self):
+        suites = pinned_suites(self.args.root, self.args.arch)
+        releases, uploads = {}, []
+        # Pinned sets: suites sharing our mirror URL (one timestamp) form the
+        # candidate set apt resolves against.
+        sets = {}
+        for suite, (files, indices) in zip(suites, self.pool.map(self.suite_files, suites)):
+            releases[suite] = files
+            for path, (staged, digest) in indices.items():
+                directory = path.rsplit("/", 1)[0]
+                uploads.append((f"{suite.ours}/{suite.dists}/{path}", staged))
+                uploads.append((f"{suite.ours}/{suite.dists}/{directory}/by-hash/SHA256/{digest}", staged))
+                if "/binary-" in path:
+                    for entry in packages_in(lzma.decompress(staged.read_bytes())):
+                        sets.setdefault(suite.ours, (suite.upstream, {}))[1].setdefault(entry["Package"], []).append(entry)
+
+        by_deb = {}
+        for ours, (upstream, packages) in sets.items():
+            for entries in packages.values():
+                for entry in entries:
+                    by_deb.setdefault((entry["deb"], entry["SHA256"]), []).append((ours, upstream, entry))
+
+        cached = {}
+        for directory in self.args.cache:
+            for path in Path(directory).rglob("*.deb"):
+                if path.is_file() and not path.is_symlink():
+                    cached.setdefault(path.name, []).append(path)
+        log(f"hashing {sum(map(len, cached.values()))} cached .debs")
+        hashed = list(self.pool.map(lambda p: (p, digests(p)[0]), [p for paths in cached.values() for p in paths]))
+
+        # A cached package is refreshed to a set's candidate when the set
+        # lists the cached version but has a newer one, or when a cached
+        # version no set lists (a cache built from an older pin) is older
+        # than the set's candidate.
+        debs, matched, stale = {}, {}, {}
+        for path, sha in hashed:
+            name, version = (urllib.parse.unquote(field) for field in path.name.split("_")[:2])
+            homes = by_deb.get((path.name, sha), ())
+            for ours, _, entry in homes:
+                debs[f"{ours}/{entry['Filename']}"] = (path, entry)
+                matched.setdefault(name, set()).add(ours)
+            if not homes:
+                stale.setdefault(name, []).append(version)
+        unknown = []
+        fetch_list = []
+        for name in sorted(matched.keys() | stale.keys()):
+            found = False
+            for ours, (upstream, packages) in sets.items():
+                if name not in packages:
+                    continue
+                found = True
+                best = max(packages[name], key=candidate_key)
+                if f"{ours}/{best['Filename']}" in debs:
+                    continue
+                if ours in matched.get(name, ()) or any(
+                        compare_versions(best["Version"], v) > 0 for v in stale.get(name, ())):
+                    fetch_list.append((ours, upstream, best))
+            if not found:
+                unknown.append(name)
+        for name in self.args.package:
+            hits = [(ours, upstream, max(packages[name], key=candidate_key))
+                    for ours, (upstream, packages) in sets.items() if name in packages]
+            if not hits:
+                self.missing.append(name)
+            fetch_list += hits
+        for name in unknown:
+            log(f"no pinned index lists {name}; not mirrored")
+        log(f"{len(debs)} verified cached .debs, fetching {len(fetch_list)} from upstream")
+
+        list(self.pool.map(lambda item: self.fetch_deb(*item, debs), fetch_list))
+        list(self.pool.map(lambda kv: self.uploader.put(kv[0], kv[1][0]), sorted(debs.items())))
+        list(self.pool.map(lambda kv: self.uploader.put(*kv), uploads))
+        # Release files last: a suite becomes visible once its indices and
+        # debs are in place.
+        for suite, files in releases.items():
+            for staged, name in zip(files, ("InRelease", "Release", "Release.gpg")):
+                self.uploader.put(f"{suite.ours}/{suite.dists}/{name}", staged)
+        stats = self.uploader.stats
+        print(f"mirror-apt-snapshot: uploaded {stats['uploaded']} files ({stats['uploaded_bytes']} bytes), "
+              f"{stats['present']} already present ({stats['present_bytes']} bytes); "
+              f"{len(unknown)} cached packages outside the pinned indices"
+              + (f"; not in any pinned index: {' '.join(self.missing)}" if self.missing else ""))
+        return 1 if self.missing else 0
+
+    def fetch_deb(self, ours, upstream, entry, debs):
+        if self.uploader.present(f"{ours}/{entry['Filename']}", int(entry["Size"])):
+            self.uploader.count("present", int(entry["Size"]))
+            return
+        path = self.work / entry["SHA256"]
+        if not path.is_file() or digests(path)[0] != entry["SHA256"]:
+            fetch(f"{upstream}/{entry['Filename']}", path)
+            if path.stat().st_size != int(entry["Size"]) or digests(path)[0] != entry["SHA256"]:
+                raise Untrusted(f"{upstream}/{entry['Filename']} does not match its Packages entry")
+        debs[f"{ours}/{entry['Filename']}"] = (path, entry)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--root", type=Path, default=ROOT, help="checkout holding mkosi/ (default: this repo)")
+    parser.add_argument("--cache", action="append", default=[], help="directory searched for .debs to upload")
+    parser.add_argument("--package", action="append", default=[], help="also mirror this package's candidates")
+    parser.add_argument("--keyring", type=Path, default=Path("/usr/share/keyrings/ubuntu-archive-keyring.gpg"))
+    parser.add_argument("--arch", default="amd64", help="architecture of sources without Architectures:")
+    parser.add_argument("--jobs", type=int, default=8)
+    parser.add_argument("--dry-run", action="store_true", help="fetch and verify, but upload nothing")
+    parser.add_argument("--work", type=Path, help="keep downloads here and reuse them on the next run")
+    args = parser.parse_args()
+    mirror = Mirror(args)
+    try:
+        sys.exit(mirror.run())
+    except Untrusted as error:
+        sys.exit(f"mirror-apt-snapshot: {error}")
+    finally:
+        if not args.work:
+            shutil.rmtree(mirror.work, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    main()

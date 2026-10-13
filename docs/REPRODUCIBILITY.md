@@ -49,14 +49,25 @@ We use several techniques to ensure the results of our builds are reproducible, 
 ### apt mirror pinning
 
 Identical package *versions* across builds are enforced by pinning every
-apt pocket to a point-in-time `snapshot.ubuntu.com` URL via each image
-dir's `mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources` (#96 — the
+apt pocket to one point-in-time `snapshot.ubuntu.com` timestamp via each
+image dir's `mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources` (#96 — the
 older `Mirror=`/`ToolsTreeMirror=` mechanism left the security pocket
 live and is rejected by `bin/lint`). Bumping that timestamp is the
 deliberate act that picks up security updates — and changes the roothash.
 
+The sources read from `mirror+file:/etc/apt/mirrors/ubuntu.list`, which
+lists that timestamp twice: our copy on Azure Blob Storage first
+(priority 1), `snapshot.ubuntu.com` second (priority 2). apt tries the
+second only for a file the first cannot serve. The copy holds Ubuntu's
+signed files unchanged under the same paths, filled by
+`bin/mirror-apt-snapshot` (the `apt-mirror` workflow: on pin bumps and
+after trusted builds on main). `Signed-By:` and the InRelease hashes apply
+to both entries, so the copy cannot change what apt installs, only whether
+the download succeeds.
+
 Two guards keep this fail-closed: `bin/lint` asserts the config shape
-(pinned `URIs:` lines, no `Mirror=`/`Snapshot=`), and confos's
+(mirror-list `URIs:` lines, both list entries at the same timestamp, no
+`Mirror=`/`Snapshot=`), and confos's
 `run_mkosi` scans the apt transcript of every build and fails on any
 fetch from a live ubuntu.com mirror — config presence alone has failed
 open before.
@@ -69,7 +80,7 @@ from `acpica-tools`) now runs inside the snapshot-pinned kernel tools
 tree, so image assembly does not use the host's compiler.
 `bin/host-deps` installs all host
 build deps from `snapshot.ubuntu.com` at the base image's committed
-pin (read from its `mkosi.sources`, so one bump moves image and host
+pin (read from its `mirrors/ubuntu.list`, so one bump moves image and host
 toolchain together), confining apt to a snapshot-only source list
 (pinned above priority 1000, so the dep closure moves to the snapshot's
 versions even when the runner image is ahead) and scanning the apt
