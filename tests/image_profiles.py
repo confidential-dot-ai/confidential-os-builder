@@ -17,6 +17,32 @@ COMMON_EXTRA = COMMON / "mkosi.extra"
 READY = "CC State : ON\nMulti-GPU Mode : NVLE\nCC GPUs Ready State : Ready\n"
 
 
+class AzureAttestationTests(unittest.TestCase):
+    def test_finalize_sets_cloud_platforms_and_preserves_other_settings(self):
+        import tomllib
+
+        profiles = ROOT / "mkosi/base/mkosi.profiles"
+        for profile in ("attest", "attest-gpu", None):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as tmp:
+                buildroot = Path(tmp)
+                config = buildroot / "etc/attestation-api/config.toml"
+                if profile:
+                    config.parent.mkdir(parents=True)
+                    source = (profiles / profile / "mkosi.extra/etc/attestation-api/config.toml").read_text()
+                    config.write_text(source)
+                    expected = tomllib.loads(source)
+                    expected["attestation"]["platforms"] = ["az-snp", "az-tdx"]
+                result = subprocess.run(
+                    ["bash", str(profiles / "azure/mkosi.finalize")],
+                    env={**os.environ, "BUILDROOT": tmp}, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if profile:
+                    self.assertEqual(tomllib.loads(config.read_text()), expected)
+                else:
+                    self.assertFalse(config.exists())
+
+
 class WorkloadTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -139,6 +165,7 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
             self.assertIn(f"CONFIG_{symbol}=y", workload)
         shared = (ROOT / "kernel/general-purpose.config").read_text()
         self.assertTrue((ROOT / "kernel/general-purpose-gpu.config").read_text().endswith(shared))
+        self.assertTrue((ROOT / "kernel/azure.config").read_text().endswith(shared))
         for symbol in ("CHECKPOINT_RESTORE", "KCMP", "USERFAULTFD", "FUSE_FS", "TUN"):
             self.assertIn(f"# CONFIG_{symbol} is not set", shared)
         self.assertIn("CONFIG_MSEAL_SYSTEM_MAPPINGS=y", shared)

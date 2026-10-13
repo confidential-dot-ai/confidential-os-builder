@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+
+# The base disables cloud-init when no NoCloud seed is baked; this profile
+# uses the Azure datasource instead.
+rm -f "$BUILDROOT/etc/cloud/cloud-init.disabled"
+
+# Azure's vTPM-bound evidence uses cloud-specific platform names. Change only
+# the measured allowlist; retain the selected attest profile's other settings.
+attest_config="$BUILDROOT/etc/attestation-api/config.toml"
+if [[ -f "$attest_config" ]]; then
+    sed 's/^platforms = .*/platforms = ["az-snp", "az-tdx"]/' "$attest_config" > "$attest_config.azure"
+    cat "$attest_config.azure" > "$attest_config"
+    rm "$attest_config.azure"
+fi

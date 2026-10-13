@@ -39,6 +39,8 @@ def affected(recipes, paths):
                 if path == recipe["kernel"] or path in recipe["extra_kernel_inputs"]
                 or (recipe["kernel"] and path == f"kernel/config-x86_64-{Path(recipe['kernel']).stem}.snapshot")
             )
+        elif path.startswith("kernel/acpi/"):
+            selected.update(name for name, recipe in recipes.items() if path in recipe["extra_kernel_inputs"])
         elif path in ("bin/confos-fetch-gpu", "bin/lib/gpu-module-cache.sh"):
             selected.update(name for name, recipe in recipes.items() if "gpu" in recipe["profiles"])
         elif path.startswith(("mkosi/", "kernel/", "src/", "crates/", "bin/", "firmware/", "ci/", ".github/actions/")) or path in (
