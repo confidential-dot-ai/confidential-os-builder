@@ -1,0 +1,74 @@
+name: Apt mirror
+
+# Fills our copy of the pinned snapshot.ubuntu.com pockets (the first entry
+# of each mkosi/*/mkosi.sandbox/etc/apt/mirrors/ubuntu.list) with
+# bin/mirror-apt-snapshot. It copies the signed indices of every pinned suite
+# and every .deb in the newest package pool a main build saved, after
+# checking each against the signed indices. So a pin bump is copied when it
+# merges, and each trusted build fills in what it had to fetch from
+# snapshot.ubuntu.com. Pull-request runs never reach this job: workflow_run
+# only follows push and dispatch runs on main, and the Azure identity trusts
+# only refs/heads/main.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - mkosi/*/mkosi.sandbox/etc/apt/**
+      - bin/mirror-apt-snapshot
+      - .github/workflows/apt-mirror.yml
+  workflow_run:
+    workflows: [Build Base Image, Build General-Purpose Images]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: apt-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      contains(fromJSON('["push", "workflow_dispatch"]'), github.event.workflow_run.event))
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Restore the newest package pool saved on main
+        # Same paths as build-cache's pool, or the restore misses.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            mkosi/mkosi.pkgcache
+            mkosi/*/mkosi.cache/*.metadata.cache
+            mkosi/*/mkosi.cache/*.keyring.cache
+          key: ${{ runner.os }}-confos-packages-v2-
+          restore-keys: ${{ runner.os }}-confos-packages-v2-
+
+      - name: Log in to Azure (OIDC)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_APT_MIRROR_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_APT_MIRROR_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_APT_MIRROR_SUBSCRIPTION_ID }}
+
+      - name: Copy pinned indices and verified packages
+        run: |
+          set -euo pipefail
+          # A user-delegation SAS outlives the 1 h OAuth token on slow runs.
+          account=$(sed -n '1s#^https://\([a-z0-9]*\)\.blob\.core\.windows\.net/.*#\1#p' mkosi/base/mkosi.sandbox/etc/apt/mirrors/ubuntu.list)
+          AZURE_STORAGE_SAS=$(az storage container generate-sas --account-name "$account" --name ubuntu \
+            --permissions cw --expiry "$(date -u -d '+4 hours' +%Y-%m-%dT%H:%MZ)" --https-only \
+            --as-user --auth-mode login -o tsv)
+          echo "::add-mask::$AZURE_STORAGE_SAS"
+          export AZURE_STORAGE_SAS
+          bin/mirror-apt-snapshot --cache mkosi/mkosi.pkgcache | tee -a "$GITHUB_STEP_SUMMARY"
