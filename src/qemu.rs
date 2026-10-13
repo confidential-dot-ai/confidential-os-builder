@@ -1,8 +1,10 @@
-use std::{os::unix::process::CommandExt as _, path::PathBuf, process::Command};
+use std::{fmt::Write as _, os::unix::process::CommandExt as _, path::PathBuf, process::Command};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use crate::tools;
+
+pub const HOST_DATA_REQUIRES_SNP: &str = "--host-data requires the SEV-SNP tier";
 
 /// Validate a QEMU memory string (e.g. "4G", "512M").
 /// Rejects values containing commas or other characters that could inject
@@ -168,7 +170,7 @@ impl QemuArgs {
                     .ok_or_else(|| anyhow::anyhow!("SevSnp tier requires igvm path"))?;
                 let mut sev = "sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1".to_string();
                 if let Some(data) = self.host_data {
-                    sev.push_str(&format!(",host-data={}", STANDARD.encode(data)));
+                    write!(sev, ",host-data={}", STANDARD.encode(data))?;
                 }
                 vec![
                     "-enable-kvm".to_string(),
@@ -194,10 +196,7 @@ impl QemuArgs {
                 ]
             }
             QemuTier::Kvm | QemuTier::Emulated => {
-                anyhow::ensure!(
-                    self.host_data.is_none(),
-                    "--host-data requires the SEV-SNP tier"
-                );
+                anyhow::ensure!(self.host_data.is_none(), HOST_DATA_REQUIRES_SNP);
                 let uki = self
                     .uki
                     .as_ref()

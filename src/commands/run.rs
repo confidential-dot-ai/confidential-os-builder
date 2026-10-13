@@ -72,10 +72,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
             (Some(path), None, None)
         }
         QemuTier::Kvm | QemuTier::Emulated => {
-            anyhow::ensure!(
-                args.host_data.is_none(),
-                "--host-data requires the SEV-SNP tier"
-            );
+            anyhow::ensure!(args.host_data.is_none(), qemu::HOST_DATA_REQUIRES_SNP);
             let uki = args.dir.join("uki.efi");
             if !uki.exists() {
                 anyhow::bail!("uki.efi not found in {}", args.dir.display());

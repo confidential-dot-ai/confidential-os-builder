@@ -118,7 +118,7 @@ pub struct RunArgs {
     #[arg(long, env = "CONFOS_FIRMWARE")]
     pub firmware: Option<PathBuf>,
 
-    /// Set HOST_DATA to exactly 64 lowercase hex characters. Requires the SEV-SNP tier.
+    /// Set `HOST_DATA` to exactly 64 lowercase hex characters. Requires the SEV-SNP tier.
     #[arg(long, value_name = "HEX", value_parser = parse_host_data)]
     pub host_data: Option<[u8; 32]>,
 
