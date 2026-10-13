@@ -144,14 +144,17 @@ jobs:
         run: |
           set -euo pipefail
           source /tmp/open_pr
-          base=mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources
-          cur=$(sed -n 's#^URIs: https://snapshot\.ubuntu\.com/ubuntu/##p' "$base")
+          base=mkosi/base/mkosi.sandbox/etc/apt/mirrors/ubuntu.list
+          cur=$(sed -n 's#^https://snapshot\.ubuntu\.com/ubuntu/\([0-9TZ]*\)[[:space:]].*#\1#p' "$base")
           age=$(( ( $(date -u +%s) - $(date -u -d "${cur%%T*}" +%s) ) / 86400 ))
           [ "$age" -gt 35 ] || exit 0
           new=$(date -u -d '1 day ago' +%Y%m%dT000000Z)
-          sed -i "s/${cur}/${new}/" mkosi/*/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources
+          # Both entries of each list (our mirror, snapshot) move together;
+          # merging the bump runs the apt-mirror workflow, which copies the
+          # new snapshot's indices and refreshes its packages.
+          sed -i "s/${cur}/${new}/g" mkosi/*/mkosi.sandbox/etc/apt/mirrors/ubuntu.list
           mapfile -t moved < <(git diff --name-only -- \
-            'mkosi/*/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources')
+            'mkosi/*/mkosi.sandbox/etc/apt/mirrors/ubuntu.list')
           (( ${#moved[@]} > 0 ))
           moved_summary=$(printf '%s ' "${moved[@]}")
           open_pr "pin-watch/snapshot-${new}" \

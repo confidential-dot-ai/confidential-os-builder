@@ -26,6 +26,7 @@ jobs:
                   python3 tests/ci_images.py
                   python3 tests/gpu_module_cache.py
                   python3 tests/host_deps.py
+                  python3 tests/verify_apt_cache.py
 
     kernel-checksum:
         name: Test kernel.org checksum verification
@@ -51,7 +52,8 @@ jobs:
     trusted-aml:
         name: Test kernel AML enforcement
         runs-on: ubuntu-latest
-        timeout-minutes: 45
+        # Cold tools-tree builds took up to 40 min on a healthy mirror.
+        timeout-minutes: 90
         permissions:
             contents: read
         steps:
@@ -81,7 +83,7 @@ jobs:
               uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
                   path: mkosi/kernel-builder/mkosi.output-acpi
-                  key: ${{ runner.os }}-tools-acpi-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**', 'src/commands/kernel.rs') }}
+                  key: ${{ runner.os }}-tools-acpi-v2-${{ hashFiles('mkosi/kernel-builder/mkosi.conf', 'mkosi/kernel-builder/mkosi.sandbox/**', 'src/commands/kernel/tools_tree.rs') }}
             - name: Prepare the patched kernel source
               id: acpi-source
               run: |
