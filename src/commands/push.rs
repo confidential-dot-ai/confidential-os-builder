@@ -1,8 +1,10 @@
 use std::ffi::OsString;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::{read::GzDecoder, write::GzEncoder};
+use sha2::{Digest, Sha256};
 
 use crate::{tools, PushArgs};
 
@@ -118,14 +120,16 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
     // Stage a minimal OCI image config alongside the tarball. CDI's
     // registry importer rejects artifacts whose top-level `artifactType`
     // is set (it only accepts standard OCI image manifests), so we push
-    // a real image config blob and skip `--artifact-type`. Body matches
-    // what containerd would produce for an empty rootfs.
-    let config_path = cwd.join("confos-cdi-config.json");
-    fs_err::write(
-        &config_path,
-        br#"{"architecture":"amd64","os":"linux","config":{},"rootfs":{"type":"layers","diff_ids":[]}}"#,
-    )?;
-    let config_basename = config_path.file_name().unwrap().to_owned();
+    // a real image config blob and skip `--artifact-type`. Its diffID must
+    // commit to the uncompressed tar, not the compressed registry blob.
+    // A unique config file keeps concurrent pushes from mixing layer/config
+    // pairs and removes only this invocation's file when it goes out of scope.
+    let config = tempfile::Builder::new()
+        .prefix("confos-cdi-config-")
+        .suffix(".json")
+        .tempfile_in(&cwd)?;
+    fs_err::write(config.path(), cdi_image_config(&tarball_path)?)?;
+    let config_basename = config.path().file_name().unwrap().to_owned();
     let config_arg = {
         let mut s = OsString::from(&config_basename);
         s.push(":application/vnd.oci.image.config.v1+json");
@@ -145,11 +149,32 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
         layer_arg,
     ];
     let push_res = tools::run_command_streaming_in("oras", &oras_args, cwd.clone());
-    let _ = fs_err::remove_file(&config_path);
     push_res?;
 
     println!("Pushed successfully.");
     Ok(())
+}
+
+fn cdi_image_config(layer: &Path) -> anyhow::Result<Vec<u8>> {
+    let mut reader = GzDecoder::new(fs_err::File::open(layer)?);
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    Ok(serde_json::to_vec(&serde_json::json!({
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {},
+        "rootfs": {
+            "type": "layers",
+            "diff_ids": [format!("sha256:{}", hex::encode(hash.finalize()))]
+        }
+    }))?)
 }
 
 /// Build a CDI-compatible tarball at `out_path`.
@@ -198,7 +223,6 @@ pub(crate) fn build_cdi_tarball(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::read::GzDecoder;
     use std::collections::BTreeSet;
     use tempfile::TempDir;
 
@@ -280,6 +304,41 @@ mod tests {
             tarballs.push(fs_err::read(&path).unwrap());
         }
         assert_eq!(tarballs[0], tarballs[1]);
+    }
+
+    #[test]
+    fn cdi_config_commits_to_uncompressed_layer_and_native_file_access() {
+        let src = TempDir::new().unwrap();
+        write(src.path(), "disk.raw", b"IMMUTABLE-GUEST-DISK");
+        let out = TempDir::new().unwrap();
+        let layer = out.path().join("layer.tar.gz");
+        build_cdi_tarball(src.path(), &["disk.raw".into()], &layer).unwrap();
+
+        let config: serde_json::Value =
+            serde_json::from_slice(&cdi_image_config(&layer).unwrap()).unwrap();
+        let mut tar_bytes = Vec::new();
+        GzDecoder::new(fs_err::File::open(&layer).unwrap())
+            .read_to_end(&mut tar_bytes)
+            .unwrap();
+        let expected = format!("sha256:{}", hex::encode(Sha256::digest(&tar_bytes)));
+        assert_eq!(config["rootfs"]["diff_ids"], serde_json::json!([expected]));
+        assert_ne!(
+            config["rootfs"]["diff_ids"][0],
+            format!("sha256:{}", crate::manifest::sha256_file(&layer).unwrap())
+        );
+        assert_eq!(config["architecture"], "amd64");
+        assert_eq!(config["os"], "linux");
+
+        let mut archive = tar::Archive::new(tar_bytes.as_slice());
+        let mut entries = archive.entries().unwrap();
+        let mut disk = entries.next().unwrap().unwrap();
+        assert_eq!(disk.path().unwrap(), Path::new("disk/disk.raw"));
+        assert!(disk.header().entry_type().is_file());
+        assert_eq!(disk.header().mode().unwrap(), 0o644);
+        let mut bytes = Vec::new();
+        disk.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"IMMUTABLE-GUEST-DISK");
+        assert!(entries.next().is_none());
     }
 
     #[test]
