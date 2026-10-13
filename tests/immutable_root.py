@@ -6,6 +6,7 @@ import http.server
 import os
 from pathlib import Path
 import shutil
+import socket
 import stat
 import subprocess
 import threading
@@ -15,7 +16,7 @@ from unittest import mock
 from cloudinit import distros, helpers, sources, stages, url_helper
 from cloudinit.config import cc_locale
 from cloudinit.distros import debian
-from cloudinit.sources import DataSourceNoCloud
+from cloudinit.sources import DataSourceGCE, DataSourceNoCloud
 
 SEED = Path("/var/lib/cloud/seed/nocloud")
 DISABLED = Path("/etc/cloud/cloud-init.disabled")
@@ -195,6 +196,27 @@ class CloudInitPolicyTests(unittest.TestCase):
                 self.assertEqual(
                     detected.returncode, 0 if enabled else 2, detected.stdout
                 )
+
+
+class GceDatasourceTests(unittest.TestCase):
+    def test_gcp_profile_reaches_metadata_without_name_resolution(self):
+        # cloud-init's GCE datasource skips a NIC when the metadata URL does
+        # not resolve, which is always the case in init-local.
+        profile = Path("/etc/cloud/cloud.cfg.d/99-zz-gcp.cfg")
+        no_dns = mock.patch.object(socket, "getaddrinfo", side_effect=socket.gaierror("no resolver"))
+
+        def metadata_url():
+            distro = distros.fetch("ubuntu")("ubuntu", {}, helpers.Paths({}))
+            source = DataSourceGCE.DataSourceGCELocal(stages.Init().cfg, distro, helpers.Paths({}))
+            return source.metadata_address
+
+        with no_dns:
+            self.assertFalse(DataSourceGCE.util.is_resolvable_url(metadata_url()))
+        shutil.copy("/gcp.cfg", profile)
+        self.addCleanup(profile.unlink)
+        with no_dns:
+            self.assertTrue(DataSourceGCE.util.is_resolvable_url(metadata_url()))
+        self.assertTrue(metadata_url().endswith("/computeMetadata/v1/"))
 
 
 # The harness disk layout (tests/immutable-root.sh): the real partition UUIDs

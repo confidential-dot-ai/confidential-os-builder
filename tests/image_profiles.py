@@ -43,6 +43,22 @@ class AzureAttestationTests(unittest.TestCase):
                     self.assertFalse(config.exists())
 
 
+class GcpProfileTests(unittest.TestCase):
+    def test_only_gcp_puts_the_uki_at_bootx64(self):
+        # GCE's TDX firmware hangs starting systemd-boot (see the gcp profile).
+        # Bootloader=uki makes EFI/BOOT/BOOTX64.EFI the UKI itself; every
+        # other image keeps the systemd-boot default.
+        base = ROOT / "mkosi/base"
+        configs = [base / "mkosi.conf", *base.glob("mkosi.conf.d/*.conf"), *base.glob("mkosi.profiles/*/mkosi.conf")]
+        settings = {
+            str(path.relative_to(base)): line
+            for path in configs
+            for line in path.read_text().splitlines()
+            if line.startswith("Bootloader=")
+        }
+        self.assertEqual(settings, {"mkosi.profiles/gcp/mkosi.conf": "Bootloader=uki"})
+
+
 class WorkloadTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -165,7 +181,8 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
             self.assertIn(f"CONFIG_{symbol}=y", workload)
         shared = (ROOT / "kernel/general-purpose.config").read_text()
         self.assertTrue((ROOT / "kernel/general-purpose-gpu.config").read_text().endswith(shared))
-        self.assertTrue((ROOT / "kernel/azure.config").read_text().endswith(shared))
+        for cloud in ("azure", "gcp"):
+            self.assertTrue((ROOT / f"kernel/{cloud}.config").read_text().endswith(shared))
         for symbol in ("CHECKPOINT_RESTORE", "KCMP", "USERFAULTFD", "FUSE_FS", "TUN"):
             self.assertIn(f"# CONFIG_{symbol} is not set", shared)
         self.assertIn("CONFIG_MSEAL_SYSTEM_MAPPINGS=y", shared)

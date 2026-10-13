@@ -28,15 +28,17 @@ class SelectionTests(unittest.TestCase):
 
     def test_shared_workload_and_ssh(self):
         for profile in ("general-purpose", "ssh"):
-            self.check([f"mkosi/base/mkosi.profiles/{profile}/mkosi.extra/file"], ["azure", "general-purpose", "general-purpose-gpu"])
+            self.check([f"mkosi/base/mkosi.profiles/{profile}/mkosi.extra/file"], ["azure", "gcp", "general-purpose", "general-purpose-gpu"])
 
     def test_cpu_only(self):
-        self.check(["kernel/general-purpose.config"], ["azure", "general-purpose", "general-purpose-gpu"])
-        self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync"], ["azure", "general-purpose"])
+        self.check(["kernel/general-purpose.config"], ["azure", "gcp", "general-purpose", "general-purpose-gpu"])
+        self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync"], ["azure", "gcp", "general-purpose"])
 
     def test_cloud_profile_inputs_rebuild_only_that_cloud(self):
         for path in ("kernel/azure.config", "kernel/config-x86_64-azure.snapshot", "kernel/acpi/azure-dsdt.aml", "mkosi/base/mkosi.profiles/azure/mkosi.conf"):
             self.check([path], ["azure"])
+        for path in ("kernel/gcp.config", "kernel/config-x86_64-gcp.snapshot", "mkosi/base/mkosi.profiles/gcp/mkosi.conf"):
+            self.check([path], ["gcp"])
 
     def test_shared_kernel_and_builder(self):
         for path in ("kernel/hardening.config", "kernel/trusted-dsdt.asl", "kernel/version", "mkosi/initrd/mkosi.conf", "src/commands/build.rs", "ci/images.json", ".github/actions/build-cache/action.yml"):
@@ -48,10 +50,10 @@ class SelectionTests(unittest.TestCase):
             self.check([f"mkosi/base/mkosi.profiles/{profile}/README.md"], [])
 
     def test_payload_readme_still_rebuilds(self):
-        self.check(["mkosi/base/mkosi.profiles/general-purpose/mkosi.extra/opt/README.md"], ["azure", "general-purpose", "general-purpose-gpu"])
+        self.check(["mkosi/base/mkosi.profiles/general-purpose/mkosi.extra/opt/README.md"], ["azure", "gcp", "general-purpose", "general-purpose-gpu"])
 
     def test_deletion_and_multiple_profiles(self):
-        self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync", "kernel/general-purpose-gpu.config"], ["azure", "general-purpose", "general-purpose-gpu"])
+        self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync", "kernel/general-purpose-gpu.config"], ["azure", "gcp", "general-purpose", "general-purpose-gpu"])
 
 
 class BuildRecipeTests(unittest.TestCase):

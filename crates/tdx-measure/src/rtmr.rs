@@ -128,7 +128,8 @@ pub fn compute_rtmr3_workloads(canonical_digests: &[String]) -> Vec<u8> {
 ///   3. EV_EFI_GPT_EVENT — the disk's GPT header + valid entries.
 ///      Required when a disk is present; the TDVF spec mandates it.
 ///   4. EV_EFI_BOOT_SERVICES_APPLICATION — Authenticode hash of
-///      `\EFI\BOOT\BOOTX64.EFI` (systemd-boot).
+///      `\EFI\BOOT\BOOTX64.EFI` (systemd-boot). Absent when BOOTX64.EFI
+///      is the UKI itself (the `gcp` profile): the firmware then loads one PE.
 ///   5. EV_EFI_BOOT_SERVICES_APPLICATION — Authenticode hash of the
 ///      UKI .efi (loaded by systemd-boot via LoadImage).
 ///   6. EV_EFI_ACTION "Exit Boot Services Invocation" — TDVF
@@ -165,7 +166,8 @@ pub fn compute_rtmr1_uki(
         // /EFI/systemd/systemd-bootx64.efi (mkosi places the same binary
         // at both paths). TDVF chases the removable-media fallback first
         // because the variable store is fresh and no Boot#### entry
-        // points to the systemd subdir.
+        // points to the systemd subdir. When BOOTX64.EFI is the UKI itself
+        // (Bootloader=uki), the only image load is the UKI's, below.
         let bootloader = crate::esp::read_esp_file(disk, crate::esp::FALLBACK_BOOTLOADER_PATH)
             .with_context(|| {
                 format!(
@@ -173,9 +175,11 @@ pub fn compute_rtmr1_uki(
                     crate::esp::FALLBACK_BOOTLOADER_PATH
                 )
             })?;
-        let bootloader_auth_hash = crate::pe::authenticode_sha384(&bootloader)
-            .context("Authenticode hash of systemd-boot PE")?;
-        rtmr1_log.push(bootloader_auth_hash);
+        if bootloader != uki_data {
+            let bootloader_auth_hash = crate::pe::authenticode_sha384(&bootloader)
+                .context("Authenticode hash of systemd-boot PE")?;
+            rtmr1_log.push(bootloader_auth_hash);
+        }
     }
 
     // EV_EFI_BOOT_SERVICES_APPLICATION — the UKI itself.

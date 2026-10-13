@@ -69,6 +69,7 @@ mkdir "$fixture_root/default-state.d"
 cp mkosi/base/mkosi.extra/usr/lib/confai/state.d/*.conf "$fixture_root/default-state.d/"
 cp mkosi/base/mkosi.finalize "$fixture_root/finalize-under-test"
 cp mkosi/initrd/mkosi.extra/init "$fixture_root/init-under-test"
+cp mkosi/base/mkosi.profiles/gcp/mkosi.extra/etc/cloud/cloud.cfg.d/99-zz-gcp.cfg "$fixture_root/gcp.cfg"
 cp tests/immutable_root.py "$fixture_root/tests.py"
 
 cat > "$fixture_root/usr/sbin/veritysetup" <<'SHIM'
