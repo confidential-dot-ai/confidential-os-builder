@@ -69,10 +69,10 @@ fi
 
 # The pin is the base image's committed snapshot — one bump moves the image
 # and the host toolchain together, and can move measurements (#36).
-BASE_SOURCES="$ROOT/mkosi/base/mkosi.sandbox/etc/apt/sources.list.d/mkosi.sources"
-SNAPSHOT=$(sed -n 's#^URIs: https://snapshot\.ubuntu\.com/ubuntu/##p' "$BASE_SOURCES")
+BASE_MIRRORS="$ROOT/mkosi/base/mkosi.sandbox/etc/apt/mirrors/ubuntu.list"
+SNAPSHOT=$(sed -n 's#^https://snapshot\.ubuntu\.com/ubuntu/\([0-9TZ]*\)[[:space:]].*#\1#p' "$BASE_MIRRORS")
 if ! [[ "$SNAPSHOT" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
-    echo "host-deps: no snapshot pin readable from $BASE_SOURCES" >&2
+    echo "host-deps: no snapshot pin readable from $BASE_MIRRORS" >&2
     exit 1
 fi
 
