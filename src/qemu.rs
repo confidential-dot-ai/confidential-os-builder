@@ -128,6 +128,18 @@ fn reject_comma_in_path(label: &str, path: &std::path::Path) -> anyhow::Result<(
     Ok(())
 }
 
+pub(crate) fn validate_cdroms(cdroms: &[PathBuf]) -> anyhow::Result<()> {
+    for path in cdroms {
+        reject_comma_in_path("cdrom", path)?;
+        anyhow::ensure!(
+            path.is_file(),
+            "cdrom must be an existing regular file: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Arguments for launching a VM with QEMU.
 pub struct QemuArgs {
     pub tier: QemuTier,
@@ -140,6 +152,7 @@ pub struct QemuArgs {
     pub smp: u32,
     pub memory: String,
     pub host_data: Option<[u8; 32]>,
+    pub cdroms: Vec<PathBuf>,
     pub port_forwards: Vec<(u16, u16)>,
     /// Optional writable ephemeral scratch disk. Attached with
     /// `serial=confai-scratch` so the guest initrd recognizes it as the
@@ -150,6 +163,7 @@ pub struct QemuArgs {
 impl QemuArgs {
     /// Build the QEMU command-line arguments.
     pub fn to_args(&self) -> anyhow::Result<Vec<String>> {
+        validate_cdroms(&self.cdroms)?;
         // Validate all paths that will be interpolated into comma-delimited QEMU args
         reject_comma_in_path("disk", &self.disk)?;
         if let Some(ref p) = self.igvm {
@@ -276,6 +290,20 @@ impl QemuArgs {
             ));
             args.push("-device".to_string());
             args.push("virtio-blk-pci,drive=scratch0,serial=confai-scratch".to_string());
+        }
+        if !self.cdroms.is_empty() {
+            args.extend(["-device".into(), "virtio-scsi-pci,id=scsi0".into()]);
+        }
+        for (i, path) in self.cdroms.iter().enumerate() {
+            args.extend([
+                "-drive".into(),
+                format!(
+                    "file={},format=raw,if=none,id=cd{i},readonly=on",
+                    path.display()
+                ),
+                "-device".into(),
+                format!("scsi-cd,drive=cd{i},bus=scsi0.0"),
+            ]);
         }
         args.push("-smp".to_string());
         args.push(self.smp.to_string());

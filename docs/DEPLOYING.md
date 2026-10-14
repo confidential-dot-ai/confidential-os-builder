@@ -48,6 +48,16 @@ qemu-system-x86_64 \
   -nographic
 ```
 
+For an existing launch ISO (`confos run --cdrom op.iso`), add these arguments
+after the root and any scratch disk. Guests discover `opkeydata` and NoCloud
+`cidata` volumes by label:
+
+```text
+-device virtio-scsi-pci,id=scsi0
+-drive file=op.iso,format=raw,if=none,id=cd0,readonly=on
+-device scsi-cd,drive=cd0,bus=scsi0.0
+```
+
 Keep `-m` and the `memory-backend-memfd` size identical, and attach disks
 as explicit `-device virtio-blk-pci` entries (not `-drive if=virtio`) so
 PCI slot order — and therefore guest device naming — stays deterministic.

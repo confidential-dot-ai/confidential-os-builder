@@ -2,9 +2,72 @@ use assert_cmd::Command;
 use clap::{Args, FromArgMatches};
 use confos::RunArgs;
 
+fn run_output() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = serde_json::json!({
+        "version": confos::manifest::MANIFEST_VERSION,
+        "build": {"timestamp": "2026-01-01T00:00:00Z", "memory": "2G", "format": "raw", "platform": "snp"},
+        "inputs": {
+            "initrd": {"path": "initrd.cpio.gz", "sha256": ""},
+            "firmware": {"path": "OVMF.fd", "sha256": ""},
+            "base_image": {"path": "base.raw", "sha256": ""}
+        },
+        "outputs": {
+            "disk_image": {"path": "disk.raw", "sha256": ""},
+            "uki": {"path": "uki.efi", "sha256": ""}
+        },
+        "snp_variants": []
+    });
+    std::fs::write(dir.path().join("manifest.json"), manifest.to_string()).unwrap();
+    for artifact in ["disk.raw", "uki.efi", "OVMF.fd"] {
+        std::fs::write(dir.path().join(artifact), []).unwrap();
+    }
+    dir
+}
+
 fn parse_run_args(args: &[&str]) -> Result<RunArgs, clap::Error> {
     let matches = RunArgs::augment_args(clap::Command::new("run")).try_get_matches_from(args)?;
     RunArgs::from_arg_matches(&matches)
+}
+
+#[test]
+fn test_run_cdrom_is_repeatable() {
+    let args = parse_run_args(&["run", "--cdrom", "op.iso", "--cdrom", "cidata.iso"]).unwrap();
+    assert_eq!(
+        args.cdroms,
+        [
+            std::path::PathBuf::from("op.iso"),
+            std::path::PathBuf::from("cidata.iso")
+        ]
+    );
+}
+
+#[test]
+fn test_run_help_shows_cdrom() {
+    Command::cargo_bin("confos")
+        .unwrap()
+        .args(["run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--cdrom"));
+}
+
+#[test]
+fn test_run_missing_cdrom_fails_before_qemu_probe() {
+    let dir = run_output();
+    let media = dir.path().join("missing.iso");
+    Command::cargo_bin("confos")
+        .unwrap()
+        .arg("run")
+        .arg(dir.path())
+        .arg("--cdrom")
+        .arg(&media)
+        .args(["--qemu-bin", "/nonexistent/qemu"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "cdrom must be an existing regular file",
+        ));
 }
 
 #[test]
