@@ -56,6 +56,7 @@ fn initrd_gates_scratch_on_serial() {
 fn test_qemu_args_scratch_adds_writable_drive() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -118,6 +119,7 @@ fn test_qemu_args_scratch_adds_writable_drive() {
 fn test_qemu_args_no_scratch_adds_no_second_drive() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,
@@ -138,6 +140,7 @@ fn test_qemu_args_no_scratch_adds_no_second_drive() {
 fn test_qemu_args_rejects_comma_in_scratch_path() {
     let args = QemuArgs {
         tier: QemuTier::SevSnp,
+        host_data: None,
         qemu_bin: "qemu-system-x86_64".to_string(),
         igvm: Some(PathBuf::from("/output/guest.igvm")),
         uki: None,

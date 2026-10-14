@@ -72,6 +72,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
             (Some(path), None, None)
         }
         QemuTier::Kvm | QemuTier::Emulated => {
+            anyhow::ensure!(args.host_data.is_none(), qemu::HOST_DATA_REQUIRES_SNP);
             let uki = args.dir.join("uki.efi");
             if !uki.exists() {
                 anyhow::bail!("uki.efi not found in {}", args.dir.display());
@@ -166,6 +167,7 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
         memory: manifest.build.memory,
         port_forwards,
         scratch: scratch_path,
+        host_data: args.host_data,
     };
 
     println!(
@@ -174,6 +176,9 @@ pub fn run(args: &RunArgs) -> anyhow::Result<()> {
     );
     if let Some(v) = variant {
         println!("Launch digest: {}", v.measurement.snp_launch_digest);
+    }
+    if let Some(data) = args.host_data {
+        println!("HOST_DATA: {}", hex::encode(data));
     }
 
     qemu::launch(&qemu_args)?;

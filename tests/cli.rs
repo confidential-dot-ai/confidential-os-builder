@@ -1,4 +1,41 @@
 use assert_cmd::Command;
+use clap::{Args, FromArgMatches};
+use confos::RunArgs;
+
+fn parse_run_args(args: &[&str]) -> Result<RunArgs, clap::Error> {
+    let matches = RunArgs::augment_args(clap::Command::new("run")).try_get_matches_from(args)?;
+    RunArgs::from_arg_matches(&matches)
+}
+
+#[test]
+fn test_run_host_data_parser() {
+    let args = parse_run_args(&["run", "--host-data", &"ab".repeat(32)]).unwrap();
+    assert_eq!(args.host_data, Some([0xab; 32]));
+    for invalid in [
+        "a".repeat(63),
+        "a".repeat(65),
+        "AB".repeat(32),
+        "g".repeat(64),
+        "é".repeat(32),
+    ] {
+        let err = parse_run_args(&["run", "--host-data", &invalid])
+            .err()
+            .unwrap();
+        assert!(err
+            .to_string()
+            .contains("exactly 64 lowercase hex characters"));
+    }
+}
+
+#[test]
+fn test_run_help_shows_host_data() {
+    Command::cargo_bin("confos")
+        .unwrap()
+        .args(["run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--host-data"));
+}
 
 #[test]
 fn test_help_shows_subcommands() {
