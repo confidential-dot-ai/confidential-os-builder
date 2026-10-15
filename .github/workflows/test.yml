@@ -8,6 +8,19 @@ on:
     merge_group:
         types: [checks_requested]
     workflow_dispatch:
+        inputs:
+            snp_boot_diagnostics:
+                description: Also build an isolated SNP diagnostic image on hosted runners
+                type: boolean
+                default: false
+            source_revision:
+                description: Full reviewed builder commit for the diagnostic image
+                type: string
+                default: '8730ac5a119a8f28bf3bf837a60f87b63ead1e1f'
+            publish_diagnostic_candidate:
+                description: Publish only unique diagnostic candidate tags
+                type: boolean
+                default: false
 
 permissions: read-all
 
@@ -15,6 +28,18 @@ env:
     CARGO_TERM_COLOR: always
 
 jobs:
+    snp-boot-diagnostics:
+        if: github.event_name == 'workflow_dispatch' && inputs.snp_boot_diagnostics
+        permissions:
+            contents: read
+            packages: write
+            id-token: write
+            attestations: write
+        uses: ./.github/workflows/snp-boot-diagnostics.yml
+        with:
+            source_revision: ${{ inputs.source_revision }}
+            publish_candidate: ${{ inputs.publish_diagnostic_candidate }}
+
     general-purpose-gpu:
         name: General-purpose profile and cache regressions
         runs-on: ubuntu-latest

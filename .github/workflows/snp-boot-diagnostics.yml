@@ -1,0 +1,161 @@
+name: SNP boot diagnostics
+
+on:
+  workflow_call:
+    inputs:
+      source_revision:
+        type: string
+        required: true
+      publish_candidate:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      source_revision:
+        description: Exact reviewed builder commit to diagnose
+        type: string
+        required: true
+        default: '8730ac5a119a8f28bf3bf837a60f87b63ead1e1f'
+      publish_candidate:
+        description: Publish unique diagnostic tags for an isolated hardware test
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: snp-boot-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      SOURCE_REVISION: ${{ inputs.source_revision }}
+      WORKFLOW_REVISION: ${{ github.sha }}
+      CARGO_BUILD_JOBS: '2'
+      DIAGNOSTIC_FRAGMENT: output/diagnostic-inputs/general-purpose-dev.config
+      DIAGNOSTIC_SNAPSHOT: output/diagnostic-inputs/config-x86_64-general-purpose-dev.snapshot
+    steps:
+      - name: Require a full source commit
+        run: |
+          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_revision }}
+          persist-credentials: false
+      - name: Verify the selected source and compose recorded debug inputs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
+          mkdir -p output/diagnostic-inputs
+          cat kernel/general-purpose.config kernel/dev.config > "$DIAGNOSTIC_FRAGMENT"
+          sha256sum "$DIAGNOSTIC_FRAGMENT" output/OVMF.fd > output/diagnostic-inputs/SHA256SUMS
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+      - name: Setup mkosi
+        uses: systemd/mkosi@4736cd836108a97772142c461c49f1ddb4172348 # v27
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+      - name: Authenticate native profile artifact pulls
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p mkosi/base/mkosi.local
+          printf '%s' "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" \
+            --password-stdin --registry-config mkosi/base/mkosi.local/oras-auth.json
+      - name: Install existing build dependencies
+        timeout-minutes: 10
+        uses: ./.github/actions/host-deps
+        with:
+          packages: systemd-container ovmf cpio kmod
+      - name: Restore shared build inputs
+        uses: ./.github/actions/build-cache
+        with:
+          phase: restore
+          variant: general-purpose-diagnostic
+          fragment: ${{ env.DIAGNOSTIC_FRAGMENT }}
+          snapshot: ${{ env.DIAGNOSTIC_SNAPSHOT }}
+      - name: Build the diagnostic kernel with the existing CLI
+        id: kernel
+        run: bin/confos kernel --kernel-config-fragment "$DIAGNOSTIC_FRAGMENT"
+      - name: Build one measured SNP variant with console diagnostics
+        run: |
+          bin/confos build snp-diagnostic --platform snp --memory 8G --smp 2 \
+            --kernel-config-fragment "$DIAGNOSTIC_FRAGMENT" \
+            --profile ssh --profile general-purpose --profile attest --profile dev
+      - name: Record the source and diagnostic scope
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path('output/snp-diagnostic')
+          manifest = json.loads((root / 'manifest.json').read_text())
+          assert manifest['build']['platform'] == 'snp'
+          variants = manifest['snp_variants']
+          assert len(variants) == 1 and variants[0]['smp'] == 2
+          record = {
+              'sourceRevision': os.environ['SOURCE_REVISION'],
+              'workflowRevision': os.environ['WORKFLOW_REVISION'],
+              'workflowRun': os.environ['GITHUB_RUN_ID'],
+              'manifestSHA256': hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest(),
+              'diagnosticOnly': True,
+              'scope': 'Isolated SNP boot investigation with dev console and guest root autologin; no customer secrets or production promotion.',
+              'hardwareAcceptance': 'not performed by this build',
+          }
+          (root / 'diagnostic-build.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY
+      - name: Save reusable build inputs
+        if: always()
+        uses: ./.github/actions/build-cache
+        with:
+          phase: save
+          variant: general-purpose-diagnostic
+          fragment: ${{ env.DIAGNOSTIC_FRAGMENT }}
+          snapshot: ${{ env.DIAGNOSTIC_SNAPSHOT }}
+          kernel-ready: ${{ steps.kernel.outcome == 'success' }}
+      - name: Retain diagnostic artifacts and exact build inputs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: snp-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/snp-diagnostic/
+            output/diagnostic-inputs/
+            output/kernel/manifest.json
+          if-no-files-found: warn
+          retention-days: 3
+          compression-level: 6
+      - name: Publish only unique diagnostic tags
+        if: inputs.publish_candidate
+        id: candidate
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="diagnostic-snp-${SOURCE_REVISION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          registry="ghcr.io/${GITHUB_REPOSITORY,,}"
+          printf '%s' "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          bin/confos push output/snp-diagnostic --tag "$tag"
+          bin/confos push output/snp-diagnostic --cdi --tag "$tag-cdi"
+          digest=$(oras resolve "$registry:$tag-cdi")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "CDI diagnostic candidate: $registry@$digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Attest the diagnostic CDI build
+        if: inputs.publish_candidate
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.candidate.outputs.digest }}
+          push-to-registry: true
