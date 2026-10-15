@@ -29,6 +29,18 @@ including source commit, run ID and attempt. It never advances ordinary image
 aliases or modifies deployment configuration. The CDI provenance identifies the
 workflow invocation; `diagnostic-build.json` also records the selected build source.
 
+Publication uses the reviewed workflow revision's existing CLI, independently
+of the selected guest-build source. This retains native OCI packaging fixes
+when diagnosing an older guest source. A native Docker pull must unpack the
+published CDI image before the publication is accepted.
+
+To retry publication without rebuilding a kernel, supply `artifact_run_id`
+(`diagnostic_artifact_run_id` through `Test`) for attempt 1 of a retained build
+in this repository. The workflow verifies its original source receipt,
+reference manifest and disk, UKI and IGVM hashes before using the current
+publisher. It records build and publisher revisions separately and creates
+new unique tags; guest measurements and production aliases remain unchanged.
+
 Run the maintained Cloud minimal-launch fixture with the candidate's separately
 reviewed manifest, then read its native serial log to locate the boot failure.
 Keep the original non-debug image's failing case. Correct the owning image or

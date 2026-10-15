@@ -21,6 +21,10 @@ on:
                 description: Publish only unique diagnostic candidate tags
                 type: boolean
                 default: false
+            diagnostic_artifact_run_id:
+                description: Reuse attempt 1 of a retained diagnostic build run
+                type: string
+                default: ''
 
 permissions: read-all
 
@@ -32,6 +36,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.snp_boot_diagnostics
         permissions:
             contents: read
+            actions: read
             packages: write
             id-token: write
             attestations: write
@@ -39,6 +44,7 @@ jobs:
         with:
             source_revision: ${{ inputs.source_revision }}
             publish_candidate: ${{ inputs.publish_diagnostic_candidate }}
+            artifact_run_id: ${{ inputs.diagnostic_artifact_run_id }}
 
     general-purpose-gpu:
         name: General-purpose profile and cache regressions

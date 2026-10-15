@@ -9,6 +9,9 @@ on:
       publish_candidate:
         type: boolean
         default: false
+      artifact_run_id:
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       source_revision:
@@ -20,6 +23,10 @@ on:
         description: Publish unique diagnostic tags for an isolated hardware test
         type: boolean
         default: false
+      artifact_run_id:
+        description: Reuse attempt 1 of an existing diagnostic build instead of rebuilding
+        type: string
+        default: ''
 
 permissions: {}
 
@@ -33,12 +40,14 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: read
+      actions: read
       packages: write
       id-token: write
       attestations: write
     env:
       SOURCE_REVISION: ${{ inputs.source_revision }}
       WORKFLOW_REVISION: ${{ github.sha }}
+      ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
       CARGO_BUILD_JOBS: '2'
       DIAGNOSTIC_FRAGMENT: output/diagnostic-inputs/general-purpose-dev.config
       DIAGNOSTIC_SNAPSHOT: output/diagnostic-inputs/config-x86_64-general-purpose-dev.snapshot
@@ -46,11 +55,13 @@ jobs:
       - name: Require a full source commit
         run: |
           [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ -z "$ARTIFACT_RUN_ID" || "$ARTIFACT_RUN_ID" =~ ^[0-9]+$ ]]
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.source_revision }}
           persist-credentials: false
       - name: Verify the selected source and compose recorded debug inputs
+        if: inputs.artifact_run_id == ''
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
@@ -80,6 +91,7 @@ jobs:
         with:
           packages: systemd-container ovmf cpio kmod
       - name: Restore shared build inputs
+        if: inputs.artifact_run_id == ''
         uses: ./.github/actions/build-cache
         with:
           phase: restore
@@ -87,14 +99,17 @@ jobs:
           fragment: ${{ env.DIAGNOSTIC_FRAGMENT }}
           snapshot: ${{ env.DIAGNOSTIC_SNAPSHOT }}
       - name: Build the diagnostic kernel with the existing CLI
+        if: inputs.artifact_run_id == ''
         id: kernel
         run: bin/confos kernel --kernel-config-fragment "$DIAGNOSTIC_FRAGMENT"
       - name: Build one measured SNP variant with console diagnostics
+        if: inputs.artifact_run_id == ''
         run: |
           bin/confos build snp-diagnostic --platform snp --memory 8G --smp 2 \
             --kernel-config-fragment "$DIAGNOSTIC_FRAGMENT" \
             --profile ssh --profile general-purpose --profile attest --profile dev
       - name: Record the source and diagnostic scope
+        if: inputs.artifact_run_id == ''
         run: |
           python3 - <<'PY'
           import hashlib, json, os
@@ -116,7 +131,7 @@ jobs:
           (root / 'diagnostic-build.json').write_text(json.dumps(record, indent=2) + '\n')
           PY
       - name: Save reusable build inputs
-        if: always()
+        if: always() && inputs.artifact_run_id == ''
         uses: ./.github/actions/build-cache
         with:
           phase: save
@@ -125,7 +140,7 @@ jobs:
           snapshot: ${{ env.DIAGNOSTIC_SNAPSHOT }}
           kernel-ready: ${{ steps.kernel.outcome == 'success' }}
       - name: Retain diagnostic artifacts and exact build inputs
-        if: always()
+        if: always() && inputs.artifact_run_id == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: snp-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
@@ -136,6 +151,43 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
           compression-level: 6
+      - name: Reuse the exact retained diagnostic build
+        if: inputs.artifact_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: snp-diagnostic-${{ inputs.artifact_run_id }}-1
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: output
+      - name: Verify reused guest measurements and original source receipt
+        if: inputs.artifact_run_id != ''
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path('output/snp-diagnostic')
+          receipt = json.loads((root / 'diagnostic-build.json').read_text())
+          assert receipt['diagnosticOnly'] is True
+          assert receipt['sourceRevision'] == os.environ['SOURCE_REVISION']
+          assert receipt['workflowRun'] == os.environ['ARTIFACT_RUN_ID']
+          assert receipt['manifestSHA256'] == hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest()
+          manifest = json.loads((root / 'manifest.json').read_text())
+          assert manifest['build']['platform'] == 'snp' and manifest['build']['memory'] == '8G'
+          assert len(manifest['snp_variants']) == 1 and manifest['snp_variants'][0]['smp'] == 2
+          for entry in [manifest['outputs']['disk_image'], manifest['outputs']['uki'], manifest['snp_variants'][0]['igvm']]:
+              path = root / entry['path']
+              with path.open('rb') as stream:
+                  assert hashlib.file_digest(stream, 'sha256').hexdigest() == entry['sha256']
+          PY
+      # Older guest sources may predate native OCI packaging fixes. Keep the
+      # measured build unchanged and publish it with this reviewed CLI source.
+      - name: Check out the reviewed publisher independently of the guest source
+        if: inputs.publish_candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: publisher
+          persist-credentials: false
       - name: Publish only unique diagnostic tags
         if: inputs.publish_candidate
         id: candidate
@@ -146,12 +198,19 @@ jobs:
           tag="diagnostic-snp-${SOURCE_REVISION}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           registry="ghcr.io/${GITHUB_REPOSITORY,,}"
           printf '%s' "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          bin/confos push output/snp-diagnostic --tag "$tag"
-          bin/confos push output/snp-diagnostic --cdi --tag "$tag-cdi"
+          publisher/bin/confos push "$GITHUB_WORKSPACE/output/snp-diagnostic" --tag "$tag"
+          publisher/bin/confos push "$GITHUB_WORKSPACE/output/snp-diagnostic" --cdi --tag "$tag-cdi"
           digest=$(oras resolve "$registry:$tag-cdi")
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "CDI diagnostic candidate: $registry@$digest" >> "$GITHUB_STEP_SUMMARY"
+          echo "Guest build source: $SOURCE_REVISION; publisher source: $WORKFLOW_REVISION; reused build run: ${ARTIFACT_RUN_ID:-none}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Prove native container unpack before hardware use
+        if: inputs.publish_candidate
+        env:
+          CDI_DIGEST: ${{ steps.candidate.outputs.digest }}
+        run: |
+          docker pull "ghcr.io/${GITHUB_REPOSITORY,,}@$CDI_DIGEST"
       - name: Attest the diagnostic CDI build
         if: inputs.publish_candidate
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
