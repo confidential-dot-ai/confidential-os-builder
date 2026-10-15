@@ -51,6 +51,7 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       DIAGNOSTIC_FRAGMENT: output/diagnostic-inputs/general-purpose-dev.config
       DIAGNOSTIC_SNAPSHOT: output/diagnostic-inputs/config-x86_64-general-purpose-dev.snapshot
+      DIAGNOSTIC_PROFILE: publisher/.github/diagnostic-profiles/snp-uart
     steps:
       - name: Require a full source commit
         run: |
@@ -60,6 +61,12 @@ jobs:
         with:
           ref: ${{ inputs.source_revision }}
           persist-credentials: false
+      - name: Check out reviewed diagnostic inputs and publisher independently of the guest source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: publisher
+          persist-credentials: false
       - name: Verify the selected source and compose recorded debug inputs
         if: inputs.artifact_run_id == ''
         run: |
@@ -67,7 +74,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
           mkdir -p output/diagnostic-inputs
           cat kernel/general-purpose.config kernel/dev.config > "$DIAGNOSTIC_FRAGMENT"
-          sha256sum "$DIAGNOSTIC_FRAGMENT" output/OVMF.fd > output/diagnostic-inputs/SHA256SUMS
+          cp -a "$DIAGNOSTIC_PROFILE" output/diagnostic-inputs/snp-uart
+          sha256sum "$DIAGNOSTIC_FRAGMENT" output/OVMF.fd "$DIAGNOSTIC_PROFILE/mkosi.conf" > output/diagnostic-inputs/SHA256SUMS
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Setup uv
@@ -89,7 +97,7 @@ jobs:
         timeout-minutes: 10
         uses: ./.github/actions/host-deps
         with:
-          packages: systemd-container ovmf cpio kmod
+          packages: systemd-container ovmf cpio kmod binutils
       - name: Restore shared build inputs
         if: inputs.artifact_run_id == ''
         uses: ./.github/actions/build-cache
@@ -107,25 +115,38 @@ jobs:
         run: |
           bin/confos build snp-diagnostic --platform snp --memory 8G --smp 2 \
             --kernel-config-fragment "$DIAGNOSTIC_FRAGMENT" \
-            --profile ssh --profile general-purpose --profile attest --profile dev
+            --profile ssh --profile general-purpose --profile attest \
+            --profile-dir "$GITHUB_WORKSPACE/$DIAGNOSTIC_PROFILE"
       - name: Record the source and diagnostic scope
         if: inputs.artifact_run_id == ''
         run: |
           python3 - <<'PY'
-          import hashlib, json, os
+          import hashlib, json, os, shlex, subprocess
           from pathlib import Path
           root = Path('output/snp-diagnostic')
           manifest = json.loads((root / 'manifest.json').read_text())
           assert manifest['build']['platform'] == 'snp'
           variants = manifest['snp_variants']
           assert len(variants) == 1 and variants[0]['smp'] == 2
+          cmdline_path = Path('output/diagnostic-inputs/kernel-command-line.txt')
+          subprocess.run(['objcopy', '--dump-section', '.cmdline=' + str(cmdline_path),
+                          str(root / manifest['outputs']['uki']['path'])], check=True)
+          cmdline = shlex.split(cmdline_path.read_bytes().rstrip(b'\0').decode())
+          assert [p for p in cmdline if p.startswith('console=')] == ['console=ttyS0,115200n8']
+          assert 'earlycon=uart8250,io,0x3f8,115200n8' in cmdline
+          assert any(p.startswith('roothash=') for p in cmdline)
+          assert {'systemd.condition-first-boot=no', 'page_alloc.shuffle=1', 'hash_pointers=always',
+                  'dummy.numdummies=0', 'loglevel=7', 'ignore_loglevel'} <= set(cmdline)
+          profile = Path(os.environ['DIAGNOSTIC_PROFILE']) / 'mkosi.conf'
           record = {
               'sourceRevision': os.environ['SOURCE_REVISION'],
               'workflowRevision': os.environ['WORKFLOW_REVISION'],
               'workflowRun': os.environ['GITHUB_RUN_ID'],
               'manifestSHA256': hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest(),
+              'diagnosticProfileSHA256': hashlib.sha256(profile.read_bytes()).hexdigest(),
+              'kernelCommandLineSHA256': hashlib.sha256(cmdline_path.read_bytes()).hexdigest(),
               'diagnosticOnly': True,
-              'scope': 'Isolated SNP boot investigation with dev console and guest root autologin; no customer secrets or production promotion.',
+              'scope': 'Isolated SNP UART and early-kernel boot investigation; no customer secrets or production promotion.',
               'hardwareAcceptance': 'not performed by this build',
           }
           (root / 'diagnostic-build.json').write_text(json.dumps(record, indent=2) + '\n')
@@ -179,15 +200,8 @@ jobs:
               with path.open('rb') as stream:
                   assert hashlib.file_digest(stream, 'sha256').hexdigest() == entry['sha256']
           PY
-      # Older guest sources may predate native OCI packaging fixes. Keep the
-      # measured build unchanged and publish it with this reviewed CLI source.
-      - name: Check out the reviewed publisher independently of the guest source
-        if: inputs.publish_candidate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          path: publisher
-          persist-credentials: false
+      # The independent publisher keeps native OCI packaging fixes when the
+      # selected guest source is older. Retained guest bytes remain unchanged.
       - name: Publish only unique diagnostic tags
         if: inputs.publish_candidate
         id: candidate
