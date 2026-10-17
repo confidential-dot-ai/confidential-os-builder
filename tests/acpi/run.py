@@ -210,7 +210,9 @@ def main():
         timed_out = False
         return_code = None
         try:
-            proc = subprocess.run(qemu, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=args.timeout)
+            # QEMU's stdio backend makes stdin nonblocking. Do not let it
+            # change the harness console's shared file description.
+            proc = subprocess.run(qemu, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=args.timeout)
             log = proc.stdout.decode(errors="replace")
             return_code = proc.returncode
         except subprocess.TimeoutExpired as exc:
