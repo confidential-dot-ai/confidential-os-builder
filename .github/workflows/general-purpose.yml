@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Advance latest tags after hardware acceptance of the selected image"
+        description: "Publish immutable candidates; advance latest only from hardware-accepted main"
         type: boolean
         default: false
       image:
@@ -13,6 +13,7 @@ on:
         options:
           - all
           - general-purpose
+          - general-purpose-snp
           - general-purpose-gpu
         default: all
   push:
@@ -57,7 +58,7 @@ jobs:
           SELECTED_IMAGE: ${{ inputs.image }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            if [ "$SELECTED_IMAGE" = general-purpose ] || [ "$SELECTED_IMAGE" = general-purpose-gpu ]; then
+            if [ "$SELECTED_IMAGE" = general-purpose ] || [ "$SELECTED_IMAGE" = general-purpose-snp ] || [ "$SELECTED_IMAGE" = general-purpose-gpu ]; then
               images="[\"$SELECTED_IMAGE\"]"
             else
               images=$(bin/ci-images --all --omit-base)
@@ -88,7 +89,7 @@ jobs:
     # Cold-cache builds took up to 55 min on a healthy mirror.
     timeout-minutes: 120
     env:
-      KERNEL_FRAGMENT: ${{ matrix.image == 'general-purpose' && 'general-purpose' || 'general-purpose-gpu' }}
+      KERNEL_FRAGMENT: ${{ matrix.image == 'general-purpose-gpu' && 'general-purpose-gpu' || 'general-purpose' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -189,6 +190,25 @@ jobs:
           snapshot: kernel/config-x86_64-${{ env.KERNEL_FRAGMENT }}.snapshot
           gpu: ${{ matrix.image == 'general-purpose-gpu' }}
 
+      - name: Require both measured SNP CPU variants before publication
+        if: matrix.image == 'general-purpose-snp'
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, re
+          from pathlib import Path
+          root = Path('output/general-purpose-snp')
+          manifest = json.loads((root / 'manifest.json').read_text())
+          assert manifest['build']['platform'] == 'snp'
+          variants = manifest['snp_variants']
+          assert len(variants) == 2 and {v['smp'] for v in variants} == {2, 4}
+          for variant in variants:
+              assert variant['igvm']['path'] == f"guest-smp{variant['smp']}.igvm"
+              with (root / variant['igvm']['path']).open('rb') as stream:
+                  assert hashlib.file_digest(stream, 'sha256').hexdigest() == variant['igvm']['sha256']
+              assert variant['measurement']['vmsa_count'] == variant['smp']
+              assert re.fullmatch(r'[0-9a-f]{96}', variant['measurement']['snp_launch_digest'])
+          PY
+
       - name: Upload reproducibility evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -207,16 +227,13 @@ jobs:
         run: |
           set -euo pipefail
           echo "$GHCR_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          cd output/${{ matrix.image }}
-          oras push "ghcr.io/${GITHUB_REPOSITORY,,}:${{ matrix.image }}-${GITHUB_SHA}-candidate" \
-            --artifact-type application/vnd.confos.image.v1 \
-            disk.raw OVMF.tdx.fd initrd.img manifest.json roothash uki.efi
+          bin/confos push "output/${{ matrix.image }}" \
+            --tag "${{ matrix.image }}-${GITHUB_SHA}-candidate"
 
           # CDI requires a standard OCI image with one tar+gzip layer and the
           # VM disk at disk/disk.raw. Keep the general artifact above for
           # confos pull and publish this deployment-specific representation
           # under a distinct tag.
-          cd "$GITHUB_WORKSPACE"
           bin/confos push output/${{ matrix.image }} \
             --cdi \
             --tag "${{ matrix.image }}-${GITHUB_SHA}-candidate-cdi"

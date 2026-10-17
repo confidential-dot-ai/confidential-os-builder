@@ -39,6 +39,8 @@ def main():
         subprocess.run([str(ROOT / "bin/confos-fetch-gpu")], cwd=ROOT, check=True,
                        env={**os.environ, "MODULE_SIG_CERT": args.module_signing_cert})
     command = [str(ROOT / "bin/confos"), "build", args.image, "--platform", recipe["platform"], "--memory", recipe["memory"], *kernel]
+    if "smp" in recipe:
+        command += ["--smp", *map(str, recipe["smp"])]
     for profile in recipe["profiles"]:
         command += ["--profile", profile]
     subprocess.run(command, cwd=ROOT, check=True)
