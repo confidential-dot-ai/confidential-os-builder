@@ -13,6 +13,14 @@
     "platform": "tdx",
     "memory": "8G"
   },
+  "general-purpose-snp": {
+    "profiles": ["ssh", "general-purpose", "attest"],
+    "kernel": "kernel/general-purpose.config",
+    "extra_kernel_inputs": [],
+    "platform": "snp",
+    "memory": "8G",
+    "smp": [2, 4]
+  },
   "general-purpose-gpu": {
     "profiles": ["ssh", "general-purpose", "gpu", "attest-gpu", "general-purpose-gpu"],
     "kernel": "kernel/general-purpose-gpu.config",
