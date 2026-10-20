@@ -27,6 +27,8 @@ build configs, since those invalidate published reference values.
   whose report data commits to both. `attestation-api` listens on
   `127.0.0.1:8401` in these images, so no caller outside the guest chooses
   what a quote covers. See [docs/VERIFYING.md](docs/VERIFYING.md).
+  A `GET /attest` answers 405 with `Allow: POST` and says what to send,
+  instead of 404.
 - Shared cross-profile package/source/tools caches, input-keyed unsigned
   NVIDIA module reuse, and changed-profile image selection. Fix package-cache
   directories and explicit mkosi output paths; keep final image assembly fresh.
