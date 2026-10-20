@@ -159,7 +159,10 @@ class EndpointTests(unittest.TestCase):
             self.assertEqual(json.load(response), {"status": "ok"})
         with self.assertRaises(urllib.error.HTTPError) as get:
             urllib.request.urlopen(self.url + "/attest", timeout=10)
-        self.assertEqual(get.exception.code, 404)
+        self.assertEqual(get.exception.code, 405)
+        self.assertEqual(get.exception.headers["Allow"], "POST")
+        self.assertIn("POST", json.load(get.exception)["error"])
+        get.exception.close()
         self.assertEqual(self.backend.requests, [])
 
     def test_a_large_body_is_refused_unread(self):

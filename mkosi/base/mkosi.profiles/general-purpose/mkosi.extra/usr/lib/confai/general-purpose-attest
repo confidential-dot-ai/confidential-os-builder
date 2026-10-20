@@ -166,6 +166,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.read_deadline.cancel()
         if self.path == "/healthz":
             self.answer(200, {"status": "ok"})
+        elif self.path == "/attest":
+            # The usual first try is a browser or a bare curl; tell it how.
+            self.answer(405, {"error": 'use POST with the JSON body {"nonce": "<base64>"}, '
+                                       "the nonce being 32 random bytes of your own"},
+                        {"Allow": "POST"})
         else:
             self.answer(404, {"error": "not found"})
 
