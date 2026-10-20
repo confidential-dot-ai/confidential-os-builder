@@ -96,8 +96,8 @@ def prepare(daemon_json):
         config = {}
     if config.get("data-root") == DATA_ROOT:
         return
+    # dockerd creates the data root itself.
     config["data-root"] = DATA_ROOT
-    os.makedirs(DATA_ROOT, mode=0o711, exist_ok=True)
     directory = os.path.dirname(daemon_json) or "."
     os.makedirs(directory, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".daemon.json.")
