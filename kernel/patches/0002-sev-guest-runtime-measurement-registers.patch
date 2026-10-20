@@ -63,12 +63,11 @@ Linux-Version: 6.18.49
 +	  registers live in arch code, so the driver is always built in.
 --- a/arch/x86/include/asm/sev.h
 +++ b/arch/x86/include/asm/sev.h
-@@ -527,6 +527,13 @@
+@@ -527,6 +527,12 @@
  void snp_msg_free(struct snp_msg_desc *mdesc);
  int snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req);
  
 +#define SNP_MR_COUNT	16
-+#define SNP_MR_LOG_MAX	4096
 +
 +u8 *snp_mr_value(unsigned int index);
 +int snp_mr_extend(unsigned int index, const u8 *digest);
@@ -88,7 +87,7 @@ Linux-Version: 6.18.49
  
  #include <asm/init.h>
  #include <asm/cpu_entry_area.h>
-@@ -2244,7 +2246,80 @@
+@@ -2244,7 +2246,82 @@
  	return rc;
  }
  
@@ -102,6 +101,8 @@ Linux-Version: 6.18.49
 +	u8 index;
 +	u8 digest[SHA384_DIGEST_SIZE];
 +} __packed;
++
++#define SNP_MR_LOG_MAX	4096
 +
 +static u8 snp_mr_regs[SNP_MR_COUNT][SHA384_DIGEST_SIZE];
 +static struct snp_mr_event snp_mr_log[SNP_MR_LOG_MAX];
@@ -170,7 +171,7 @@ Linux-Version: 6.18.49
  {
  	u64 seqno;
  	int rc;
-@@ -2312,6 +2387,31 @@
+@@ -2312,6 +2389,31 @@
  
  	return 0;
  }
