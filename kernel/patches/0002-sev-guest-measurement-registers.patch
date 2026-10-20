@@ -1,8 +1,9 @@
-Subject: [PATCH] virt: sev-guest: add kernel-held runtime measurement registers
+Subject: [PATCH] virt: sev-guest: add kernel-held measurement registers
 
-SEV-SNP has no runtime measurement registers. Keep 16 SHA-384 registers
-and a bounded log of their extends in the kernel, and commit to them in
-every guest-requested attestation report.
+SEV-SNP has no measurement registers that the guest can extend after
+launch. Keep 16 SHA-384 registers and a bounded log of their extends in
+the kernel, and commit to them in every guest-requested attestation
+report.
 
 Writing a 48-byte digest d to measurements/mrN:sha384 on the sev-guest
 misc device sets R[N] = SHA-384(R[N] || d) and appends (N, d) to the log.
@@ -57,7 +58,7 @@ Linux-Version: 6.18.49
  	  attestation report and more.
  
 -	  If you choose 'M' here, this module will be called sev-guest.
-+	  The driver also exposes 16 runtime measurement registers and their
++	  The driver also exposes 16 measurement registers and their
 +	  event log. Every report requested through /dev/sev-guest or
 +	  configfs-tsm without an SVSM commits to them in REPORT_DATA. The
 +	  registers live in arch code, so the driver is always built in.
@@ -93,7 +94,7 @@ Linux-Version: 6.18.49
  
 -int snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req)
 +/*
-+ * Runtime measurement registers. The zeroed static state is the genesis
++ * Measurement registers. The zeroed static state is the genesis
 + * state. Logged entries never change, so the log is read without the lock
 + * once the entry count has been read under it.
 + */

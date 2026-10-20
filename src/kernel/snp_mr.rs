@@ -9,7 +9,7 @@ use anyhow::Result;
 
 use super::config;
 
-pub const PATCH: &str = "kernel/patches/0002-sev-guest-runtime-measurement-registers.patch";
+pub const PATCH: &str = "kernel/patches/0002-sev-guest-measurement-registers.patch";
 const STAGED_PATCH: &str = "confos-snp-mr.patch";
 const STAGE_SCRIPT: &str = "set -eu\n\
     cd /build\n\
