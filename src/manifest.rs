@@ -125,8 +125,8 @@ pub struct KernelInputs {
     /// SHA-256 of the version-specific kernel enforcement patch. Required for
     /// the same reason.
     pub trusted_aml_patch_sha256: String,
-    /// SHA-256 of the SEV-SNP runtime measurement register patch. Absent for
-    /// kernels built before the patch, which have no runtime registers.
+    /// SHA-256 of the SEV-SNP measurement register patch. Absent for
+    /// kernels built before the patch, which have no measurement registers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snp_mr_patch_sha256: Option<String>,
 }

@@ -1,4 +1,4 @@
-//! Kernel-held SEV-SNP runtime measurement registers.
+//! Kernel-held SEV-SNP measurement registers.
 //!
 //! The version-specific patch adds the registers, their event log and the
 //! REPORT_DATA commitment to the sev-guest driver. It is a cache input.
