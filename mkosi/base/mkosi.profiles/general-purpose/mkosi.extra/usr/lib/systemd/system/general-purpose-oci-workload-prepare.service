@@ -1,0 +1,14 @@
+[Unit]
+Description=Keep Docker state on encrypted scratch for a launch-bound OCI workload
+Documentation=https://github.com/confidential-dot-ai/confidential-os-builder/blob/main/docs/GENERAL-PURPOSE.md#oci-workloads
+# Does nothing unless the launch-bound pubkey bundle names a workload.
+ConditionPathExists=/run/confai/operator-pubkey
+Before=docker.service docker.socket
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/confai/general-purpose-oci-workload prepare
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target docker.service

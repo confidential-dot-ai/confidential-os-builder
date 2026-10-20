@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Run the OCI image a general-purpose guest was launched with.
+
+The launch-bound `pubkey` file (staged by the initrd at
+/run/confai/operator-pubkey, its exact bytes bound into TDX RTMR[3] or SNP
+HOSTDATA) may carry, besides OpenSSH key lines, one line
+
+    # confos-oci-workload/v1 {"image":"<registry>/<repository>@sha256:<64 hex>"}
+
+sshd reads `#` lines as comments. The JSON object names the image by digest
+and may add "command" (a list of strings, the arguments after the image)
+and "env" (an object of strings). Because the line sits in the bound file, a
+verifier that checks the launch binding has checked the workload too.
+
+Without the line this does nothing, and the guest is the usual
+general-purpose environment. With it:
+
+  prepare  (before docker.service) moves Docker's data root from the
+           host-readable user-data disk to /var/lib/docker-scratch, on the
+           encrypted scratch disk (or the RAM tmpfs without one), so every
+           boot pulls the image again and Docker checks its digest.
+  start    (after docker.service) pulls the image by digest and runs it as
+           the container `confos-workload` on the host network, with the
+           guest's GPUs when the guest has NVIDIA CDI devices.
+
+The launch disk is host-visible: the line holds no secret, and registries
+are pulled anonymously.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+MARKER = "# confos-oci-workload/v1 "
+CONTAINER = "confos-workload"
+DATA_ROOT = "/var/lib/docker-scratch"
+GPU_CDI_SPEC = "/var/run/cdi/nvidia.yaml"
+# A registry host (with a dot, a port or localhost), a lowercase repository
+# path, and a digest. A tag is never enough: the digest is what is bound.
+REFERENCE = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::[0-9]{1,5})?"
+    r"|localhost(?::[0-9]{1,5})?|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?:[0-9]{1,5})"
+    r"(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)+"
+    r"@sha256:[0-9a-f]{64}"
+)
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+class Invalid(Exception):
+    """The launch bundle names a workload this guest will not run."""
+
+
+def workload(pubkey_path):
+    """The workload the bundle names, or None."""
+    try:
+        with open(pubkey_path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        return None
+    found = [line[len(MARKER):] for line in lines if line.startswith(MARKER)]
+    if not found:
+        return None
+    if len(found) > 1:
+        raise Invalid("the launch bundle names more than one workload")
+    try:
+        spec = json.loads(found[0])
+    except json.JSONDecodeError as e:
+        raise Invalid(f"the workload line is not JSON: {e}") from None
+    if not isinstance(spec, dict) or set(spec) - {"image", "command", "env"}:
+        raise Invalid("the workload is an object of image, command and env")
+    image = spec.get("image")
+    if not isinstance(image, str) or not REFERENCE.fullmatch(image):
+        raise Invalid("the workload image must be <registry>/<repository>@sha256:<digest>")
+    command = spec.get("command", [])
+    if not isinstance(command, list) or not all(isinstance(a, str) for a in command):
+        raise Invalid("the workload command must be a list of strings")
+    env = spec.get("env", {})
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
+        for k, v in env.items()
+    ):
+        raise Invalid("the workload env must map variable names to strings")
+    return {"image": image, "command": command, "env": env}
+
+
+def prepare(daemon_json):
+    """Point Docker's data root at encrypted scratch, keeping every other setting."""
+    try:
+        with open(daemon_json, encoding="utf-8") as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        config = {}
+    if config.get("data-root") == DATA_ROOT:
+        return
+    config["data-root"] = DATA_ROOT
+    os.makedirs(DATA_ROOT, mode=0o711, exist_ok=True)
+    directory = os.path.dirname(daemon_json) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".daemon.json.")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, daemon_json)
+
+
+def docker(docker_bin, *args, check=True):
+    return subprocess.run([docker_bin, *args], check=check, stdin=subprocess.DEVNULL)
+
+
+def start(spec, docker_bin, gpu_cdi_spec):
+    """Pull the image by digest and run it, replacing any earlier container."""
+    docker(docker_bin, "pull", spec["image"])
+    docker(docker_bin, "rm", "--force", CONTAINER, check=False)
+    run = ["run", "--detach", "--name", CONTAINER, "--network", "host", "--restart", "unless-stopped"]
+    if os.path.exists(gpu_cdi_spec):
+        run += ["--device", "nvidia.com/gpu=all"]
+    for name, value in sorted(spec["env"].items()):
+        run += ["--env", f"{name}={value}"]
+    run += ["--", spec["image"], *spec["command"]]
+    docker(docker_bin, *run)
+    print(f"general-purpose-oci-workload: {CONTAINER} runs {spec['image']}", flush=True)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("step", choices=["prepare", "start"])
+    parser.add_argument("--pubkey", default="/run/confai/operator-pubkey")
+    parser.add_argument("--daemon-json", default="/etc/docker/daemon.json")
+    parser.add_argument("--docker", default="/usr/bin/docker")
+    parser.add_argument("--gpu-cdi-spec", default=GPU_CDI_SPEC)
+    args = parser.parse_args(argv)
+    try:
+        spec = workload(args.pubkey)
+    except Invalid as e:
+        print(f"general-purpose-oci-workload: {e}", file=sys.stderr)
+        return 1
+    if spec is None:
+        return 0
+    if args.step == "prepare":
+        prepare(args.daemon_json)
+    else:
+        start(spec, args.docker, args.gpu_cdi_spec)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

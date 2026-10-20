@@ -1,0 +1,21 @@
+[Unit]
+Description=Run the OCI image named in the launch-bound pubkey bundle
+Documentation=https://github.com/confidential-dot-ai/confidential-os-builder/blob/main/docs/GENERAL-PURPOSE.md#oci-workloads
+# Does nothing unless the launch-bound pubkey bundle names a workload.
+ConditionPathExists=/run/confai/operator-pubkey
+After=general-purpose-oci-workload-prepare.service docker.service network-online.target
+Requires=docker.service
+Wants=general-purpose-oci-workload-prepare.service network-online.target
+# Pulls retry until the network and registry answer.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/confai/general-purpose-oci-workload start
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target
