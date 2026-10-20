@@ -125,6 +125,9 @@ pub struct KernelInputs {
     /// SHA-256 of the version-specific kernel enforcement patch. Required for
     /// the same reason.
     pub trusted_aml_patch_sha256: String,
+    /// SHA-256 of the SEV-SNP runtime measurement register patch. Required:
+    /// it declares that REPORT_DATA carries the register commitment.
+    pub snp_mr_patch_sha256: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -205,9 +208,14 @@ mod tests {
             "snapshot_config_sha256": "d",
             "trusted_dsdt_sha256": "e",
             "trusted_aml_patch_sha256": "f",
+            "snp_mr_patch_sha256": "g",
         });
         serde_json::from_value::<KernelInputs>(gated.clone()).unwrap();
-        for missing in ["trusted_dsdt_sha256", "trusted_aml_patch_sha256"] {
+        for missing in [
+            "trusted_dsdt_sha256",
+            "trusted_aml_patch_sha256",
+            "snp_mr_patch_sha256",
+        ] {
             let mut pre_gate = gated.clone();
             pre_gate.as_object_mut().unwrap().remove(missing);
             assert!(

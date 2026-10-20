@@ -47,6 +47,9 @@ pub struct Fingerprint {
     /// SHA-256 of the version-specific kernel enforcement patch.
     #[serde(default)]
     pub trusted_aml_patch_sha256: String,
+    /// SHA-256 of the SEV-SNP runtime measurement register patch.
+    #[serde(default)]
+    pub snp_mr_patch_sha256: String,
     pub tools_tree_digest: String,
 }
 
@@ -99,6 +102,7 @@ mod tests {
             tools_tree_digest: "e".repeat(64),
             trusted_dsdt_sha256: "4".repeat(64),
             trusted_aml_patch_sha256: "5".repeat(64),
+            snp_mr_patch_sha256: "6".repeat(64),
         }
     }
 

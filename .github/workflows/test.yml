@@ -104,12 +104,14 @@ jobs:
               with:
                   path: mkosi/kernel-builder/mkosi.output-acpi
                   key: ${{ steps.acpi-tools.outputs.cache-primary-key }}
-            - name: Lint the kernel patch with upstream checkpatch
+            - name: Lint the kernel patches with upstream checkpatch
               # Before the long boot step so a style failure surfaces first.
               run: |
                   . kernel/version
                   # Read stdin so checkpatch does not treat the tracked patch as a source file.
-                  "output/acpi/linux-${LINUX_VERSION}/scripts/checkpatch.pl" --no-tree --no-signoff - < kernel/patches/0001-acpi-trusted-aml.patch
+                  for patch in kernel/patches/*.patch; do
+                      "output/acpi/linux-${LINUX_VERSION}/scripts/checkpatch.pl" --no-tree --no-signoff - < "$patch"
+                  done
             - name: Boot control and enforcing kernels
               run: tests/acpi/run.sh --jobs 4
             - name: Upload AML test evidence
