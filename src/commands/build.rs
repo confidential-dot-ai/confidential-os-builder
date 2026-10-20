@@ -480,7 +480,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
                 randstruct_seed_sha256: kernel.manifest.inputs.randstruct_seed_sha256.clone(),
                 trusted_dsdt_sha256: kernel.manifest.inputs.trusted_dsdt_sha256.clone(),
                 trusted_aml_patch_sha256: kernel.manifest.inputs.trusted_aml_patch_sha256.clone(),
-                snp_mr_patch_sha256: kernel.manifest.inputs.snp_mr_patch_sha256.clone(),
+                snp_mr_patch_sha256: Some(kernel.manifest.inputs.snp_mr_patch_sha256.clone()),
             }),
             initrd: manifest::FileEntry {
                 path: manifest::basename_of(&initrd_path),
