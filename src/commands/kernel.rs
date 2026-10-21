@@ -290,8 +290,9 @@ fn run_acpi_harness(
 /// audited against it. Every entry point reads the pin through here.
 fn pinned_version() -> Result<KernelVersion> {
     let version = KernelVersion::read(Path::new(VERSION_PATH))?;
-    aml::verify_version(aml::PATCH, &version.linux_version)?;
-    aml::verify_version(snp_mr::PATCH, &version.linux_version)?;
+    for patch in crate::kernel::PATCHES {
+        aml::verify_version(patch, &version.linux_version)?;
+    }
     Ok(version)
 }
 
@@ -503,6 +504,23 @@ mod tests {
             panic!("ordinary kernel cache hits must not require tools")
         })
         .unwrap();
+    }
+
+    /// A cached kernel is reused only when the whole fingerprint is equal, so
+    /// it must carry each patch's current bytes.
+    #[test]
+    fn the_fingerprint_hashes_each_kernel_patch() {
+        use sha2::{Digest, Sha256};
+        let sha256 = |path| hex::encode(Sha256::digest(fs_err::read(path).unwrap()));
+        let fingerprint = compute_fingerprint(
+            &pinned_version().unwrap(),
+            None,
+            Path::new(DEFAULT_SIGNING_CERT),
+            Path::new(SNAPSHOT_PATH),
+        )
+        .unwrap();
+        assert_eq!(fingerprint.trusted_aml_patch_sha256, sha256(aml::PATCH));
+        assert_eq!(fingerprint.snp_mr_patch_sha256, sha256(snp_mr::PATCH));
     }
 
     #[test]

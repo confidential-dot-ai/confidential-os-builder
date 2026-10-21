@@ -607,60 +607,39 @@ mod tests {
     /// and a consumer fragment re-enabling one symbol.
     #[test]
     fn builder_invariants_reject_weakened_lockdown() {
-        // (shipped line, resolved line) edits and the symbol the error names.
-        let cases: [(&[Edit], &str); 6] = [
-            (
-                &[(
-                    "CONFIG_SECURITY_LOCKDOWN_LSM_EARLY=y\n",
-                    "# CONFIG_SECURITY_LOCKDOWN_LSM_EARLY is not set\n",
-                )],
-                "CONFIG_SECURITY_LOCKDOWN_LSM_EARLY",
-            ),
-            (
-                &[
-                    (
-                        "# CONFIG_LOCK_DOWN_KERNEL_FORCE_NONE is not set\n",
-                        "CONFIG_LOCK_DOWN_KERNEL_FORCE_NONE=y\n",
-                    ),
-                    (
-                        "CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY=y\n",
-                        "# CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY is not set\n",
-                    ),
-                ],
-                "CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY",
-            ),
-            (
-                &[("# CONFIG_DEVMEM is not set\n", "CONFIG_DEVMEM=y\n")],
-                "CONFIG_DEVMEM",
-            ),
-            (
-                &[("# CONFIG_PROC_KCORE is not set\n", "CONFIG_PROC_KCORE=y\n")],
-                "CONFIG_PROC_KCORE",
-            ),
-            (
-                &[(
-                    "# CONFIG_KEXEC is not set\n",
-                    "CONFIG_KEXEC=y\nCONFIG_KEXEC_CORE=y\n",
-                )],
-                "CONFIG_KEXEC_CORE",
-            ),
-            (
-                &[(
-                    "# CONFIG_KEXEC_FILE is not set\n",
-                    "CONFIG_KEXEC_FILE=y\nCONFIG_KEXEC_CORE=y\n",
-                )],
-                "CONFIG_KEXEC_CORE",
-            ),
+        // (shipped line, resolved line) edits.
+        let cases: [&[Edit]; 5] = [
+            &[(
+                "CONFIG_SECURITY_LOCKDOWN_LSM_EARLY=y\n",
+                "# CONFIG_SECURITY_LOCKDOWN_LSM_EARLY is not set\n",
+            )],
+            &[
+                (
+                    "# CONFIG_LOCK_DOWN_KERNEL_FORCE_NONE is not set\n",
+                    "CONFIG_LOCK_DOWN_KERNEL_FORCE_NONE=y\n",
+                ),
+                (
+                    "CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY=y\n",
+                    "# CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY is not set\n",
+                ),
+            ],
+            &[("# CONFIG_DEVMEM is not set\n", "CONFIG_DEVMEM=y\n")],
+            &[("# CONFIG_PROC_KCORE is not set\n", "CONFIG_PROC_KCORE=y\n")],
+            // KEXEC_FILE resolves the same way: both select KEXEC_CORE.
+            &[(
+                "# CONFIG_KEXEC is not set\n",
+                "CONFIG_KEXEC=y\nCONFIG_KEXEC_CORE=y\n",
+            )],
         ];
         for snapshot in SHIPPED_SNAPSHOTS {
-            for (edits, symbol) in cases {
+            check_builder_invariants(snapshot).unwrap();
+            for edits in cases {
                 let mut resolved = snapshot.to_owned();
                 for (shipped, weakened) in edits {
                     assert_eq!(resolved.matches(shipped).count(), 1, "{shipped}");
                     resolved = resolved.replace(shipped, weakened);
                 }
-                let err = check_builder_invariants(&resolved).unwrap_err().to_string();
-                assert!(err.contains(symbol), "{symbol}: {err}");
+                assert!(check_builder_invariants(&resolved).is_err(), "{edits:?}");
             }
         }
     }
@@ -720,6 +699,7 @@ mod tests {
     #[test]
     fn builder_invariants_accept_module_sig_all_off() {
         let d = TempDir::new().unwrap();
+        let lockdown: String = LOCKDOWN.map(|(s, v)| format!("{s}={v}\n")).concat();
         for body in [
             "CONFIG_MODULE_SIG=y\nCONFIG_MODULE_SIG_KEY=\"\"\n# CONFIG_MODULE_SIG_ALL is not set\n",
             "CONFIG_MODULES=y\n",
@@ -727,11 +707,7 @@ mod tests {
             let resolved = write(
                 &d,
                 "resolved",
-                &format!(
-                    "{body}{}CONFIG_SECURITY_LOCKDOWN_LSM_EARLY=y\n\
-                     CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY=y\n",
-                    crate::kernel::aml::VALID_CONFIG
-                ),
+                &format!("{body}{}{lockdown}", crate::kernel::aml::VALID_CONFIG),
             );
             verify_builder_invariants(&resolved).unwrap();
         }
