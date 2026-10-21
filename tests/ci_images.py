@@ -28,11 +28,11 @@ class SelectionTests(unittest.TestCase):
 
     def test_shared_workload_and_ssh(self):
         for profile in ("general-purpose", "ssh"):
-            self.check([f"mkosi/base/mkosi.profiles/{profile}/mkosi.extra/file"], ["general-purpose", "general-purpose-gpu"])
+            self.check([f"mkosi/base/mkosi.profiles/{profile}/mkosi.extra/file"], ["general-purpose", "general-purpose-gpu", "general-purpose-snp"])
 
     def test_cpu_only(self):
-        self.check(["kernel/general-purpose.config"], ["general-purpose", "general-purpose-gpu"])
-        self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync"], ["general-purpose"])
+        self.check(["kernel/general-purpose.config"], ["general-purpose", "general-purpose-gpu", "general-purpose-snp"])
+        self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync"], ["general-purpose", "general-purpose-snp"])
 
     def test_shared_kernel_and_builder(self):
         for path in ("kernel/hardening.config", "kernel/trusted-dsdt.asl", "kernel/version", "mkosi/initrd/mkosi.conf", "src/commands/build.rs", "ci/images.json", ".github/actions/build-cache/action.yml"):
@@ -44,13 +44,29 @@ class SelectionTests(unittest.TestCase):
             self.check([f"mkosi/base/mkosi.profiles/{profile}/README.md"], [])
 
     def test_payload_readme_still_rebuilds(self):
-        self.check(["mkosi/base/mkosi.profiles/general-purpose/mkosi.extra/opt/README.md"], ["general-purpose", "general-purpose-gpu"])
+        self.check(["mkosi/base/mkosi.profiles/general-purpose/mkosi.extra/opt/README.md"], ["general-purpose", "general-purpose-gpu", "general-purpose-snp"])
 
     def test_deletion_and_multiple_profiles(self):
-        self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync", "kernel/general-purpose-gpu.config"], ["general-purpose", "general-purpose-gpu"])
+        self.check(["mkosi/base/mkosi.profiles/attest/mkosi.sync", "kernel/general-purpose-gpu.config"], ["general-purpose", "general-purpose-gpu", "general-purpose-snp"])
 
 
 class BuildRecipeTests(unittest.TestCase):
+    def test_snp_cpu_recipe_retains_workload_profiles_and_measures_both_cpu_counts(self):
+        tdx = RECIPES["general-purpose"]
+        snp = RECIPES["general-purpose-snp"]
+        self.assertEqual(snp["profiles"], tdx["profiles"])
+        self.assertEqual(snp["kernel"], tdx["kernel"])
+        self.assertEqual(snp["platform"], "snp")
+        self.assertEqual(snp["smp"], [2, 4])
+        with patch("sys.argv", ["build-image", "general-purpose-snp"]), patch.object(build_module.subprocess, "run") as run:
+            build_module.main()
+        command = run.call_args_list[-1].args[0]
+        self.assertEqual(command[command.index("--platform") + 1], "snp")
+        start = command.index("--smp")
+        self.assertEqual(command[start + 1:start + 3], ["2", "4"])
+        self.assertNotIn("--skip-igvm", command)
+        self.assertNotIn("--profile-dir", command)
+
     def test_only_gpu_kernel_preparation_requires_tools_on_cache_hit(self):
         for name, recipe in RECIPES.items():
             with self.subTest(recipe=name), patch("sys.argv", ["build-image", name]), patch.object(build_module.subprocess, "run") as run:
