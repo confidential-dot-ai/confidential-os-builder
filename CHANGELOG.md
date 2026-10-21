@@ -8,6 +8,15 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Security
+- `output/OVMF.fd` is rebuilt from upstream edk2 plus a fix: when the IGVM
+  carries the UKI, OVMF no longer passes the host's fw_cfg command line or
+  initrd to it (which let the host replace the measured `.cmdline`, e.g. the
+  dm-verity `roothash`), no longer boots a host fw_cfg kernel via the legacy
+  loader, and shuts down instead of falling through to the disk or the UEFI
+  Shell if the UKI returns. **Alters measurements**: every SNP launch digest
+  changes; rebuild images and re-pin.
+
 ### Added
 - `confos run --smp <N>` selects an SNP variant or sets the vCPU count on
   KVM/emulated tiers. Runner-only; measurements are unchanged.
