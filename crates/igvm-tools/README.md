@@ -33,14 +33,14 @@ Use our patched edk2 fork:
 ```bash
 git clone https://github.com/confidential-dot-ai/edk2.git
 cd edk2
-git checkout OvmfPkg-PlatformPei-skip-pvalidate-igvm-pages
+git checkout confos/igvm-measured-kernel
 git submodule update --init
 source edksetup.sh
-build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE -DSMM_REQUIRE=FALSE
-# Output: Build/OvmfX64/RELEASE_GCC5/FV/OVMF.fd
+build -a X64 -t GCC -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE -DSMM_REQUIRE=FALSE
+# Output: Build/OvmfX64/RELEASE_GCC/FV/OVMF.fd
 ```
 
-The patch adds IGVM-aware PVALIDATE handling so OVMF skips re-validation of pages already validated by the PSP during IGVM launch.
+The branch is upstream edk2 (which skips PVALIDATE for pages the PSP already validated during IGVM launch) plus a fix: when the IGVM carries the kernel, OVMF ignores the fw_cfg command line, initrd and kernel and shuts down if that kernel returns.
 
 ## Usage
 
