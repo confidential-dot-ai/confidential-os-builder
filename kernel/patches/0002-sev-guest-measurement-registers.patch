@@ -1,0 +1,300 @@
+Subject: [PATCH] virt: sev-guest: add kernel-held measurement registers
+
+SEV-SNP has no measurement registers that the guest can extend after
+launch. Keep 16 SHA-384 registers and a bounded log of their extends in
+the kernel, and commit to them in every guest-requested attestation
+report.
+
+Writing a 48-byte digest d to measurements/mrN:sha384 on the sev-guest
+misc device sets R[N] = SHA-384(R[N] || d) and appends (N, d) to the log.
+Once 4096 entries are logged, extends fail with -ENOSPC. The read-only
+binary event_log attribute returns the logged entries, 49 bytes each.
+
+snp_send_guest_request() is the one path for both report ioctls and
+configfs-tsm. For SNP_MSG_REPORT_REQ it replaces user_data with H || C,
+computed under the register lock: H is the little-endian u32 event count
+padded to 16 bytes, and
+C = SHA-384("snp-kmr-v1" || H || R[0] || ... || R[15] || user_data).
+After the request returns, whatever the outcome, it restores the
+caller's user_data, so a caller that resends the same request after
+SNP_GUEST_VMM_ERR_INVALID_LEN commits to its own bytes again. Other
+messages, including derived-key requests, pass unchanged.
+
+The registers live in arch code and are always present; SEV_GUEST
+becomes bool so the driver reaches them without exported symbols.
+
+The Linux-Version trailer names the source the hooks below were audited
+against; the builder refuses any other kernel/version until the patch is
+retargeted.
+
+Linux-Version: 6.18.49
+---
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -1501,6 +1501,7 @@
+ 	select X86_MEM_ENCRYPT
+ 	select UNACCEPTED_MEMORY
+ 	select CRYPTO_LIB_AESGCM
++	select CRYPTO_LIB_SHA512
+ 	help
+ 	  Say yes to enable support for the encryption of system memory.
+ 	  This requires an AMD processor that supports Secure Memory
+--- a/drivers/virt/coco/sev-guest/Kconfig
++++ b/drivers/virt/coco/sev-guest/Kconfig
+@@ -1,8 +1,9 @@
+ config SEV_GUEST
+-	tristate "AMD SEV Guest driver"
+-	default m
++	bool "AMD SEV Guest driver"
++	default y
+ 	depends on AMD_MEM_ENCRYPT
+ 	select TSM_REPORTS
++	select TSM_MEASUREMENTS
+ 	help
+ 	  SEV-SNP firmware provides the guest a mechanism to communicate with
+ 	  the PSP without risk from a malicious hypervisor who wishes to read,
+@@ -10,4 +11,7 @@
+ 	  userspace interface to communicate with the PSP to request the
+ 	  attestation report and more.
+ 
+-	  If you choose 'M' here, this module will be called sev-guest.
++	  The driver also exposes 16 measurement registers and their
++	  event log. Every report requested through /dev/sev-guest or
++	  configfs-tsm without an SVSM commits to them in REPORT_DATA. The
++	  registers live in arch code, so the driver is always built in.
+--- a/arch/x86/include/asm/sev.h
++++ b/arch/x86/include/asm/sev.h
+@@ -527,6 +527,12 @@
+ void snp_msg_free(struct snp_msg_desc *mdesc);
+ int snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req);
+ 
++#define SNP_MR_COUNT	16
++
++u8 *snp_mr_value(unsigned int index);
++int snp_mr_extend(unsigned int index, const u8 *digest);
++ssize_t snp_mr_read_log(char *buf, loff_t off, size_t count);
++
+ int snp_svsm_vtpm_send_command(u8 *buffer);
+ 
+ void __init snp_secure_tsc_prepare(void);
+--- a/arch/x86/coco/sev/core.c
++++ b/arch/x86/coco/sev/core.c
+@@ -26,6 +26,8 @@
+ #include <linux/dmi.h>
+ #include <uapi/linux/sev-guest.h>
+ #include <crypto/gcm.h>
++#include <crypto/sha2.h>
++#include <linux/unaligned.h>
+ 
+ #include <asm/init.h>
+ #include <asm/cpu_entry_area.h>
+@@ -2244,7 +2246,82 @@
+ 	return rc;
+ }
+ 
+-int snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req)
++/*
++ * Measurement registers. The zeroed static state is the genesis
++ * state. Logged entries never change, so the log is read without the lock
++ * once the entry count has been read under it.
++ */
++struct snp_mr_event {
++	u8 index;
++	u8 digest[SHA384_DIGEST_SIZE];
++} __packed;
++
++#define SNP_MR_LOG_MAX	4096
++
++static u8 snp_mr_regs[SNP_MR_COUNT][SHA384_DIGEST_SIZE];
++static struct snp_mr_event snp_mr_log[SNP_MR_LOG_MAX];
++static u32 snp_mr_event_count;
++static DEFINE_SPINLOCK(snp_mr_lock);
++
++#define SNP_MR_TAG "snp-kmr-v1"
++
++u8 *snp_mr_value(unsigned int index)
++{
++	return snp_mr_regs[index];
++}
++
++int snp_mr_extend(unsigned int index, const u8 *digest)
++{
++	struct sha384_ctx ctx;
++
++	guard(spinlock)(&snp_mr_lock);
++	if (snp_mr_event_count == SNP_MR_LOG_MAX)
++		return -ENOSPC;
++
++	sha384_init(&ctx);
++	sha384_update(&ctx, snp_mr_regs[index], SHA384_DIGEST_SIZE);
++	sha384_update(&ctx, digest, SHA384_DIGEST_SIZE);
++	sha384_final(&ctx, snp_mr_regs[index]);
++
++	snp_mr_log[snp_mr_event_count].index = index;
++	memcpy(snp_mr_log[snp_mr_event_count].digest, digest, SHA384_DIGEST_SIZE);
++	snp_mr_event_count++;
++	return 0;
++}
++
++ssize_t snp_mr_read_log(char *buf, loff_t off, size_t count)
++{
++	size_t size;
++
++	scoped_guard(spinlock, &snp_mr_lock)
++		size = snp_mr_event_count * sizeof(*snp_mr_log);
++
++	return memory_read_from_buffer(buf, count, &off, snp_mr_log, size);
++}
++
++/*
++ * Replace user_data with H || C, where H is the little-endian event count
++ * padded to 16 bytes and C = SHA-384(tag || H || registers || user_data).
++ */
++static void snp_mr_commit(u8 *user_data)
++{
++	struct sha384_ctx ctx;
++	u8 header[16] = {};
++
++	BUILD_BUG_ON(sizeof(header) + SHA384_DIGEST_SIZE != SNP_REPORT_USER_DATA_SIZE);
++
++	guard(spinlock)(&snp_mr_lock);
++	put_unaligned_le32(snp_mr_event_count, header);
++	sha384_init(&ctx);
++	sha384_update(&ctx, SNP_MR_TAG, strlen(SNP_MR_TAG));
++	sha384_update(&ctx, header, sizeof(header));
++	sha384_update(&ctx, &snp_mr_regs[0][0], sizeof(snp_mr_regs));
++	sha384_update(&ctx, user_data, SNP_REPORT_USER_DATA_SIZE);
++	sha384_final(&ctx, user_data + sizeof(header));
++	memcpy(user_data, header, sizeof(header));
++}
++
++static int __snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req)
+ {
+ 	u64 seqno;
+ 	int rc;
+@@ -2312,6 +2389,31 @@
+ 
+ 	return 0;
+ }
++
++/*
++ * Report requests carry H || C in place of the caller's user_data. The
++ * caller's request is restored afterwards, whatever the outcome, so a
++ * caller that resends it (as after SNP_GUEST_VMM_ERR_INVALID_LEN) commits
++ * to its own bytes again.
++ */
++int snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req)
++{
++	struct snp_report_req *report_req = req->req_buf;
++	u8 user_data[SNP_REPORT_USER_DATA_SIZE];
++	int rc;
++
++	if (req->msg_type != SNP_MSG_REPORT_REQ)
++		return __snp_send_guest_request(mdesc, req);
++
++	if (req->req_sz != sizeof(*report_req))
++		return -EINVAL;
++
++	memcpy(user_data, report_req->user_data, sizeof(user_data));
++	snp_mr_commit(report_req->user_data);
++	rc = __snp_send_guest_request(mdesc, req);
++	memcpy(report_req->user_data, user_data, sizeof(user_data));
++	return rc;
++}
+ EXPORT_SYMBOL_GPL(snp_send_guest_request);
+ 
+ static int __init snp_get_tsc_info(void)
+--- a/drivers/virt/coco/sev-guest/sev-guest.c
++++ b/drivers/virt/coco/sev-guest/sev-guest.c
+@@ -17,6 +17,7 @@
+ #include <linux/set_memory.h>
+ #include <linux/fs.h>
+ #include <linux/tsm.h>
++#include <linux/tsm-mr.h>
+ #include <crypto/gcm.h>
+ #include <linux/psp-sev.h>
+ #include <linux/sockptr.h>
+@@ -619,6 +620,60 @@
+ 	.report_bin_attr_visible = sev_report_bin_attr_visible,
+ };
+ 
++#define SNP_MR_(n) { TSM_MR_(mr##n, SHA384) | TSM_MR_F_WRITABLE }
++static struct tsm_measurement_register snp_mrs[SNP_MR_COUNT] = {
++	SNP_MR_(0), SNP_MR_(1), SNP_MR_(2), SNP_MR_(3),
++	SNP_MR_(4), SNP_MR_(5), SNP_MR_(6), SNP_MR_(7),
++	SNP_MR_(8), SNP_MR_(9), SNP_MR_(10), SNP_MR_(11),
++	SNP_MR_(12), SNP_MR_(13), SNP_MR_(14), SNP_MR_(15),
++};
++#undef SNP_MR_
++
++static int snp_mr_write(const struct tsm_measurements *tm,
++			const struct tsm_measurement_register *mr, const u8 *data)
++{
++	return snp_mr_extend(mr - tm->mrs, data);
++}
++
++static const struct tsm_measurements snp_measurements = {
++	.mrs = snp_mrs,
++	.nr_mrs = ARRAY_SIZE(snp_mrs),
++	.write = snp_mr_write,
++};
++
++static ssize_t event_log_read(struct file *filp, struct kobject *kobj,
++			      const struct bin_attribute *attr, char *buf,
++			      loff_t off, size_t count)
++{
++	return snp_mr_read_log(buf, off, count);
++}
++static const BIN_ATTR_RO(event_log, 0);
++
++static const struct bin_attribute *const snp_event_log_attrs[] = {
++	&bin_attr_event_log,
++	NULL,
++};
++
++static const struct attribute_group snp_event_log_group = {
++	.bin_attrs = snp_event_log_attrs,
++};
++
++static const struct attribute_group *snp_attr_groups[3];
++
++static int snp_mr_init(struct miscdevice *misc)
++{
++	for (size_t i = 0; i < ARRAY_SIZE(snp_mrs); i++)
++		snp_mrs[i].mr_value = snp_mr_value(i);
++
++	snp_attr_groups[0] = tsm_mr_create_attribute_group(&snp_measurements);
++	if (IS_ERR(snp_attr_groups[0]))
++		return PTR_ERR(snp_attr_groups[0]);
++
++	snp_attr_groups[1] = &snp_event_log_group;
++	misc->groups = snp_attr_groups;
++	return 0;
++}
++
+ static void unregister_sev_tsm(void *data)
+ {
+ 	tsm_report_unregister(&sev_tsm_report_ops);
+@@ -668,15 +723,21 @@
+ 	if (ret)
+ 		goto e_msg_init;
+ 
+-	ret =  misc_register(misc);
++	ret = snp_mr_init(misc);
+ 	if (ret)
+ 		goto e_msg_init;
+ 
++	ret =  misc_register(misc);
++	if (ret)
++		goto e_mr;
++
+ 	snp_dev->msg_desc = mdesc;
+ 	dev_info(dev, "Initialized SEV guest driver (using VMPCK%d communication key)\n",
+ 		 mdesc->vmpck_id);
+ 	return 0;
+ 
++e_mr:
++	tsm_mr_free_attribute_group(snp_attr_groups[0]);
+ e_msg_init:
+ 	snp_msg_free(mdesc);
+ 

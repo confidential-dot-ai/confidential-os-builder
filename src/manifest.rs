@@ -125,6 +125,10 @@ pub struct KernelInputs {
     /// SHA-256 of the version-specific kernel enforcement patch. Required for
     /// the same reason.
     pub trusted_aml_patch_sha256: String,
+    /// SHA-256 of the SEV-SNP measurement register patch. Absent for
+    /// kernels built before the patch, which have no measurement registers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snp_mr_patch_sha256: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -205,6 +209,7 @@ mod tests {
             "snapshot_config_sha256": "d",
             "trusted_dsdt_sha256": "e",
             "trusted_aml_patch_sha256": "f",
+            "snp_mr_patch_sha256": "g",
         });
         serde_json::from_value::<KernelInputs>(gated.clone()).unwrap();
         for missing in ["trusted_dsdt_sha256", "trusted_aml_patch_sha256"] {
@@ -215,5 +220,29 @@ mod tests {
                 "accepted a manifest without {missing}"
             );
         }
+    }
+
+    #[test]
+    fn kernel_inputs_read_manifests_from_before_the_snp_mr_patch() {
+        let mut inputs = serde_json::json!({
+            "linux_version": "6.18.49",
+            "vmlinuz_sha256": "a",
+            "required_config_sha256": "b",
+            "hardening_config_sha256": "c",
+            "snapshot_config_sha256": "d",
+            "trusted_dsdt_sha256": "e",
+            "trusted_aml_patch_sha256": "f",
+        });
+        let old: KernelInputs = serde_json::from_value(inputs.clone()).unwrap();
+        assert_eq!(old.snp_mr_patch_sha256, None);
+        // `confos igvm` rewrites the manifest it read; an old one stays without the field.
+        let rewritten = serde_json::to_value(&old).unwrap();
+        assert!(rewritten.get("snp_mr_patch_sha256").is_none());
+
+        inputs["snp_mr_patch_sha256"] = "g".into();
+        let new: KernelInputs = serde_json::from_value(inputs).unwrap();
+        assert_eq!(new.snp_mr_patch_sha256.as_deref(), Some("g"));
+        let rewritten = serde_json::to_value(&new).unwrap();
+        assert_eq!(rewritten["snp_mr_patch_sha256"], "g");
     }
 }
