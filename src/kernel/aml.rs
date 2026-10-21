@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use super::config;
 
@@ -50,7 +50,7 @@ const FORBIDDEN: [&str; 4] = [
 /// exactly one home.
 pub fn verify_version(patch_path: &str, version: &str) -> Result<()> {
     let patch = fs_err::read_to_string(patch_path)?;
-    let supported = supported_version(&patch)?;
+    let supported = supported_version(&patch).with_context(|| patch_path.to_owned())?;
     if version != supported {
         bail!(
             "{patch_path} supports Linux {supported}, got {version}; re-audit the patch's \
@@ -156,7 +156,7 @@ mod tests {
         let version =
             crate::kernel::version::KernelVersion::read(Path::new("kernel/version")).unwrap();
         let pinned = version.linux_version;
-        for patch in [PATCH, crate::kernel::snp_mr::PATCH] {
+        for patch in crate::kernel::PATCHES {
             verify_version(patch, &pinned).unwrap();
             for other in [
                 "6.16.12",

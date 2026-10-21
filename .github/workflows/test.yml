@@ -112,6 +112,15 @@ jobs:
                   for patch in kernel/patches/*.patch; do
                       "output/acpi/linux-${LINUX_VERSION}/scripts/checkpatch.pl" --no-tree --no-signoff - < "$patch"
                   done
+            - name: Check every kernel patch is applied in the prepared source
+              # Reverting cleanly proves the tree the builder compiles carries each
+              # patch. --force, not --batch: --batch would treat a missing patch
+              # as "reversed" and apply it forward, passing on an unpatched tree.
+              run: |
+                  . kernel/version
+                  for patch in kernel/patches/*.patch; do
+                      patch -R --dry-run --force --fuzz=0 -p1 -d "output/acpi/linux-${LINUX_VERSION}" < "$patch"
+                  done
             - name: Boot control and enforcing kernels
               run: tests/acpi/run.sh --jobs 4
             - name: Upload AML test evidence
