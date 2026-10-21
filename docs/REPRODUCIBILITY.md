@@ -38,6 +38,7 @@ We use several techniques to ensure the results of our builds are reproducible, 
 | `SourceDateEpoch` | `0` | Clamps all file mtimes to epoch 0 |
 | `Seed` | `d4f09d27-7e4e-4b1a-9c3a-deadbeef0001` | Deterministic partition UUIDs, verity salt, GPT metadata |
 | `EnvironmentFiles` | `mkosi.env` | Passes env vars to systemd-repart sandbox |
+| `ExtraSearchPaths` | `repart-bin` | Sorted `mcopy` wrapper, so the ESP bytes do not depend on the build host's directory order (systemd-repart < 262 copies subdirectories in `readdir()` order; upstream fix f191ca982c) |
 
 ### mkosi.env
 
