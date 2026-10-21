@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# confos-fetch-gpu — build + sign the NVIDIA kernel modules and stage the
-# GPU userspace into mkosi.local/ for the `gpu` profile.
+# confos-fetch-gpu — build + sign the NVIDIA kernel modules, stage the GPU
+# userspace, and build the gpu-metrics exporter into mkosi.local/ for the
+# `gpu` profile.
 #
 # Runs on the HOST, AFTER `confos kernel --kernel-config-fragment kernel/gpu.config`
 # and BEFORE `confos build ... --profile gpu`. The `build-gpu` Make target
@@ -308,4 +309,35 @@ for b in nvidia-ctk nvidia-cdi-hook; do
 done
 rm -rf "$WORK/tk"
 
-log "confos-fetch-gpu done — modules + userspace staged under $STAGE"
+# =============================================================================
+# Part 4: build the gpu-metrics exporter (crates/gpu-metrics)
+# =============================================================================
+# gpu-metrics.service (gpu profile) serves NVML readings on :9400/metrics. It is
+# built here from this checkout's Cargo.lock, not fetched, so the measured
+# root carries exactly the reviewed source. The bytes must not depend on the
+# runner: a fixed flag set replaces whatever RUSTFLAGS the caller exported
+# (CI's toolchain action sets -D warnings), the checkout and cargo home are
+# remapped out of panic locations, symbols are stripped, and a private target
+# dir keeps these flags from invalidating the confos build cache.
+log "Building gpu-metrics (release, --locked)"
+command -v cargo >/dev/null || source "$HOME/.cargo/env"
+GM_TARGET_DIR="$DIR/output/gpu/gpu-metrics-target"
+GM_TRIPLE="x86_64-unknown-linux-gnu"
+gm_rustflags=(
+  "--remap-path-prefix=$DIR=/confos"
+  "--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
+  "-Cdebuginfo=0"
+)
+# CARGO_ENCODED_RUSTFLAGS outranks every other rustflags source in cargo.
+env -u RUSTFLAGS \
+  SOURCE_DATE_EPOCH=0 \
+  CARGO_INCREMENTAL=0 \
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+  CARGO_PROFILE_RELEASE_STRIP=symbols \
+  CARGO_ENCODED_RUSTFLAGS="$(IFS=$'\x1f'; printf '%s' "${gm_rustflags[*]}")" \
+  cargo build --release --locked -p gpu-metrics \
+    --target "$GM_TRIPLE" --target-dir "$GM_TARGET_DIR"
+install -D -m0755 "$GM_TARGET_DIR/$GM_TRIPLE/release/gpu-metrics" "$STAGE/usr/local/bin/gpu-metrics"
+echo "  staged: $STAGE/usr/local/bin/gpu-metrics ($(sha256sum "$STAGE/usr/local/bin/gpu-metrics" | cut -d' ' -f1))"
+
+log "confos-fetch-gpu done — modules + userspace + gpu-metrics staged under $STAGE"

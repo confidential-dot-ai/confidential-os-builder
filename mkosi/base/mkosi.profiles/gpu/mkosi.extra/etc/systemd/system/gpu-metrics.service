@@ -1,0 +1,59 @@
+[Unit]
+Description=NVIDIA GPU metrics for Prometheus (NVML, port 9400)
+# Read-only NVML client; see docs/GPU-CC-OPERATIONS.md "GPU metrics".
+#
+# Start only once persistenced holds every GPU's CC session and the Ready
+# gate has run: an NVML client that attaches earlier can tear down a
+# not-yet-held session (the same reason SSH waits for nvidia-cc-ready in
+# general-purpose-gpu). Ordering only: no Wants=/Requires=, so this unit never
+# pulls in or stops the bring-up chain, and nothing waits on it — Type=exec
+# returns as soon as the binary runs, so boot and SSH are not delayed. On a
+# GPU-less boot both units are skipped/no-ops and the exporter serves
+# gpu_metrics_nvml_up 0.
+After=nvidia-persistenced.service nvidia-cc-ready.service
+
+[Service]
+Type=exec
+# Binds [::]:9400 (dual-stack), or 0.0.0.0:9400 if IPv6 is unavailable.
+ExecStart=/usr/local/bin/gpu-metrics
+Restart=always
+RestartSec=5
+
+# Unprivileged. The driver creates /dev/nvidiactl and /dev/nvidiaN with its
+# default NVreg_DeviceFileMode=0666 (the image sets no NVreg_DeviceFile*
+# override), so a dynamic user can open them; NVML needs no other device.
+DynamicUser=yes
+DevicePolicy=closed
+DeviceAllow=/dev/nvidiactl rw
+# Per-GPU nodes are major 195, registered as "nvidia" in /proc/devices.
+DeviceAllow=char-nvidia rw
+# NoNewPrivileges also stops NVML from exec'ing the setuid nvidia-modprobe:
+# persistenced has already created every node this needs.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+# vsock fence: only attestation-api may use AF_VSOCK (see kernel/gpu.config).
+# UNIX for NVML <-> persistenced, INET/INET6 for the scrape endpoint.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

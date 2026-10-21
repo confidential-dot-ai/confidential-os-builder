@@ -12,6 +12,8 @@ launches a VM or publishes an image.
   An unused development profile does not rebuild production images.
 - A recipe-specific kernel fragment selects its consumers; shared CPU/GPU
   policy changes select both general-purpose images.
+- GPU staging inputs (`bin/confos-fetch-gpu`, its module-cache helper and the
+  `crates/gpu-metrics` exporter it builds) select only GPU recipes.
 - Base/initrd/kernel-tools, shared hardening, kernel pins/patches, builder,
   firmware, recipe registry and shared CI actions select all recipes.
 - Documentation-only edits select none. A missing/zero previous Git object

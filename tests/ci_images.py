@@ -23,7 +23,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(module.affected(RECIPES, paths), sorted(expected))
 
     def test_gpu_only_profile_and_kernel_changes(self):
-        for path in ("mkosi/base/mkosi.profiles/general-purpose-gpu/mkosi.conf", "kernel/general-purpose-gpu.config", "kernel/gpu.config", "bin/confos-fetch-gpu", "bin/lib/gpu-module-cache.sh", "kernel/config-x86_64-general-purpose-gpu.snapshot"):
+        for path in ("mkosi/base/mkosi.profiles/general-purpose-gpu/mkosi.conf", "kernel/general-purpose-gpu.config", "kernel/gpu.config", "bin/confos-fetch-gpu", "bin/lib/gpu-module-cache.sh", "crates/gpu-metrics/src/main.rs", "kernel/config-x86_64-general-purpose-gpu.snapshot"):
             self.check([path], ["general-purpose-gpu"])
 
     def test_shared_workload_and_ssh(self):
