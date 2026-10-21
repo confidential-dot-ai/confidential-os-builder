@@ -4,9 +4,11 @@
 # before". This builds the base image TWICE and requires every measured value
 # to match, mirroring the node-image gate in c8s (c8s#264).
 #
-# Scope: the legs share a runner image and caches, so this proves the build is
-# deterministic across two runs of the SAME inputs — not across time or across
-# differing hosts. Cross-host reproduction remains a manual exercise.
+# Scope: both legs build the SAME inputs, but they may land on different
+# GitHub runner image versions with different caches, so the gate is partly a
+# cross-host check (keep it that way). It does not prove reproduction across
+# time. Each leg also uploads `partitions` (sfdisk dump + one sha256 per
+# partition), so a disk-image mismatch names the partition that differs.
 #
 # Fork PRs are exempt (secrets/self-hosted posture matches base.yml); the
 # post-merge push build stays the publication path.
@@ -118,8 +120,8 @@ jobs:
               m = json.load(open(f"{d}/manifest.json"))
               # The report timestamp is metadata, not a baked byte.
               m.get("build", {}).pop("timestamp", None)
-              legs[leg] = (m, open(f"{d}/roothash").read().strip())
-          (ma, ra), (mb, rb) = legs["a"], legs["b"]
+              legs[leg] = (m, open(f"{d}/roothash").read().strip(), open(f"{d}/partitions").read().splitlines())
+          (ma, ra, pa), (mb, rb, pb) = legs["a"], legs["b"]
           fail = ma != mb or ra != rb
           lines = ["### base image repro gate", "", "| field | verdict |", "|---|---|",
                    f"| manifest (sans timestamp) | {'identical' if ma == mb else '**DIFFERS**'} |",
@@ -131,6 +133,10 @@ jobs:
                   print(f"manifest delta: {line.strip()}", file=sys.stderr)
           if ra != rb:
               print(f"roothash delta: a={ra} b={rb}", file=sys.stderr)
+          for leg, mine, other in (("a", pa, pb), ("b", pb, pa)):
+              for line in mine:
+                  if line not in other:
+                      print(f"partition delta ({leg}): {line}", file=sys.stderr)
           open(os.environ["GITHUB_STEP_SUMMARY"], "a").write("\n".join(lines) + "\n")
           sys.exit(1 if fail else 0)
           EOF
