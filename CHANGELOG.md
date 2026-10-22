@@ -43,6 +43,11 @@ build configs, since those invalidate published reference values.
   directories and explicit mkosi output paths; keep final image assembly fresh.
 
 ### Fixed
+- **Changes measurements.** The initrd matches the `confai-scratch` serial over
+  every attached virtio disk except the image disk, instead of only
+  `/dev/vdb`-`/dev/vdd`, so a scratch disk that enumerates behind the other
+  launch disks still backs the writable state. Rebuild images and approve new
+  reference values (every SNP launch digest, TDX RTMR[1] and RTMR[2]).
 - Preserve the empty extra-package field when checking compiler-tool cache
   stamps, so restored tools are reused by ordinary builds.
 - Honor an explicitly staged registry-auth file when fetching CPU attestation

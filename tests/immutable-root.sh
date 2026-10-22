@@ -42,8 +42,10 @@ done
 if [ -d /usr/lib64 ]; then
     ln -s usr/lib64 "$fixture_root/lib64"
 fi
-touch "$fixture_root/confos-test-root" "$fixture_root/dev/null" "$fixture_root/dev/vda2"
+touch "$fixture_root/confos-test-root" "$fixture_root/dev/null" \
+    "$fixture_root/dev/urandom" "$fixture_root/dev/vda2"
 mount --bind /dev/null "$fixture_root/dev/null"
+mount --bind /dev/urandom "$fixture_root/dev/urandom"
 printf 'roothash=%064d\n' 0 > "$fixture_root/proc/cmdline"
 printf '0.00 0.00\n' > "$fixture_root/proc/uptime"
 # A malformed test boot must never write the real host's sysrq-trigger.
@@ -80,9 +82,19 @@ case "$*" in
     "-o ro /dev/mapper/root /sysroot")
         /usr/bin/mount --bind /image /sysroot
         exec /usr/bin/mount -o remount,bind,ro /sysroot ;;
+    "/dev/mapper/scratch /state")
+        exec /usr/bin/mount -t tmpfs tmpfs /state ;;
     *)
         exec /usr/bin/mount "$@" ;;
 esac
+SHIM
+cat > "$fixture_root/usr/sbin/cryptsetup" <<'SHIM'
+#!/bin/bash
+printf '%s\n' "$*" >> /cryptsetup-calls
+SHIM
+cat > "$fixture_root/usr/sbin/mkfs.ext4" <<'SHIM'
+#!/bin/bash
+exit 0
 SHIM
 cat > "$fixture_root/usr/sbin/switch_root" <<'SHIM'
 #!/bin/bash
