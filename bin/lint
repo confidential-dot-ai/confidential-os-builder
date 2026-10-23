@@ -4,7 +4,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 set -x
 cargo fmt --all
-cargo clippy --all-targets "$@" -- -D warnings
+cargo clippy --workspace --all-targets "$@" -- -D warnings
 set +x
 
 # The c8s profile's lint checks (fragment supersets, NRI floor template,

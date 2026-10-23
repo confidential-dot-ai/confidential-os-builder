@@ -18,6 +18,10 @@ build configs, since those invalidate published reference values.
   changes; rebuild images and re-pin.
 
 ### Added
+- The `gpu` profile serves NVML GPU metrics in Prometheus text format on TCP
+  9400 (`GET /metrics`, dcgm-exporter metric names) from boot, via the new
+  `crates/gpu-metrics` exporter that `bin/confos-fetch-gpu` builds into the
+  measured root. **Alters measurements** of every `gpu` image.
 - `confos run --smp <N>` selects an SNP variant or sets the vCPU count on
   KVM/emulated tiers. Runner-only; measurements are unchanged.
 - Repeatable `confos run --cdrom <ISO>` attaches read-only launch media.

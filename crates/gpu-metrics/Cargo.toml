@@ -1,0 +1,22 @@
+[package]
+name = "gpu-metrics"
+version = "0.1.0"
+edition = "2021"
+description = "Serve NVIDIA GPU metrics from NVML in Prometheus text format"
+license = "AGPL-3.0-only"
+repository = "https://github.com/confidential-dot-ai/confidential-os-builder"
+# Baked into the gpu image by bin/confos-fetch-gpu; not a crates.io or
+# GitHub-release artifact.
+publish = false
+
+[package.metadata.dist]
+dist = false
+
+[[bin]]
+name = "gpu-metrics"
+path = "src/main.rs"
+
+[dependencies]
+# dlopen/dlsym for libnvidia-ml.so.1. NVML is loaded at runtime, so the
+# binary builds and runs (reporting NVML down) without the NVIDIA driver.
+libc = "0.2"
