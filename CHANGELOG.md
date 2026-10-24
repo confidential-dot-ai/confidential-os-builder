@@ -18,6 +18,15 @@ build configs, since those invalidate published reference values.
   changes; rebuild images and re-pin.
 
 ### Added
+- **Changes measurements.** `snp_measurement_registers=off` on the kernel
+  command line turns the SEV-SNP measurement-register commitment off: reports
+  carry the caller's `REPORT_DATA` unchanged, `measurements/` and `event_log`
+  are not exposed, and extends fail. Default on; confos images are unchanged.
+  It is for consumers whose verifiers do not check the commitment yet, and is
+  read-only under `/sys/module/kernel/parameters/`. The command line is part
+  of the measured launch state, so the choice shows in the launch digest. The
+  patch changes, so every SNP launch digest changes; rebuild images and
+  re-pin.
 - `confos run --smp <N>` selects an SNP variant or sets the vCPU count on
   KVM/emulated tiers. Runner-only; measurements are unchanged.
 - Repeatable `confos run --cdrom <ISO>` attaches read-only launch media.

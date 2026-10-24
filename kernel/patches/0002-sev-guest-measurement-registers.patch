@@ -20,6 +20,13 @@ caller's user_data, so a caller that resends the same request after
 SNP_GUEST_VMM_ERR_INVALID_LEN commits to its own bytes again. Other
 messages, including derived-key requests, pass unchanged.
 
+snp_measurement_registers=off on the kernel command line turns the
+commitment off for guests whose verifiers do not check it yet: report
+requests pass unchanged, the measurements/ group and event_log are not
+created, and extends fail with -ENODEV. The parameter is read-only under
+/sys/module/kernel/parameters/. The command line is part of the measured
+launch state, so the choice shows in the launch digest, not in the report.
+
 The registers live in arch code and are always present; SEV_GUEST
 becomes bool so the driver reaches them without exported symbols.
 
@@ -53,23 +60,26 @@ Linux-Version: 6.18.49
  	help
  	  SEV-SNP firmware provides the guest a mechanism to communicate with
  	  the PSP without risk from a malicious hypervisor who wishes to read,
-@@ -10,4 +11,7 @@
+@@ -10,4 +11,9 @@
  	  userspace interface to communicate with the PSP to request the
  	  attestation report and more.
  
 -	  If you choose 'M' here, this module will be called sev-guest.
 +	  The driver also exposes 16 measurement registers and their
 +	  event log. Every report requested through /dev/sev-guest or
-+	  configfs-tsm without an SVSM commits to them in REPORT_DATA. The
++	  configfs-tsm without an SVSM commits to them in REPORT_DATA,
++	  unless the kernel command line says snp_measurement_registers=off,
++	  which also leaves the registers and the log unexposed. The
 +	  registers live in arch code, so the driver is always built in.
 --- a/arch/x86/include/asm/sev.h
 +++ b/arch/x86/include/asm/sev.h
-@@ -527,6 +527,12 @@
+@@ -527,6 +527,13 @@
  void snp_msg_free(struct snp_msg_desc *mdesc);
  int snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req);
  
 +#define SNP_MR_COUNT	16
 +
++bool snp_mr_active(void);
 +u8 *snp_mr_value(unsigned int index);
 +int snp_mr_extend(unsigned int index, const u8 *digest);
 +ssize_t snp_mr_read_log(char *buf, loff_t off, size_t count);
@@ -79,16 +89,17 @@ Linux-Version: 6.18.49
  void __init snp_secure_tsc_prepare(void);
 --- a/arch/x86/coco/sev/core.c
 +++ b/arch/x86/coco/sev/core.c
-@@ -26,6 +26,8 @@
+@@ -26,6 +26,9 @@
  #include <linux/dmi.h>
  #include <uapi/linux/sev-guest.h>
  #include <crypto/gcm.h>
 +#include <crypto/sha2.h>
++#include <linux/moduleparam.h>
 +#include <linux/unaligned.h>
  
  #include <asm/init.h>
  #include <asm/cpu_entry_area.h>
-@@ -2244,7 +2246,82 @@
+@@ -2244,7 +2247,100 @@
  	return rc;
  }
  
@@ -112,6 +123,21 @@ Linux-Version: 6.18.49
 +
 +#define SNP_MR_TAG "snp-kmr-v1"
 +
++/*
++ * snp_measurement_registers=off on the kernel command line makes report
++ * requests carry the caller's user_data unchanged and leaves the registers
++ * unreachable, for guests whose verifiers do not check the commitment yet.
++ * The command line is part of the measured launch state, so a verifier
++ * reads the choice off the launch digest, not off the report.
++ */
++static bool snp_mr_enabled = true;
++core_param(snp_measurement_registers, snp_mr_enabled, bool, 0444);
++
++bool snp_mr_active(void)
++{
++	return snp_mr_enabled;
++}
++
 +u8 *snp_mr_value(unsigned int index)
 +{
 +	return snp_mr_regs[index];
@@ -120,6 +146,9 @@ Linux-Version: 6.18.49
 +int snp_mr_extend(unsigned int index, const u8 *digest)
 +{
 +	struct sha384_ctx ctx;
++
++	if (!snp_mr_enabled)
++		return -ENODEV;
 +
 +	guard(spinlock)(&snp_mr_lock);
 +	if (snp_mr_event_count == SNP_MR_LOG_MAX)
@@ -172,16 +201,16 @@ Linux-Version: 6.18.49
  {
  	u64 seqno;
  	int rc;
-@@ -2312,6 +2389,31 @@
+@@ -2312,6 +2408,31 @@
  
  	return 0;
  }
 +
 +/*
-+ * Report requests carry H || C in place of the caller's user_data. The
-+ * caller's request is restored afterwards, whatever the outcome, so a
-+ * caller that resends it (as after SNP_GUEST_VMM_ERR_INVALID_LEN) commits
-+ * to its own bytes again.
++ * Report requests carry H || C in place of the caller's user_data, unless
++ * the registers are off. The caller's request is restored afterwards,
++ * whatever the outcome, so a caller that resends it (as after
++ * SNP_GUEST_VMM_ERR_INVALID_LEN) commits to its own bytes again.
 + */
 +int snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req)
 +{
@@ -189,7 +218,7 @@ Linux-Version: 6.18.49
 +	u8 user_data[SNP_REPORT_USER_DATA_SIZE];
 +	int rc;
 +
-+	if (req->msg_type != SNP_MSG_REPORT_REQ)
++	if (req->msg_type != SNP_MSG_REPORT_REQ || !snp_mr_enabled)
 +		return __snp_send_guest_request(mdesc, req);
 +
 +	if (req->req_sz != sizeof(*report_req))
@@ -214,7 +243,7 @@ Linux-Version: 6.18.49
  #include <crypto/gcm.h>
  #include <linux/psp-sev.h>
  #include <linux/sockptr.h>
-@@ -619,6 +620,60 @@
+@@ -619,6 +620,64 @@
  	.report_bin_attr_visible = sev_report_bin_attr_visible,
  };
  
@@ -260,6 +289,10 @@ Linux-Version: 6.18.49
 +
 +static int snp_mr_init(struct miscdevice *misc)
 +{
++	/* Off: no measurements/ group and no event_log, so nothing to mislead. */
++	if (!snp_mr_active())
++		return 0;
++
 +	for (size_t i = 0; i < ARRAY_SIZE(snp_mrs); i++)
 +		snp_mrs[i].mr_value = snp_mr_value(i);
 +
@@ -275,7 +308,7 @@ Linux-Version: 6.18.49
  static void unregister_sev_tsm(void *data)
  {
  	tsm_report_unregister(&sev_tsm_report_ops);
-@@ -668,15 +723,21 @@
+@@ -668,15 +727,22 @@
  	if (ret)
  		goto e_msg_init;
  
@@ -294,7 +327,8 @@ Linux-Version: 6.18.49
  	return 0;
  
 +e_mr:
-+	tsm_mr_free_attribute_group(snp_attr_groups[0]);
++	if (snp_attr_groups[0])
++		tsm_mr_free_attribute_group(snp_attr_groups[0]);
  e_msg_init:
  	snp_msg_free(mdesc);
  
