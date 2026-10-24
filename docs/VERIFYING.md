@@ -99,7 +99,10 @@ snpguest fetch vcek pem ./certs report.bin
 snpguest verify certs ./certs
 snpguest verify attestation ./certs report.bin
 
-# 3. Check the nonce round-tripped (REPORT_DATA == your request.bin)
+# 3. Check the nonce round-tripped. The kernel commits its measurement
+#    registers into REPORT_DATA (see below); only with
+#    snp_measurement_registers=off in the measured cmdline is
+#    REPORT_DATA == your request.bin
 # 4. Compare the measurement against the manifest
 snpguest display report report.bin | grep -A2 "Measurement"
 jq -r '.snp_variants[] | select(.smp == 4) | .measurement.snp_launch_digest' manifest.json
@@ -113,6 +116,25 @@ Also inspect the report's **policy** field (debug bit must be off for
 production) and **platform info** (verify TSME/SMT state matches your
 requirements). A correct measurement with `DEBUG=1` in the policy is not a
 trustworthy guest.
+
+#### SEV-SNP measurement registers
+
+The guest kernel keeps sixteen SHA-384 measurement registers and a log of
+every extend, exposed at `/sys/class/misc/sev-guest/measurements/mrN:sha384`
+and `event_log` (49-byte entries: `u8 index ‖ 48-byte digest`). Every report
+it requests carries, in place of the caller's 64 bytes,
+`H ‖ SHA-384("snp-kmr-v1" ‖ H ‖ R[0] ‖ … ‖ R[15] ‖ caller_data)`, where `H` is
+the little-endian `u32` event count padded to 16 bytes. A verifier replays the
+first `H` entries of the log from zero registers, recomputes the hash with its
+own nonce, and compares. Registers start at zero and extend as
+`R[i] = SHA-384(R[i] ‖ d)`.
+
+An image whose verifiers do not check the commitment yet sets
+`KernelCommandLine=snp_measurement_registers=off` in its profile (mkosi
+appends it to the base command line). Reports then carry the caller's bytes
+unchanged and the sysfs files are absent. The switch is part of the measured
+UKI `.cmdline`, so read it from the UKI you approved, not from the report:
+the two `REPORT_DATA` forms are indistinguishable on their own.
 
 ### Intel TDX
 
@@ -327,6 +349,7 @@ For a production deployment, all of these should hold:
 - [ ] Measurement matches the manifest (correct `smp` variant on SNP)
 - [ ] Debug policy bits are off
 - [ ] Image was **not** built with `--profile dev` (its marker in the measured cmdline: `console=ttyS0`)
+- [ ] The measured cmdline carries `snp_measurement_registers=off` only if your verifier expects a plain `REPORT_DATA`
 - [ ] Approved artifacts include the mandatory trusted-AML kernel policy
 - [ ] Consumer kernel/image rebuild and supported-topology acceptance are complete
 - [ ] As a local diagnostic, `dmesg` shows `ACPI: Trusted AML: built-in DSDT loaded`

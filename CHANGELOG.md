@@ -18,15 +18,20 @@ build configs, since those invalidate published reference values.
   changes; rebuild images and re-pin.
 
 ### Added
+- **Changes measurements.** The SEV-SNP guest kernel keeps sixteen SHA-384
+  measurement registers and an event log (`/sys/class/misc/sev-guest/measurements/`,
+  `event_log`) and commits to them in every report's `REPORT_DATA`:
+  `H ‖ SHA-384("snp-kmr-v1" ‖ H ‖ R[0..15] ‖ caller_data)`, `H` the event
+  count. Verifiers that compare `REPORT_DATA` to the caller's bytes must adopt
+  the commitment or set the switch below. Every SNP launch digest changes;
+  rebuild images and re-pin. See [docs/VERIFYING.md](docs/VERIFYING.md#sev-snp-measurement-registers).
 - **Changes measurements.** `snp_measurement_registers=off` on the kernel
-  command line turns the SEV-SNP measurement-register commitment off: reports
-  carry the caller's `REPORT_DATA` unchanged, `measurements/` and `event_log`
-  are not exposed, and extends fail. Default on; confos images are unchanged.
-  It is for consumers whose verifiers do not check the commitment yet, and is
-  read-only under `/sys/module/kernel/parameters/`. The command line is part
-  of the measured launch state, so the choice shows in the launch digest. The
-  patch changes, so every SNP launch digest changes; rebuild images and
-  re-pin.
+  command line turns that commitment off for consumers whose verifiers do not
+  check it yet: reports carry `REPORT_DATA` unchanged and `measurements/` and
+  `event_log` are not exposed. Set it in a profile's `KernelCommandLine=`
+  (mkosi appends to the base command line); it then shows in the measured
+  UKI. Default on, so confos behaviour is unchanged, but the patch changes:
+  every SNP launch digest changes; rebuild images and re-pin.
 - `confos run --smp <N>` selects an SNP variant or sets the vCPU count on
   KVM/emulated tiers. Runner-only; measurements are unchanged.
 - Repeatable `confos run --cdrom <ISO>` attaches read-only launch media.
