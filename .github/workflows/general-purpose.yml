@@ -24,6 +24,7 @@ on:
       - firmware/**
       - tests/image_profiles.py
       - tests/general_purpose_attest.py
+      - tests/general_purpose_oci_workload.py
       - tests/ci_images.py
       - tests/gpu_module_cache.py
       - mkosi/**
@@ -72,6 +73,7 @@ jobs:
         run: |
           python3 tests/image_profiles.py
           python3 tests/general_purpose_attest.py
+          python3 tests/general_purpose_oci_workload.py
           python3 tests/ci_images.py
           python3 tests/gpu_module_cache.py
           python3 tests/host_deps.py
