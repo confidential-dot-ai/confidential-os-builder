@@ -8,6 +8,15 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Fixed
+- `output/OVMF.fd` is rebuilt with a `VirtioSerialDxe` fix: the driver tested
+  the ring mapping with the condition inverted and never unmapped it, so when
+  the console was stopped `IoMmuDxe` still held a mapping onto a freed bounce
+  buffer and copied into it at ExitBootServices. On SEV-SNP guests with a
+  virtio console this corrupted the DXE memory map and the RELEASE firmware
+  died with `#UD` in `CoreFindFreePagesI` before the kernel ran. **Alters
+  measurements**: every SNP launch digest changes; rebuild images and re-pin.
+
 ### Security
 - `output/OVMF.fd` is rebuilt from upstream edk2 plus a fix: when the IGVM
   carries the UKI, OVMF no longer passes the host's fw_cfg command line or
