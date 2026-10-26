@@ -1,0 +1,16 @@
+[Unit]
+Description=ConfOS local NVIDIA DCGM exporter
+Requires=docker.service nvidia-cc-ready.service
+After=docker.service nvidia-cc-ready.service nvidia-cdi-generate.service
+Wants=nvidia-cdi-generate.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStartPre=-/usr/bin/docker rm -f confos-dcgm-exporter
+ExecStart=/usr/bin/docker run --rm --name confos-dcgm-exporter --device nvidia.com/gpu=all --network host --read-only --cap-drop ALL --security-opt no-new-privileges=true --tmpfs /tmp:rw,noexec,nosuid,size=16m -v /etc/dcgm-exporter/counters.csv:/etc/dcgm-exporter/counters.csv:ro nvcr.io/nvidia/k8s/dcgm-exporter@sha256:148b0c025e5f2850256816fa33754fbf4733b7a086697a95613fc0ba3db5b003 --collectors=/etc/dcgm-exporter/counters.csv --address=127.0.0.1:9400
+ExecStop=/usr/bin/docker stop -t 10 confos-dcgm-exporter
+
+[Install]
+WantedBy=multi-user.target
