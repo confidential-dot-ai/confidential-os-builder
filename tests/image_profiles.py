@@ -236,5 +236,36 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
             self.assertIn("OutputDirectory=mkosi.output", (ROOT / "mkosi" / tree / "mkosi.conf").read_text())
 
 
+class GpuMetricsTests(unittest.TestCase):
+    def test_exporter_runs_unprivileged_after_gpu_bring_up(self):
+        preset = (EXTRA / "usr/lib/systemd/system-preset/30-general-purpose-gpu.preset").read_text().splitlines()
+        self.assertIn("enable dcgm-exporter.service", preset)
+        unit = (EXTRA / "etc/systemd/system/dcgm-exporter.service").read_text().splitlines()
+        self.assertIn("ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=:9400", unit)
+        self.assertIn("Environment=LD_LIBRARY_PATH=/opt/dcgm/lib", unit)
+        self.assertIn("After=nvidia-persistenced.service nvidia-cc-ready.service", unit)
+        self.assertFalse([line for line in unit if line.startswith(("Requires=", "Wants=", "Before=", "User=", "Group="))])
+        for setting in ("DynamicUser=yes", "NoNewPrivileges=yes", "ProtectSystem=strict", "CapabilityBoundingSet=", "DevicePolicy=closed"):
+            self.assertIn(setting, unit)
+        self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", unit)
+
+    def test_exporter_is_staged_by_digest_and_only_in_this_recipe(self):
+        sync = (PROFILE / "mkosi.sync").read_text()
+        for layer in ("6eec2288f04d592e7a987cae225129b67a5dcad0e8aee5fea156ee31689b628d",
+                      "97f08c823d26f6cdddea9994b932ce7dc16d9b61c0441aec31fd6475e498f169",
+                      "c58be49ed8afc0e93f37fd7d370d7b23b1e4a2f70e1acd491801480096dc1cfa"):
+            self.assertIn(layer, sync)
+        self.assertIn('echo "$digest  $output" | sha256sum --check --status', sync)
+        gpu = ROOT / "mkosi/base/mkosi.profiles/gpu"
+        self.assertFalse([path for path in gpu.rglob("*") if "dcgm" in path.name or "gpu-metrics" in path.name])
+
+    def test_counters_skip_fields_cc_mode_does_not_report(self):
+        fields = [line.split(",")[0].strip() for line in (EXTRA / "etc/dcgm-exporter/counters.csv").read_text().splitlines()
+                  if line.strip() and not line.startswith("#")]
+        self.assertIn("DCGM_FI_DEV_GPU_UTIL", fields)
+        self.assertIn("DCGM_FI_DEV_FB_USED", fields)
+        self.assertFalse([field for field in fields if field.startswith("DCGM_FI_PROF_")])
+
+
 if __name__ == "__main__":
     unittest.main()

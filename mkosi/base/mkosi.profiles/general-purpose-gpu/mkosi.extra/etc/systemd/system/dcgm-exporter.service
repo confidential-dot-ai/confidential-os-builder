@@ -1,0 +1,46 @@
+[Unit]
+Description=NVIDIA dcgm-exporter: GPU metrics for Prometheus on port 9400
+Documentation=https://github.com/NVIDIA/dcgm-exporter
+# Start only once persistenced holds every GPU's CC session and the Ready
+# gate has run: a client that attaches earlier can tear down a session that is
+# not held yet, the same reason ssh waits for nvidia-cc-ready. Ordering only,
+# with no Wants= or Requires=, so nothing waits on the exporter and a failed
+# exporter never stops the GPUs or ssh.
+After=nvidia-persistenced.service nvidia-cc-ready.service
+
+[Service]
+Type=exec
+# The embedded DCGM host engine loads its modules from /opt/dcgm/lib, staged
+# by mkosi.sync and kept out of the image's linker cache.
+Environment=LD_LIBRARY_PATH=/opt/dcgm/lib
+ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=:9400
+Restart=always
+RestartSec=5
+
+DynamicUser=yes
+DevicePolicy=closed
+DeviceAllow=/dev/nvidiactl rw
+DeviceAllow=char-nvidia rw
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# Only attestation may use AF_VSOCK (kernel/gpu.config). UNIX for the driver's
+# persistence daemon, INET and INET6 for the scrape endpoint.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -127,6 +127,34 @@ per GPU. `POST /verify` (+ `params.nvidia_gpu_user_nonce`) →
 sane (NRAS JWTs have a tight `nbf`; the minimal guest has no NTP — collection is
 clock-independent, verification is not).
 
+## 6. GPU metrics on port 9400 (`general-purpose-gpu` only)
+
+The `general-purpose-gpu` recipe, the plain GPU VM, runs NVIDIA's
+`dcgm-exporter` 4.8.4 with an embedded DCGM 4.6.1 host engine as
+`dcgm-exporter.service`. `mkosi.sync` fetches the exporter, the DCGM
+libraries and their licenses from NVIDIA's image by blob digest into
+`/usr/local/bin/dcgm-exporter` and `/opt/dcgm`, inside the measured root.
+It serves Prometheus text on **TCP 9400, `GET /metrics`**.
+
+- **Series:** the fields in `/etc/dcgm-exporter/counters.csv`, which is
+  confidential-inference's `images/sglang/dcgm-counters.csv`, so a GPU VM and
+  an inference worker report the same `DCGM_FI_DEV_*` series. The profiling
+  (`DCGM_FI_PROF_*`) fields and per-link NVLink errors are off: DCGM's
+  profiling module does not load in CC mode, and the guest sees no NVLink
+  fabric.
+- **Boot order:** after `nvidia-persistenced` and `nvidia-cc-ready`, ordering
+  only, for the item 1 reason: no client may attach before persistenced holds
+  every session. Nothing waits on the exporter, so it never delays boot or SSH.
+  It runs as a `DynamicUser` with only the NVIDIA device nodes, no
+  capabilities and no `AF_VSOCK`.
+- **Exposure:** it binds 9400 on every interface and the guest adds no
+  firewall rule for it. Who reaches it is the platform's network policy. It
+  serves device telemetry only. Workloads, including a `--network host`
+  container, must not bind 9400.
+- **Other GPU images** run nothing for metrics. A Kubernetes node image leaves
+  GPU metrics to the cluster's own dcgm-exporter (for example
+  confidential-inference's), as other managed Kubernetes services do.
+
 ## Validation matrix (real B200, this session)
 
 | GPUs | Raw QEMU / iommufd | KubeVirt / confai |
