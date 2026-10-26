@@ -221,7 +221,9 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
         gpu = ROOT / "mkosi/base/mkosi.profiles/gpu-observability"
         otel = (common / "mkosi.extra/etc/confos/observability/otelcol.yaml").read_text()
         node = (common / "mkosi.extra/etc/default/prometheus-node-exporter").read_text()
-        dcgm = (gpu / "mkosi.extra/etc/systemd/system/dcgm-exporter.service").read_text()
+        dcgm = (EXTRA / "etc/systemd/system/dcgm-exporter.service").read_text()
+        self.assertFalse((gpu / "mkosi.extra/etc/systemd/system/dcgm-exporter.service").exists())
+        self.assertFalse((gpu / "mkosi.extra/etc/dcgm-exporter/counters.csv").exists())
         self.assertIn("127.0.0.1:9100", node)
         gpu_otel = (gpu / "mkosi.extra/etc/confos/observability/otelcol.yaml").read_text()
         self.assertIn("127.0.0.1:8889", otel)
