@@ -241,7 +241,7 @@ class GpuMetricsTests(unittest.TestCase):
         preset = (EXTRA / "usr/lib/systemd/system-preset/30-general-purpose-gpu.preset").read_text().splitlines()
         self.assertIn("enable dcgm-exporter.service", preset)
         unit = (EXTRA / "etc/systemd/system/dcgm-exporter.service").read_text().splitlines()
-        self.assertIn("ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=:9400", unit)
+        self.assertIn("ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=127.0.0.1:9400", unit)
         self.assertIn("Environment=LD_LIBRARY_PATH=/opt/dcgm/lib", unit)
         self.assertIn("After=nvidia-persistenced.service nvidia-cc-ready.service", unit)
         self.assertFalse([line for line in unit if line.startswith(("Requires=", "Wants=", "Before=", "User=", "Group="))])

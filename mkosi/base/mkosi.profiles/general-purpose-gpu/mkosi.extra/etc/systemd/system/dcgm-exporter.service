@@ -13,7 +13,7 @@ Type=exec
 # The embedded DCGM host engine loads its modules from /opt/dcgm/lib, staged
 # by mkosi.sync and kept out of the image's linker cache.
 Environment=LD_LIBRARY_PATH=/opt/dcgm/lib
-ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=:9400
+ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=127.0.0.1:9400
 Restart=always
 RestartSec=5
 

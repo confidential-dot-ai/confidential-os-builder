@@ -37,8 +37,8 @@ maintained. Granting a container CDI GPU access exposes the GPU driver to that
 container; container resource limits do not create a separate GPU trust domain.
 No inference server, model, API credential or externally listening serving
 endpoint is configured by this profile.
-The one listener it adds is NVIDIA's dcgm-exporter on TCP 9400, which serves
-GPU telemetry for the platform's metrics collector (see
+The one listener it adds is NVIDIA's dcgm-exporter on `127.0.0.1:9400`, which
+serves GPU telemetry to a local collector or through SSH forwarding (see
 [GPU metrics](../../../../docs/GPU-CC-OPERATIONS.md#6-gpu-metrics-on-port-9400-general-purpose-gpu-only)).
 
 GPU counts are detected at runtime. The readiness check requires CC ON and

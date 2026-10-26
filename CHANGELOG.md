@@ -29,7 +29,7 @@ build configs, since those invalidate published reference values.
 ### Added
 - The `general-purpose-gpu` recipe runs NVIDIA's dcgm-exporter 4.8.4 (DCGM
   4.6.1), staged by blob digest from NVIDIA's image, as `dcgm-exporter.service`.
-  It serves Prometheus GPU metrics on TCP 9400 with confidential-inference's
+  It serves Prometheus GPU metrics on loopback TCP 9400 with confidential-inference's
   counters file. The `gpu` profile and the other GPU images are unchanged.
   **Alters measurements** of `general-purpose-gpu` images.
 - **Changes measurements.** The SEV-SNP guest kernel keeps sixteen SHA-384

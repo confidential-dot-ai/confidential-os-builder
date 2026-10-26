@@ -134,7 +134,7 @@ The `general-purpose-gpu` recipe, the plain GPU VM, runs NVIDIA's
 `dcgm-exporter.service`. `mkosi.sync` fetches the exporter, the DCGM
 libraries and their licenses from NVIDIA's image by blob digest into
 `/usr/local/bin/dcgm-exporter` and `/opt/dcgm`, inside the measured root.
-It serves Prometheus text on **TCP 9400, `GET /metrics`**.
+It serves Prometheus text on **`127.0.0.1:9400`, `GET /metrics`**.
 
 - **Series:** the fields in `/etc/dcgm-exporter/counters.csv`, which is
   confidential-inference's `images/sglang/dcgm-counters.csv`, so a GPU VM and
@@ -147,10 +147,11 @@ It serves Prometheus text on **TCP 9400, `GET /metrics`**.
   every session. Nothing waits on the exporter, so it never delays boot or SSH.
   It runs as a `DynamicUser` with only the NVIDIA device nodes, no
   capabilities and no `AF_VSOCK`.
-- **Exposure:** it binds 9400 on every interface and the guest adds no
-  firewall rule for it. Who reaches it is the platform's network policy. It
-  serves device telemetry only. Workloads, including a `--network host`
-  container, must not bind 9400.
+- **Exposure:** it binds guest loopback only. There is no endpoint
+  authentication. Use SSH forwarding or a local collector by default.
+  External scraping requires an explicit protected access path configured
+  during provisioning. Workloads, including a `--network host` container,
+  must not bind 9400.
 - **Other GPU images** run nothing for metrics. A Kubernetes node image leaves
   GPU metrics to the cluster's own dcgm-exporter (for example
   confidential-inference's), as other managed Kubernetes services do.
