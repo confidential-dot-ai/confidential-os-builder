@@ -32,13 +32,6 @@ tdx-measure = { default-features = false, path = "crates/tdx-measure", version =
 assert_cmd = "2"
 predicates = "3"
 
-[workspace]
-# gpu-metrics ships inside the gpu image (bin/confos-fetch-gpu builds it);
-# sharing this lockfile puts it under cargo deny, fmt, clippy and tests.
-members = ["crates/gpu-metrics"]
-# These keep building standalone with their own lockfiles, as before.
-exclude = ["crates/igvm-tools", "crates/tdx-measure", "crates/rtmr3-hook"]
-
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"

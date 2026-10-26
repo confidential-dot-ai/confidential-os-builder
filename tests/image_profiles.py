@@ -236,29 +236,5 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
             self.assertIn("OutputDirectory=mkosi.output", (ROOT / "mkosi" / tree / "mkosi.conf").read_text())
 
 
-class GpuMetricsTests(unittest.TestCase):
-    GPU = ROOT / "mkosi/base/mkosi.profiles/gpu"
-
-    def test_exporter_is_enabled_unprivileged_and_after_gpu_bring_up(self):
-        extra = self.GPU / "mkosi.extra"
-        preset = (extra / "usr/lib/systemd/system-preset/10-nvidia.preset").read_text().splitlines()
-        self.assertIn("enable gpu-metrics.service", preset)
-        unit = (extra / "etc/systemd/system/gpu-metrics.service").read_text().splitlines()
-        self.assertIn("ExecStart=/usr/local/bin/gpu-metrics", unit)
-        self.assertIn("After=nvidia-persistenced.service nvidia-cc-ready.service", unit)
-        self.assertFalse([line for line in unit if line.startswith(("Requires=", "Wants=", "Before=", "User=", "Group="))])
-        for setting in ("DynamicUser=yes", "NoNewPrivileges=yes", "ProtectSystem=strict", "CapabilityBoundingSet=", "Restart=always", "DevicePolicy=closed"):
-            self.assertIn(setting, unit)
-        families = [line for line in unit if line.startswith("RestrictAddressFamilies=")]
-        self.assertEqual(families, ["RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"])
-
-    def test_exporter_is_built_from_the_locked_workspace_into_the_measured_root(self):
-        fetch = (ROOT / "bin/confos-fetch-gpu").read_text()
-        self.assertIn("cargo build --release --locked -p gpu-metrics", fetch)
-        self.assertIn('"$STAGE/usr/local/bin/gpu-metrics"', fetch)
-        self.assertIn("--remap-path-prefix=$DIR=", fetch)
-        self.assertIn('members = ["crates/gpu-metrics"]', (ROOT / "Cargo.toml").read_text())
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,7 @@ mutable policy. A requested fragment value is not proof of the resolved kernel.
 |---|---|
 | Measured boot and dm-verity lower root | Bind launch evidence to the kernel and immutable image. They do not attest arbitrary runtime downloads, mutable overlays or attached data disks. |
 | Mandatory trusted AML | Admit only the built-in measured DSDT and reject alternate AML-loading paths. Builder invariants prevent profiles from disabling this policy. Non-AML topology and device interfaces remain host-facing attack surface. |
+| SEV-SNP measurement registers | Sixteen kernel-held registers, committed into every report's `REPORT_DATA`, make post-launch guest events attestable. `snp_measurement_registers=off` on the measured command line turns this off for verifiers that do not check the commitment yet; a profile can set it, and the choice is visible in the launch digest. The guest kernel is trusted for the register values. |
 | Confidentiality lockdown; no loadable modules | Restrict kernel modification and sensitive introspection; exclude the module loader entirely. GPU kernels make the signed-module exception documented below. |
 | No BPF syscall/JIT, user namespaces or io_uring | Remove substantial application-reachable kernel interfaces. Container-compatible profiles explicitly enable these with documented residual risk. |
 | No CRIU/kcmp, userfaultfd, FUSE/TUN or host-shared filesystems | Limit optional process-inspection, fault-handling and host/guest I/O surfaces. Ordinary storage and networking drivers still need review. |

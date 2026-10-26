@@ -127,42 +127,6 @@ per GPU. `POST /verify` (+ `params.nvidia_gpu_user_nonce`) →
 sane (NRAS JWTs have a tight `nbf`; the minimal guest has no NTP — collection is
 clock-independent, verification is not).
 
-## 6. GPU metrics on port 9400
-
-Every `gpu` image runs `gpu-metrics.service`, a small NVML reader
-(`crates/gpu-metrics`, built and staged by `bin/confos-fetch-gpu` into the
-measured root at `/usr/local/bin/gpu-metrics`). It serves Prometheus text on
-**TCP 9400, `GET /metrics`** (anything else is 404), from boot, with no network
-access or runtime install. It reads NVML on each scrape; a scrape whose NVML
-reads miss the 5 s deadline gets status lines only, so a wedged GPU cannot
-hang the endpoint.
-
-- **Series** use dcgm-exporter names and units, labelled only `gpu="<index>"`
-  and `UUID="<GPU uuid>"`: `DCGM_FI_DEV_GPU_UTIL`, `_MEM_COPY_UTIL`,
-  `_FB_USED`/`_FB_FREE` (MiB), `_GPU_TEMP`/`_MEMORY_TEMP` (C), `_POWER_USAGE`
-  (W), `_TOTAL_ENERGY_CONSUMPTION` (mJ), `_SM_CLOCK`/`_MEM_CLOCK` (MHz),
-  `_CLOCK_THROTTLE_REASONS`, `_ECC_{SBE,DBE}_{VOL,AGG}_TOTAL`,
-  `_ROW_REMAP_FAILURE`, `_{UNCORRECTABLE,CORRECTABLE}_REMAPPED_ROWS`,
-  `_PCIE_REPLAY_COUNTER`, `_XID_ERRORS` (last critical XID since boot, from
-  NVML events) and `_NVLINK_BANDWIDTH_TOTAL` (DCGM's MB/s rate between reads).
-  Anything NVML refuses on the device — including counters NVIDIA disables in
-  CC mode — is omitted, not an error.
-- **Status:** `gpu_metrics_nvml_up` (0 when NVML is missing, uninitialised or
-  sees no GPU), `gpu_metrics_collect_timeout`, `gpu_metrics_devices`.
-- **Boot order:** after `nvidia-persistenced` and `nvidia-cc-ready` (ordering
-  only), for the item-1 reason: an NVML client must not attach before
-  persistenced holds every session. Nothing waits on it, so it never delays
-  boot or SSH. It runs as a `DynamicUser` with only the NVIDIA device nodes
-  allowed (the driver's default `0666` mode), no capabilities and no
-  `AF_VSOCK`.
-- **Exposure:** the guest binds `[::]:9400` on all interfaces and adds no
-  firewall rule of its own (the `general-purpose` images install `nftables`
-  but load no ruleset, so nothing in the guest drops 9400). Whether anyone
-  can reach it is decided by the platform's network policy: it is reachable
-  only where that policy allows the metrics collector in, and it serves
-  device telemetry only (no workload data, no credentials). Workloads must
-  not bind 9400 themselves.
-
 ## Validation matrix (real B200, this session)
 
 | GPUs | Raw QEMU / iommufd | KubeVirt / confai |

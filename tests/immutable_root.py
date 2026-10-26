@@ -183,6 +183,56 @@ class CloudInitPolicyTests(unittest.TestCase):
                 )
 
 
+class ScratchDiscoveryTests(unittest.TestCase):
+    """The host picks how many disks it attaches and in what order."""
+
+    CRYPTSETUP = Path("/cryptsetup-calls")
+    MOUNTS = Path("/mount-calls")
+
+    def setUp(self):
+        shutil.rmtree("/image", ignore_errors=True)
+        self.CRYPTSETUP.write_text("")
+        self.MOUNTS.unlink(missing_ok=True)
+        image = Path("/image")
+        shutil.copytree("/default-state.d", image / "usr/lib/confai/state.d")
+        for directory in ("var", "home", "root", "tmp", "run", "etc"):
+            (image / directory).mkdir(parents=True)
+
+    def tearDown(self):
+        shutil.rmtree("/image")
+        shutil.rmtree("/sys/block")
+        self.CRYPTSETUP.unlink()
+        self.MOUNTS.unlink(missing_ok=True)
+
+    def attach(self, disks):
+        """Publish virtio disks in sysfs the way the kernel does."""
+        for name, serial in disks.items():
+            sysfs = Path("/sys/block", name)
+            sysfs.mkdir(parents=True)
+            if serial is not None:
+                (sysfs / "serial").write_text(serial)
+
+    def boot(self):
+        # The initrd's mounts stay in their own namespace, so each boot starts
+        # from the fixture rather than the previous boot's overlays.
+        booted = run("/usr/bin/unshare", "--mount", "--propagation", "private",
+                     "/bin/bash", "/init-under-test")
+        self.assertEqual(booted.returncode, 0, booted.stdout)
+
+    def test_scratch_is_found_after_the_other_launch_disks(self):
+        self.attach({"vda": None, "vdb": None, "vdc": "confai-models",
+                     "vdd": "", "vde": "confai-scratch"})
+        self.boot()
+        self.assertIn("/dev/vde scratch", self.CRYPTSETUP.read_text())
+        self.assertIn("/dev/mapper/scratch /state", self.MOUNTS.read_text())
+
+    def test_the_image_disk_is_never_taken_for_scratch(self):
+        self.attach({"vda": "confai-scratch", "vdb": "confai-models"})
+        self.boot()
+        self.assertEqual(self.CRYPTSETUP.read_text(), "")
+        self.assertIn("-t tmpfs tmpfs /state", self.MOUNTS.read_text())
+
+
 class WritableStateTests(unittest.TestCase):
     def test_colliding_profile_paths_have_independent_writable_state(self):
         image = Path("/image")
