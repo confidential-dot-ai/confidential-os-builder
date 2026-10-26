@@ -228,11 +228,17 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
         self.assertNotIn("9400", otel)
         self.assertIn("127.0.0.1:9400", gpu_otel)
         self.assertIn("127.0.0.1:9400", dcgm)
-        for text in (otel, node, dcgm):
+        for config in (otel, gpu_otel):
+            self.assertIn("readers:", config)
+            self.assertIn("host: 127.0.0.1", config)
+            self.assertIn("port: 8888", config)
+            self.assertNotIn("address: 127.0.0.1:8888", config)
+        for text in (otel, gpu_otel, node, dcgm):
             self.assertNotIn("remote_write", text)
             self.assertNotIn("otlphttp", text)
         recipes = json.loads((ROOT / "ci/images.json").read_text())
         self.assertIn("observability", recipes["general-purpose"]["profiles"])
+        self.assertIn("observability", recipes["general-purpose-snp"]["profiles"])
         self.assertIn("gpu-observability", recipes["general-purpose-gpu"]["profiles"])
 
     def test_snapshot_translation_fix_does_not_change_package_pins(self):
