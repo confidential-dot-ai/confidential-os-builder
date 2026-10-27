@@ -112,6 +112,22 @@ hashes are recorded in kernel and image metadata. Independent clean-build
 reproduction and hardware acceptance must be repeated for this pipeline;
 earlier early-initrd results do not validate the new kernel inputs.
 
+### Sealing the kernel
+
+With `kernel/ipe.config`, the kernel's IPE policy names the root hash, so
+`confos build` runs mkosi twice: once with the cached kernel to learn the hash, then again with the
+kernel relinked around a policy that pins it. Two things keep that
+reproducible. The root partition excludes the kernel
+(`ExcludeFiles=` in `mkosi.repart/10-root.conf`), so the hash cannot
+depend on the kernel that seals it, and the build fails if the second pass
+reports a different hash. The relink runs in the cached build tree with
+the same flags as the base build plus `KBUILD_BUILD_VERSION=1`, which
+pins the `#N` build counter in `UTS_VERSION`; without it a relink would
+produce a kernel a clean build cannot reproduce. A verifier rebuilding
+from source goes through the same two passes and gets the same sealed
+kernel, whose hash the manifest records as `kernel.vmlinuz_sha256`
+alongside the unsealed cache artifact.
+
 ### mkosi.finalize
 
 Reproducibility cleanup:
