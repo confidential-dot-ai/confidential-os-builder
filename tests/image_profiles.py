@@ -244,7 +244,9 @@ class GpuMetricsTests(unittest.TestCase):
         self.assertIn("ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=127.0.0.1:9400", unit)
         self.assertIn("Environment=LD_LIBRARY_PATH=/opt/dcgm/lib", unit)
         self.assertIn("After=nvidia-persistenced.service nvidia-cc-ready.service", unit)
-        self.assertFalse([line for line in unit if line.startswith(("Requires=", "Wants=", "Before=", "User=", "Group="))])
+        self.assertIn("BindsTo=nvidia-persistenced.service", unit)
+        self.assertIn("Wants=nvidia-cc-ready.service", unit)
+        self.assertFalse([line for line in unit if line.startswith(("Before=", "User=", "Group="))])
         for setting in ("DynamicUser=yes", "NoNewPrivileges=yes", "ProtectSystem=strict", "CapabilityBoundingSet=", "DevicePolicy=closed"):
             self.assertIn(setting, unit)
         self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", unit)

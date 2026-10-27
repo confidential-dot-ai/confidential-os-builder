@@ -113,7 +113,7 @@ fetch_dcgm_layer() {
     fi
     token="$(curl -fsS --retry 3 \
         "$DCGM_REGISTRY/proxy_auth?scope=repository:$DCGM_REPOSITORY:pull" |
-        sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+        jq -er '.token | select(type == "string" and length > 0)')"
     [[ -n "$token" ]]
     curl -fL --retry 3 -H "Authorization: Bearer $token" --output "$output" \
         "$DCGM_REGISTRY/v2/$DCGM_REPOSITORY/blobs/sha256:$digest"

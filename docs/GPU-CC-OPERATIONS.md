@@ -142,9 +142,11 @@ It serves Prometheus text on **`127.0.0.1:9400`, `GET /metrics`**.
   (`DCGM_FI_PROF_*`) fields and per-link NVLink errors are off: DCGM's
   profiling module does not load in CC mode, and the guest sees no NVLink
   fabric.
-- **Boot order:** after `nvidia-persistenced` and `nvidia-cc-ready`, ordering
-  only, for the item 1 reason: no client may attach before persistenced holds
-  every session. Nothing waits on the exporter, so it never delays boot or SSH.
+- **Boot order:** pulls in and waits for `nvidia-persistenced` and
+  `nvidia-cc-ready`. A `BindsTo` dependency prevents exporter startup when
+  persistence fails and stops the exporter if persistence disappears.
+  Dependencies point toward GPU services only. Exporter failure does not stop
+  the GPUs or SSH. After recovering persistence, restart the exporter.
   It runs as a `DynamicUser` with only the NVIDIA device nodes, no
   capabilities and no `AF_VSOCK`.
 - **Exposure:** it binds guest loopback only. There is no endpoint

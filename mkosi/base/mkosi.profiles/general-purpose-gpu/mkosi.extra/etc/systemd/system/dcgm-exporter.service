@@ -3,9 +3,10 @@ Description=NVIDIA dcgm-exporter: GPU metrics for Prometheus on port 9400
 Documentation=https://github.com/NVIDIA/dcgm-exporter
 # Start only once persistenced holds every GPU's CC session and the Ready
 # gate has run: a client that attaches earlier can tear down a session that is
-# not held yet, the same reason ssh waits for nvidia-cc-ready. Ordering only,
-# with no Wants= or Requires=, so nothing waits on the exporter and a failed
-# exporter never stops the GPUs or ssh.
+# not held yet. Stop the exporter if persistence disappears. Dependencies
+# point toward GPU services only, so exporter failure never stops the GPUs.
+BindsTo=nvidia-persistenced.service
+Wants=nvidia-cc-ready.service
 After=nvidia-persistenced.service nvidia-cc-ready.service
 
 [Service]
