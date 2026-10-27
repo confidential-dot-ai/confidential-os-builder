@@ -55,6 +55,7 @@ jobs:
                   python3 tests/image_profiles.py
                   python3 tests/observability_config.py
                   python3 tests/general_purpose_attest.py
+                  python3 tests/general_purpose_oci_workload.py
                   python3 tests/ci_images.py
                   python3 tests/gpu_module_cache.py
                   python3 tests/host_deps.py

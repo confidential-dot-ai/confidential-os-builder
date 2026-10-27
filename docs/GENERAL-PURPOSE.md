@@ -111,6 +111,7 @@ For KubeVirt, attach:
 - A public-key Secret disk with `volumeLabel: opkeydata` and a file named
   `pubkey`. Put one OpenSSH public key per line; supply customer and operator
   keys here, not in the image. The initrd binds the exact bundle into RTMR[3].
+  It may also carry one workload line; see [OCI workloads](#oci-workloads).
 - A separate ext4 PVC formatted once with filesystem label `user-data`, mounted
   at `/var/lib/user-data`. Retain it when replacing the VM; never reformat it
   during recovery. Docker/containerd require that mount before starting.
@@ -126,6 +127,42 @@ regenerate with the ephemeral `/etc` overlay at every boot; fetch them with a
 quote from the attest port and verify them again after a restart or a
 replacement. Docker's bridge MTU defaults to 1420 for the tested KubeVirt
 network; lower it if the actual underlay requires that.
+
+## OCI workloads
+
+A general-purpose guest can run one OCI image of the launcher's choosing, so
+an instance is "this container image" without anyone logging in. Add one
+line to the `pubkey` file of the `opkeydata` disk, after any SSH key lines:
+
+```text
+# confos-oci-workload/v1 {"image":"ghcr.io/org/app@sha256:<64 hex>","command":["serve"],"env":{"PORT":"8080"}}
+```
+
+`image` is required and names the image by registry, repository and digest;
+a tag alone is refused. `command` (arguments after the image) and `env` are
+optional. sshd reads the line as a comment, and the file may hold no SSH key
+at all, in which case nobody can log in.
+
+At boot, `general-purpose-oci-workload-prepare` moves Docker's data root to
+`/var/lib/docker-scratch` (encrypted scratch, or the RAM tmpfs without a
+scratch disk) before Docker starts, and `general-purpose-oci-workload` then
+pulls the image by digest and runs it as the container `confos-workload`
+with `--network host --restart unless-stopped`, adding
+`--device nvidia.com/gpu=all` on a GPU guest. A failed pull is retried every
+10 s. Each boot starts from empty Docker state and pulls again, so Docker
+checks the digest on every boot and no image layer lives on the
+host-readable user-data disk.
+
+**What the quote proves.** The initrd binds the exact bytes of `pubkey`, the
+workload line included, into RTMR[3] on TDX and checks them against HOSTDATA
+on SNP. A verifier that recomputes the launch binding from the SSH keys and
+the workload line it expects has checked which image the guest was told to
+run, by digest. As with any general-purpose guest, attestation covers the
+launch, not what a logged-in root does afterwards.
+
+The line is on a host-visible disk: never put a secret in `env`. Images are
+pulled anonymously, so private registries need credentials delivered some
+other way (for example over attested SSH).
 
 ## Acceptance checks
 

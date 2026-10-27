@@ -64,6 +64,13 @@ build configs, since those invalidate published reference values.
   diagnostics. Uses its own kernel fragment and measurements; hardened base
   and `gpu` defaults are unchanged. Runtime-installed software and persistent
   disk contents are not covered by launch attestation.
+- `general-purpose` images run a launch-bound OCI image. A
+  `# confos-oci-workload/v1 {"image":"<registry>/<repo>@sha256:<digest>"}`
+  line in the `opkeydata` `pubkey` bundle (a comment to sshd) makes the guest
+  pull that image by digest and run it as `confos-workload` on the host
+  network, with Docker state on encrypted scratch. The line is inside the
+  bytes already bound into RTMR[3]/HOSTDATA, so the launch binding covers the
+  workload. Bundles without the line boot as before. Alters measurements.
 - `general-purpose` images vouch for their SSH host keys. The attest port
   (8400) is served by `general-purpose-attest`, which takes a 32-byte nonce
   and nothing else and answers with the guest's host public keys and a quote
