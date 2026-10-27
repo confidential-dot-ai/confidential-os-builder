@@ -1,0 +1,2 @@
+# Include writable OS overlays, but not Docker's individual container mounts.
+ARGS="--web.listen-address=127.0.0.1:9100 --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|erofs|sysfs|tracefs)$ --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|mnt|media|var/lib/docker/.+|var/lib/containers/storage/.+|var/lib/user-data/docker/.+)($|/)"

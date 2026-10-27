@@ -216,6 +216,47 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
         recipes = json.loads((ROOT / "ci/images.json").read_text())
         self.assertIn("general-purpose", recipes["general-purpose"]["profiles"])
 
+    def test_observability_profiles_are_loopback_only_and_destination_free(self):
+        common = ROOT / "mkosi/base/mkosi.profiles/observability"
+        gpu = ROOT / "mkosi/base/mkosi.profiles/gpu-observability"
+        otel = (common / "mkosi.extra/etc/confos/observability/otelcol.yaml").read_text()
+        node = (common / "mkosi.extra/etc/default/prometheus-node-exporter").read_text()
+        dcgm = (EXTRA / "etc/systemd/system/dcgm-exporter.service").read_text()
+        self.assertFalse((gpu / "mkosi.extra/etc/systemd/system/dcgm-exporter.service").exists())
+        self.assertFalse((gpu / "mkosi.extra/etc/dcgm-exporter/counters.csv").exists())
+        self.assertIn("127.0.0.1:9100", node)
+        gpu_otel = (gpu / "mkosi.extra/etc/confos/observability/otelcol.yaml").read_text()
+        self.assertIn("127.0.0.1:8889", otel)
+        self.assertNotIn("9400", otel)
+        self.assertIn("127.0.0.1:9400", gpu_otel)
+        self.assertIn("127.0.0.1:9400", dcgm)
+        self.assertEqual(otel, gpu_otel.replace(
+            "        - job_name: dcgm\n"
+            "          static_configs:\n"
+            "            - targets: [127.0.0.1:9400]\n", ""))
+        service = (common / "mkosi.extra/etc/systemd/system/otelcol.service").read_text()
+        for flag in ("--memory=512m", "--memory-swap=512m", "--cpus=1",
+                     "--pids-limit=128", "GOMEMLIMIT=256MiB", "--log-driver=local",
+                     "--log-opt max-size=10m", "--log-opt max-file=3"):
+            self.assertIn(flag, service)
+        self.assertNotIn("|overlay|", node)
+        self.assertIn("var/lib/user-data/docker/.+", node)
+        for config in (otel, gpu_otel):
+            self.assertIn("limit_mib: 384", config)
+            self.assertIn("spike_limit_mib: 96", config)
+            self.assertNotIn("limit_percentage", config)
+            self.assertIn("readers:", config)
+            self.assertIn("host: 127.0.0.1", config)
+            self.assertIn("port: 8888", config)
+            self.assertNotIn("address: 127.0.0.1:8888", config)
+        for text in (otel, gpu_otel, node, dcgm):
+            self.assertNotIn("remote_write", text)
+            self.assertNotIn("otlphttp", text)
+        recipes = json.loads((ROOT / "ci/images.json").read_text())
+        self.assertIn("observability", recipes["general-purpose"]["profiles"])
+        self.assertIn("observability", recipes["general-purpose-snp"]["profiles"])
+        self.assertIn("gpu-observability", recipes["general-purpose-gpu"]["profiles"])
+
     def test_snapshot_translation_fix_does_not_change_package_pins(self):
         for tree in ("base", "initrd", "kernel-builder"):
             sandbox = ROOT / "mkosi" / tree / "mkosi.sandbox/etc/apt"

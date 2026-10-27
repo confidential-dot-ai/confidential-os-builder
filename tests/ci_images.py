@@ -25,9 +25,11 @@ class SelectionTests(unittest.TestCase):
     def test_gpu_only_profile_and_kernel_changes(self):
         for path in ("mkosi/base/mkosi.profiles/general-purpose-gpu/mkosi.conf", "kernel/general-purpose-gpu.config", "kernel/gpu.config", "bin/confos-fetch-gpu", "bin/lib/gpu-module-cache.sh", "kernel/config-x86_64-general-purpose-gpu.snapshot"):
             self.check([path], ["general-purpose-gpu"])
+        for path in ("mkosi/base/mkosi.profiles/gpu-observability/mkosi.conf", "mkosi/base/mkosi.profiles/gpu-observability/mkosi.extra/etc/dcgm-exporter/counters.csv"):
+            self.check([path], ["general-purpose-gpu"])
 
     def test_shared_workload_and_ssh(self):
-        for profile in ("general-purpose", "ssh"):
+        for profile in ("general-purpose", "observability", "ssh"):
             self.check([f"mkosi/base/mkosi.profiles/{profile}/mkosi.extra/file"], ["general-purpose", "general-purpose-gpu", "general-purpose-snp"])
 
     def test_cpu_only(self):

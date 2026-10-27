@@ -27,6 +27,12 @@ build configs, since those invalidate published reference values.
   changes; rebuild images and re-pin.
 
 ### Added
+- Local CPU metrics and a digest-pinned OpenTelemetry Collector in the
+  general-purpose TDX and SNP recipes. The GPU recipe also aggregates its
+  native DCGM exporter. All telemetry listeners bind to loopback, with no
+  customer export destination configured. **Alters measurements** of these
+  general-purpose images. The collector container is pulled at runtime and
+  is not part of the measured root filesystem.
 - The `general-purpose-gpu` recipe runs NVIDIA's dcgm-exporter 4.8.4 (DCGM
   4.6.1), staged by blob digest from NVIDIA's image, as `dcgm-exporter.service`.
   It serves Prometheus GPU metrics on loopback TCP 9400 with confidential-inference's
