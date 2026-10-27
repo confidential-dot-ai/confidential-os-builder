@@ -3,9 +3,11 @@
 against a stand-in for docker."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 
@@ -125,6 +127,34 @@ class UnitTests(unittest.TestCase):
         self.assertIn("enable general-purpose-oci-workload-prepare.service", preset)
         self.assertIn("enable general-purpose-oci-workload.service", preset)
         self.assertTrue(RUNNER.stat().st_mode & 0o111)
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "needs systemd-analyze")
+    def test_boot_has_no_ordering_cycle(self):
+        # Docker's own units, as packaged, beside ours: a cycle makes systemd
+        # drop a job at boot, which can take docker and the workload with it.
+        with tempfile.TemporaryDirectory() as tmp:
+            units = Path(tmp)
+            for name in ("general-purpose-oci-workload-prepare.service", "general-purpose-oci-workload.service"):
+                text = (UNITS / name).read_text()
+                (units / name).write_text("\n".join(
+                    "ExecStart=/bin/true" if line.startswith("ExecStart=") else line for line in text.splitlines()) + "\n")
+            (units / "docker.socket").write_text(
+                "[Socket]\nListenStream=/run/docker.sock\n[Install]\nWantedBy=sockets.target\n")
+            (units / "docker.service").write_text(
+                "[Unit]\nAfter=network-online.target docker.socket\nWants=network-online.target\n"
+                "Requires=docker.socket\n[Service]\nExecStart=/bin/true\n")
+            for target, unit in (("multi-user.target", "docker.service"), ("sockets.target", "docker.socket"),
+                                 ("multi-user.target", "general-purpose-oci-workload-prepare.service"),
+                                 ("docker.service", "general-purpose-oci-workload-prepare.service"),
+                                 ("multi-user.target", "general-purpose-oci-workload.service")):
+                wants = units / f"{target}.wants"
+                wants.mkdir(exist_ok=True)
+                (wants / unit).symlink_to(units / unit)
+            result = subprocess.run(
+                ["systemd-analyze", "verify", "--man=no", str(units / "general-purpose-oci-workload.service"),
+                 "multi-user.target"],
+                capture_output=True, text=True, env={**os.environ, "SYSTEMD_UNIT_PATH": f"{units}:"})
+            self.assertNotIn("ordering cycle", result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
