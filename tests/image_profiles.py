@@ -230,7 +230,21 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
         self.assertNotIn("9400", otel)
         self.assertIn("127.0.0.1:9400", gpu_otel)
         self.assertIn("127.0.0.1:9400", dcgm)
+        self.assertEqual(otel, gpu_otel.replace(
+            "        - job_name: dcgm\n"
+            "          static_configs:\n"
+            "            - targets: [127.0.0.1:9400]\n", ""))
+        service = (common / "mkosi.extra/etc/systemd/system/otelcol.service").read_text()
+        for flag in ("--memory=512m", "--memory-swap=512m", "--cpus=1",
+                     "--pids-limit=128", "GOMEMLIMIT=256MiB", "--log-driver=local",
+                     "--log-opt max-size=10m", "--log-opt max-file=3"):
+            self.assertIn(flag, service)
+        self.assertNotIn("|overlay|", node)
+        self.assertIn("var/lib/user-data/docker/.+", node)
         for config in (otel, gpu_otel):
+            self.assertIn("limit_mib: 384", config)
+            self.assertIn("spike_limit_mib: 96", config)
+            self.assertNotIn("limit_percentage", config)
             self.assertIn("readers:", config)
             self.assertIn("host: 127.0.0.1", config)
             self.assertIn("port: 8888", config)

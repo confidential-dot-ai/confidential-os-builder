@@ -9,7 +9,7 @@ Type=simple
 Restart=always
 RestartSec=5
 ExecStartPre=-/usr/bin/docker rm -f confos-otelcol
-ExecStart=/usr/bin/docker run --rm --name confos-otelcol --network host --read-only --cap-drop ALL --security-opt no-new-privileges=true --tmpfs /tmp:rw,noexec,nosuid,size=16m -v /etc/confos/observability/otelcol.yaml:/etc/otelcol/config.yaml:ro docker.io/otel/opentelemetry-collector-contrib@sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849 --config=/etc/otelcol/config.yaml
+ExecStart=/usr/bin/docker run --rm --name confos-otelcol --network host --memory=512m --memory-swap=512m --cpus=1 --pids-limit=128 --env GOMEMLIMIT=256MiB --log-driver=local --log-opt max-size=10m --log-opt max-file=3 --read-only --cap-drop ALL --security-opt no-new-privileges=true --tmpfs /tmp:rw,noexec,nosuid,size=16m -v /etc/confos/observability/otelcol.yaml:/etc/otelcol/config.yaml:ro docker.io/otel/opentelemetry-collector-contrib@sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849 --config=/etc/otelcol/config.yaml
 ExecStop=/usr/bin/docker stop -t 10 confos-otelcol
 
 [Install]

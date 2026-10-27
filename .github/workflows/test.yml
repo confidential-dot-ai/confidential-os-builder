@@ -53,6 +53,7 @@ jobs:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
             - run: |
                   python3 tests/image_profiles.py
+                  python3 tests/observability_config.py
                   python3 tests/general_purpose_attest.py
                   python3 tests/ci_images.py
                   python3 tests/gpu_module_cache.py

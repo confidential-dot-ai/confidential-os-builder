@@ -23,6 +23,7 @@ on:
       - ci/**
       - firmware/**
       - tests/image_profiles.py
+      - tests/observability_config.py
       - tests/general_purpose_attest.py
       - tests/ci_images.py
       - tests/gpu_module_cache.py
@@ -71,6 +72,7 @@ jobs:
       - name: Test profile invariants and GPU-count handling
         run: |
           python3 tests/image_profiles.py
+          python3 tests/observability_config.py
           python3 tests/general_purpose_attest.py
           python3 tests/ci_images.py
           python3 tests/gpu_module_cache.py
