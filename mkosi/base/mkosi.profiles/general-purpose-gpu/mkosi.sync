@@ -90,6 +90,53 @@ mkdir -p "$STAGE/opt/nccl-tests/src"
 tar -xzf "$tests_archive" -C "$STAGE/opt/nccl-tests/src" \
     --strip-components=1
 
+# NVIDIA dcgm-exporter 4.8.4 with DCGM 4.6.1, from NVIDIA's own image by
+# digest: index sha256:148b0c025e5f2850256816fa33754fbf4733b7a086697a95613fc0ba3db5b003,
+# linux/amd64 manifest sha256:804c17f67ab63e8a4dd5301546beefaa104129f833dae4a68f5ff7c4819f471b.
+# confidential-inference's SGLang image pins the same digest. NVIDIA publishes
+# no exporter package, so the three layers that hold the exporter, the DCGM
+# libraries and their licenses are fetched by blob digest and checked.
+readonly DCGM_EXPORTER_VERSION="4.8.4"
+readonly DCGM_VERSION="4.6.1"
+readonly DCGM_REGISTRY="https://nvcr.io"
+readonly DCGM_REPOSITORY="nvidia/k8s/dcgm-exporter"
+readonly DCGM_EXPORTER_LAYER="6eec2288f04d592e7a987cae225129b67a5dcad0e8aee5fea156ee31689b628d"
+readonly DCGM_LIBRARY_LAYER="97f08c823d26f6cdddea9994b932ce7dc16d9b61c0441aec31fd6475e498f169"
+readonly DCGM_LICENSE_LAYER="c58be49ed8afc0e93f37fd7d370d7b23b1e4a2f70e1acd491801480096dc1cfa"
+
+fetch_dcgm_layer() {
+    local digest="$1" output="$2" cached token
+    cached="$CACHE/dcgm-exporter-$digest.tar.gz"
+    if [[ -f "$cached" ]] && echo "$digest  $cached" | sha256sum --check --status; then
+        cp "$cached" "$output"
+        return
+    fi
+    token="$(curl -fsS --retry 3 \
+        "$DCGM_REGISTRY/proxy_auth?scope=repository:$DCGM_REPOSITORY:pull" |
+        jq -er '.token | select(type == "string" and length > 0)')"
+    [[ -n "$token" ]]
+    curl -fL --retry 3 -H "Authorization: Bearer $token" --output "$output" \
+        "$DCGM_REGISTRY/v2/$DCGM_REPOSITORY/blobs/sha256:$digest"
+    echo "$digest  $output" | sha256sum --check --status
+    mkdir -p "$CACHE"
+    cp "$output" "$cached"
+}
+
+dcgm="$tmp/dcgm"
+mkdir -p "$dcgm"
+for digest in "$DCGM_EXPORTER_LAYER" "$DCGM_LIBRARY_LAYER" "$DCGM_LICENSE_LAYER"; do
+    fetch_dcgm_layer "$digest" "$tmp/$digest.tar.gz"
+    tar -xzf "$tmp/$digest.tar.gz" -C "$dcgm"
+done
+install -D -m 0755 "$dcgm/usr/bin/dcgm-exporter" "$STAGE/usr/local/bin/dcgm-exporter"
+# Only the exporter loads these, through its unit's LD_LIBRARY_PATH, so they
+# stay out of the image's linker cache.
+install -d -m 0755 "$STAGE/opt/dcgm/lib"
+cp -a "$dcgm"/usr/lib/x86_64-linux-gnu/libdcgm*.so* \
+    "$dcgm"/usr/lib/x86_64-linux-gnu/libnvperf_*.so "$STAGE/opt/dcgm/lib/"
+install -d -m 0755 "$STAGE/opt/dcgm/licenses"
+cp -a "$dcgm"/licenses/. "$STAGE/opt/dcgm/licenses/"
+
 install -d "$STAGE/opt/general-purpose-gpu"
 cat >"$STAGE/opt/general-purpose-gpu/VERSIONS" <<EOF
 cuda_release=$CUDA_VERSION
@@ -97,4 +144,6 @@ cuda_component_version=13.2.86
 nccl=$NCCL_VERSION
 nccl_tests_commit=$TESTS_COMMIT
 nvidia_driver=595.71.05
+dcgm_exporter=$DCGM_EXPORTER_VERSION
+dcgm=$DCGM_VERSION
 EOF

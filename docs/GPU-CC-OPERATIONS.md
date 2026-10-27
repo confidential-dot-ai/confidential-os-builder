@@ -127,6 +127,37 @@ per GPU. `POST /verify` (+ `params.nvidia_gpu_user_nonce`) →
 sane (NRAS JWTs have a tight `nbf`; the minimal guest has no NTP — collection is
 clock-independent, verification is not).
 
+## 6. GPU metrics on port 9400 (`general-purpose-gpu` only)
+
+The `general-purpose-gpu` recipe, the plain GPU VM, runs NVIDIA's
+`dcgm-exporter` 4.8.4 with an embedded DCGM 4.6.1 host engine as
+`dcgm-exporter.service`. `mkosi.sync` fetches the exporter, the DCGM
+libraries and their licenses from NVIDIA's image by blob digest into
+`/usr/local/bin/dcgm-exporter` and `/opt/dcgm`, inside the measured root.
+It serves Prometheus text on **`127.0.0.1:9400`, `GET /metrics`**.
+
+- **Series:** the fields in `/etc/dcgm-exporter/counters.csv`, which is
+  confidential-inference's `images/sglang/dcgm-counters.csv`, so a GPU VM and
+  an inference worker report the same `DCGM_FI_DEV_*` series. The profiling
+  (`DCGM_FI_PROF_*`) fields and per-link NVLink errors are off: DCGM's
+  profiling module does not load in CC mode, and the guest sees no NVLink
+  fabric.
+- **Boot order:** pulls in and waits for `nvidia-persistenced` and
+  `nvidia-cc-ready`. A `BindsTo` dependency prevents exporter startup when
+  persistence fails and stops the exporter if persistence disappears.
+  Dependencies point toward GPU services only. Exporter failure does not stop
+  the GPUs or SSH. After recovering persistence, restart the exporter.
+  It runs as a `DynamicUser` with only the NVIDIA device nodes, no
+  capabilities and no `AF_VSOCK`.
+- **Exposure:** it binds guest loopback only. There is no endpoint
+  authentication. Use SSH forwarding or a local collector by default.
+  External scraping requires an explicit protected access path configured
+  during provisioning. Workloads, including a `--network host` container,
+  must not bind 9400.
+- **Other GPU images** run nothing for metrics. A Kubernetes node image leaves
+  GPU metrics to the cluster's own dcgm-exporter (for example
+  confidential-inference's), as other managed Kubernetes services do.
+
 ## Validation matrix (real B200, this session)
 
 | GPUs | Raw QEMU / iommufd | KubeVirt / confai |
