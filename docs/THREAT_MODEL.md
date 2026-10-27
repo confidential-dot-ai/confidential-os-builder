@@ -160,8 +160,10 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
   Run workloads as non-root or in containers without `CAP_SYS_ADMIN`, deny
   them the TEE device nodes (`DeviceAllow=` allowlists, as the attest units
   do), and remember the attestation report itself is signed by the CPU — a
-  compromised workload can request quotes with its own `REPORT_DATA` but can
-  neither forge the launch state nor rewind an RTMR extend.
+  compromised workload can request quotes with its own `REPORT_DATA` (on
+  SEV-SNP its bytes land inside the measurement-register commitment unless
+  the image sets `snp_measurement_registers=off`) but can neither forge the
+  launch state nor rewind an RTMR or measurement-register extend.
 - **`--profile dev` changes the measurement** — this is the feature. A dev
   image can never silently pass verification as a production image.
 

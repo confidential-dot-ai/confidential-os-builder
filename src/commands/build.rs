@@ -461,26 +461,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
             platform: platform_tag,
         },
         inputs: manifest::ManifestInputs {
-            kernel: Some(manifest::KernelInputs {
-                linux_version: kernel.linux_version.clone(),
-                vmlinuz_sha256: kernel.manifest.outputs.vmlinuz_sha256.clone(),
-                required_config_sha256: kernel.manifest.inputs.required_config_sha256.clone(),
-                hardening_config_sha256: kernel.manifest.inputs.hardening_config_sha256.clone(),
-                kernel_extra_config_sha256: kernel
-                    .manifest
-                    .inputs
-                    .kernel_extra_config_sha256
-                    .clone(),
-                snapshot_config_sha256: kernel.manifest.inputs.snapshot_config_sha256.clone(),
-                module_signing_cert_sha256: kernel
-                    .manifest
-                    .inputs
-                    .module_signing_cert_sha256
-                    .clone(),
-                randstruct_seed_sha256: kernel.manifest.inputs.randstruct_seed_sha256.clone(),
-                trusted_dsdt_sha256: kernel.manifest.inputs.trusted_dsdt_sha256.clone(),
-                trusted_aml_patch_sha256: kernel.manifest.inputs.trusted_aml_patch_sha256.clone(),
-            }),
+            kernel: Some(image_kernel_inputs(&kernel.manifest)),
             initrd: manifest::FileEntry {
                 path: manifest::basename_of(&initrd_path),
                 sha256: initrd_hash,
@@ -1027,6 +1008,24 @@ fn zero_gzip_mtime(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The kernel's reproduction inputs as the image manifest records them.
+fn image_kernel_inputs(kernel: &crate::kernel::manifest::KernelManifest) -> manifest::KernelInputs {
+    let inputs = &kernel.inputs;
+    manifest::KernelInputs {
+        linux_version: kernel.linux_version.clone(),
+        vmlinuz_sha256: kernel.outputs.vmlinuz_sha256.clone(),
+        required_config_sha256: inputs.required_config_sha256.clone(),
+        hardening_config_sha256: inputs.hardening_config_sha256.clone(),
+        kernel_extra_config_sha256: inputs.kernel_extra_config_sha256.clone(),
+        snapshot_config_sha256: inputs.snapshot_config_sha256.clone(),
+        module_signing_cert_sha256: inputs.module_signing_cert_sha256.clone(),
+        randstruct_seed_sha256: inputs.randstruct_seed_sha256.clone(),
+        trusted_dsdt_sha256: inputs.trusted_dsdt_sha256.clone(),
+        trusted_aml_patch_sha256: inputs.trusted_aml_patch_sha256.clone(),
+        snp_mr_patch_sha256: Some(inputs.snp_mr_patch_sha256.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1035,6 +1034,33 @@ mod tests {
 
     const ROOT_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const DISK_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    #[test]
+    fn the_image_manifest_records_the_kernel_patches() {
+        let kernel: crate::kernel::manifest::KernelManifest =
+            serde_json::from_value(serde_json::json!({
+                "version": 1,
+                "linux_version": "6.18.49",
+                "inputs": {
+                    "linux_version": "6.18.49",
+                    "tarball_sha256": "a",
+                    "required_config_sha256": "b",
+                    "hardening_config_sha256": "c",
+                    "snapshot_config_sha256": "d",
+                    "trusted_dsdt_sha256": "e",
+                    "trusted_aml_patch_sha256": "f",
+                    "snp_mr_patch_sha256": "g",
+                    "tools_tree_digest": "h",
+                },
+                "outputs": { "vmlinuz_sha256": "i" },
+                "built_at": "t",
+            }))
+            .unwrap();
+        let recorded = image_kernel_inputs(&kernel);
+        assert_eq!(recorded.trusted_dsdt_sha256, "e");
+        assert_eq!(recorded.trusted_aml_patch_sha256, "f");
+        assert_eq!(recorded.snp_mr_patch_sha256.as_deref(), Some("g"));
+    }
 
     #[test]
     fn checksum_for_file_selects_image_raw_by_name() {

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Result};
 
-use crate::kernel::{aml, compile, config, fetch, manifest as km, version::KernelVersion};
+use crate::kernel::{aml, compile, config, fetch, manifest as km, snp_mr, version::KernelVersion};
 use crate::tools;
 use crate::{KernelArgs, KernelSourceArgs};
 
@@ -286,11 +286,13 @@ fn run_acpi_harness(
     )
 }
 
-/// The committed kernel pin, admitted only if the trusted-AML patch was
+/// The committed kernel pin, admitted only if every kernel patch was
 /// audited against it. Every entry point reads the pin through here.
 fn pinned_version() -> Result<KernelVersion> {
     let version = KernelVersion::read(Path::new(VERSION_PATH))?;
-    aml::verify_version(&version.linux_version)?;
+    for patch in crate::kernel::PATCHES {
+        aml::verify_version(patch, &version.linux_version)?;
+    }
     Ok(version)
 }
 
@@ -318,6 +320,7 @@ fn extract_pinned_source(
         ));
     }
     aml::stage(tools_tree, &kernel_src)?;
+    snp_mr::stage(tools_tree, &kernel_src)?;
     Ok(kernel_src)
 }
 
@@ -399,6 +402,7 @@ pub fn compute_fingerprint(
         randstruct_seed_sha256: fetch::sha256_file(Path::new(RANDSTRUCT_SEED))?,
         trusted_dsdt_sha256: fetch::sha256_file(Path::new(aml::DSDT_SOURCE))?,
         trusted_aml_patch_sha256: fetch::sha256_file(Path::new(aml::PATCH))?,
+        snp_mr_patch_sha256: fetch::sha256_file(Path::new(snp_mr::PATCH))?,
         // Hash of the caller's --kernel-config-fragment, empty when none was
         // passed — keeps the fingerprint identical to a bare baseline build.
         kernel_extra_config_sha256: match fragment {
@@ -502,6 +506,23 @@ mod tests {
         .unwrap();
     }
 
+    /// A cached kernel is reused only when the whole fingerprint is equal, so
+    /// it must carry each patch's current bytes.
+    #[test]
+    fn the_fingerprint_hashes_each_kernel_patch() {
+        use sha2::{Digest, Sha256};
+        let sha256 = |path| hex::encode(Sha256::digest(fs_err::read(path).unwrap()));
+        let fingerprint = compute_fingerprint(
+            &pinned_version().unwrap(),
+            None,
+            Path::new(DEFAULT_SIGNING_CERT),
+            Path::new(SNAPSHOT_PATH),
+        )
+        .unwrap();
+        assert_eq!(fingerprint.trusted_aml_patch_sha256, sha256(aml::PATCH));
+        assert_eq!(fingerprint.snp_mr_patch_sha256, sha256(snp_mr::PATCH));
+    }
+
     #[test]
     fn mid_build_input_edits_fail_except_the_regenerated_snapshot() {
         let staged = km::Fingerprint {
@@ -516,6 +537,7 @@ mod tests {
             randstruct_seed_sha256: "1".repeat(64),
             trusted_dsdt_sha256: "2".repeat(64),
             trusted_aml_patch_sha256: "3".repeat(64),
+            snp_mr_patch_sha256: "5".repeat(64),
             tools_tree_digest: "4".repeat(64),
         };
         verify_inputs_unchanged(&staged, &staged).unwrap();

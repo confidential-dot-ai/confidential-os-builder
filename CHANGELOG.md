@@ -8,7 +8,50 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Fixed
+- `output/OVMF.fd` is rebuilt with a `VirtioSerialDxe` fix: the driver tested
+  the ring mapping with the condition inverted and never unmapped it, so when
+  the console was stopped `IoMmuDxe` still held a mapping onto a freed bounce
+  buffer and copied into it at ExitBootServices. On SEV-SNP guests with a
+  virtio console this corrupted the DXE memory map and the RELEASE firmware
+  died with `#UD` in `CoreFindFreePagesI` before the kernel ran. **Alters
+  measurements**: every SNP launch digest changes; rebuild images and re-pin.
+
+### Security
+- `output/OVMF.fd` is rebuilt from upstream edk2 plus a fix: when the IGVM
+  carries the UKI, OVMF no longer passes the host's fw_cfg command line or
+  initrd to it (which let the host replace the measured `.cmdline`, e.g. the
+  dm-verity `roothash`), no longer boots a host fw_cfg kernel via the legacy
+  loader, and shuts down instead of falling through to the disk or the UEFI
+  Shell if the UKI returns. **Alters measurements**: every SNP launch digest
+  changes; rebuild images and re-pin.
+
 ### Added
+- Local CPU metrics and a digest-pinned OpenTelemetry Collector in the
+  general-purpose TDX and SNP recipes. The GPU recipe also aggregates its
+  native DCGM exporter. All telemetry listeners bind to loopback, with no
+  customer export destination configured. **Alters measurements** of these
+  general-purpose images. The collector container is pulled at runtime and
+  is not part of the measured root filesystem.
+- The `general-purpose-gpu` recipe runs NVIDIA's dcgm-exporter 4.8.4 (DCGM
+  4.6.1), staged by blob digest from NVIDIA's image, as `dcgm-exporter.service`.
+  It serves Prometheus GPU metrics on loopback TCP 9400 with confidential-inference's
+  counters file. The `gpu` profile and the other GPU images are unchanged.
+  **Alters measurements** of `general-purpose-gpu` images.
+- **Changes measurements.** The SEV-SNP guest kernel keeps sixteen SHA-384
+  measurement registers and an event log (`/sys/class/misc/sev-guest/measurements/`,
+  `event_log`) and commits to them in every report's `REPORT_DATA`:
+  `H ‖ SHA-384("snp-kmr-v1" ‖ H ‖ R[0..15] ‖ caller_data)`, `H` the event
+  count. Verifiers that compare `REPORT_DATA` to the caller's bytes must adopt
+  the commitment or set the switch below. Every SNP launch digest changes;
+  rebuild images and re-pin. See [docs/VERIFYING.md](docs/VERIFYING.md#sev-snp-measurement-registers).
+- **Changes measurements.** `snp_measurement_registers=off` on the kernel
+  command line turns that commitment off for consumers whose verifiers do not
+  check it yet: reports carry `REPORT_DATA` unchanged and `measurements/` and
+  `event_log` are not exposed. Set it in a profile's `KernelCommandLine=`
+  (mkosi appends to the base command line); it then shows in the measured
+  UKI. Default on, so confos behaviour is unchanged, but the patch changes:
+  every SNP launch digest changes; rebuild images and re-pin.
 - `confos run --smp <N>` selects an SNP variant or sets the vCPU count on
   KVM/emulated tiers. Runner-only; measurements are unchanged.
 - Repeatable `confos run --cdrom <ISO>` attaches read-only launch media.
@@ -34,11 +77,18 @@ build configs, since those invalidate published reference values.
   whose report data commits to both. `attestation-api` listens on
   `127.0.0.1:8401` in these images, so no caller outside the guest chooses
   what a quote covers. See [docs/VERIFYING.md](docs/VERIFYING.md).
+  A `GET /attest` answers 405 with `Allow: POST` and says what to send,
+  instead of 404.
 - Shared cross-profile package/source/tools caches, input-keyed unsigned
   NVIDIA module reuse, and changed-profile image selection. Fix package-cache
   directories and explicit mkosi output paths; keep final image assembly fresh.
 
 ### Fixed
+- **Changes measurements.** The initrd matches the `confai-scratch` serial over
+  every attached virtio disk except the image disk, instead of only
+  `/dev/vdb`-`/dev/vdd`, so a scratch disk that enumerates behind the other
+  launch disks still backs the writable state. Rebuild images and approve new
+  reference values (every SNP launch digest, TDX RTMR[1] and RTMR[2]).
 - Preserve the empty extra-package field when checking compiler-tool cache
   stamps, so restored tools are reused by ordinary builds.
 - Honor an explicitly staged registry-auth file when fetching CPU attestation

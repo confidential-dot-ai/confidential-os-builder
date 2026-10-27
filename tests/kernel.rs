@@ -82,6 +82,10 @@ fn kernel_build_succeeds() {
         manifest.inputs.trusted_aml_patch_sha256,
         sha256(Path::new(confos::kernel::aml::PATCH))
     );
+    assert_eq!(
+        manifest.inputs.snp_mr_patch_sha256,
+        sha256(Path::new(confos::kernel::snp_mr::PATCH))
+    );
 }
 
 #[test]

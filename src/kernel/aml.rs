@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use super::config;
 
@@ -44,16 +44,17 @@ const FORBIDDEN: [&str; 4] = [
     "CONFIG_ACPI_DEBUGGER",
 ];
 
-/// The patch declares the one kernel it was audited against; `kernel/version`
-/// must match it. A pin bump therefore fails until the loader hooks are
-/// re-audited and the patch retargeted, and each pin has exactly one home.
-pub fn verify_version(version: &str) -> Result<()> {
-    let patch = fs_err::read_to_string(PATCH)?;
-    let supported = supported_version(&patch)?;
+/// Each kernel patch declares the one kernel it was audited against;
+/// `kernel/version` must match it. A pin bump therefore fails until the
+/// patch's hooks are re-audited and the patch retargeted, and each pin has
+/// exactly one home.
+pub fn verify_version(patch_path: &str, version: &str) -> Result<()> {
+    let patch = fs_err::read_to_string(patch_path)?;
+    let supported = supported_version(&patch).with_context(|| patch_path.to_owned())?;
     if version != supported {
         bail!(
-            "{PATCH} supports Linux {supported}, got {version}; re-audit the ACPI loader \
-             hooks, retarget the patch and update its {VERSION_TRAILER} trailer"
+            "{patch_path} supports Linux {supported}, got {version}; re-audit the patch's \
+             hooks, retarget it and update its {VERSION_TRAILER} trailer"
         );
     }
     Ok(())
@@ -71,8 +72,8 @@ fn supported_version(patch: &str) -> Result<&str> {
         .filter(|v| !v.is_empty());
     match (versions.next(), versions.next()) {
         (Some(v), None) => Ok(v),
-        (None, _) => bail!("{PATCH} has no {VERSION_TRAILER} trailer in its header"),
-        (Some(_), Some(_)) => bail!("{PATCH} has more than one {VERSION_TRAILER} trailer"),
+        (None, _) => bail!("patch has no {VERSION_TRAILER} trailer in its header"),
+        (Some(_), Some(_)) => bail!("patch has more than one {VERSION_TRAILER} trailer"),
     }
 }
 
@@ -151,18 +152,20 @@ mod tests {
     }
 
     #[test]
-    fn committed_patch_names_the_pinned_kernel() {
+    fn committed_patches_name_the_pinned_kernel() {
         let version =
             crate::kernel::version::KernelVersion::read(Path::new("kernel/version")).unwrap();
-        verify_version(&version.linux_version).unwrap();
         let pinned = version.linux_version;
-        for other in [
-            "6.16.12",
-            &format!("{pinned}0"),
-            &format!("{pinned}-extra"),
-            "",
-        ] {
-            assert!(verify_version(other).is_err(), "accepted {other:?}");
+        for patch in crate::kernel::PATCHES {
+            verify_version(patch, &pinned).unwrap();
+            for other in [
+                "6.16.12",
+                &format!("{pinned}0"),
+                &format!("{pinned}-extra"),
+                "",
+            ] {
+                assert!(verify_version(patch, other).is_err(), "accepted {other:?}");
+            }
         }
     }
 }

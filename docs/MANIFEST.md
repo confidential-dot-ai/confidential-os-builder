@@ -33,7 +33,8 @@ shape.
       "kernel_extra_config_sha256": "",
       "snapshot_config_sha256": "…",
       "trusted_dsdt_sha256": "…",
-      "trusted_aml_patch_sha256": "…"
+      "trusted_aml_patch_sha256": "…",
+      "snp_mr_patch_sha256": "…"
     },
     "initrd": { "path": "initrd.img", "sha256": "…" },
     "firmware": { "path": "OVMF.fd", "sha256": "…" },
@@ -110,6 +111,7 @@ intermediate files).
 | `kernel.snapshot_config_sha256` | Hash of the lineage's fully-resolved `.config` lockfile: `kernel/config-x86_64.snapshot` for the bare baseline, `config-x86_64-<stem>.snapshot` beside the fragment otherwise |
 | `kernel.trusted_dsdt_sha256` | SHA-256 of `kernel/trusted-dsdt.asl`, the source compiled into the kernel; this is not the hash of a table read from guest sysfs. Required: a manifest without it comes from a builder whose kernel still honoured host AML, and confos refuses to read it |
 | `kernel.trusted_aml_patch_sha256` | SHA-256 of the version-specific kernel enforcement patch. Required, like the ASL hash. A kernel built by this builder always carries the policy; these two hashes say which table and patch, they are not a runtime test result or an independent attestation |
+| `kernel.snp_mr_patch_sha256` | SHA-256 of `kernel/patches/0002-sev-guest-measurement-registers.patch`, the patch that adds the SEV-SNP measurement registers. Absent from manifests of kernels built before it, which have no registers. Like the AML hashes, it says which patch; it is not a runtime test result. Whether reports commit to the registers is decided by `snp_measurement_registers=off` in the measured kernel command line (the `.cmdline` section of `outputs.uki`), not by this hash; see [VERIFYING.md](VERIFYING.md#sev-snp-measurement-registers) |
 | `initrd` | `initrd.img`: the mkosi-built initrd with its gzip timestamp normalized, exactly as embedded in the UKI. The trusted DSDT is in the kernel, not an early initrd archive |
 | `firmware` | The SNP-side, IGVM-aware OVMF (`--firmware`). Absent for `--platform tdx` builds. Note this is *not* the TDX firmware — that lives at `tdx.firmware` |
 | `base_image` | The mkosi-produced base filesystem image before disk assembly |

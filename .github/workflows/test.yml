@@ -8,6 +8,23 @@ on:
     merge_group:
         types: [checks_requested]
     workflow_dispatch:
+        inputs:
+            snp_boot_diagnostics:
+                description: Also build an isolated SNP diagnostic image on hosted runners
+                type: boolean
+                default: false
+            source_revision:
+                description: Full reviewed builder commit for the diagnostic image
+                type: string
+                default: '8730ac5a119a8f28bf3bf837a60f87b63ead1e1f'
+            publish_diagnostic_candidate:
+                description: Publish only unique diagnostic candidate tags
+                type: boolean
+                default: false
+            diagnostic_artifact_run_id:
+                description: Reuse attempt 1 of a retained diagnostic build run
+                type: string
+                default: ''
 
 permissions: read-all
 
@@ -15,6 +32,20 @@ env:
     CARGO_TERM_COLOR: always
 
 jobs:
+    snp-boot-diagnostics:
+        if: github.event_name == 'workflow_dispatch' && inputs.snp_boot_diagnostics
+        permissions:
+            contents: read
+            actions: read
+            packages: write
+            id-token: write
+            attestations: write
+        uses: ./.github/workflows/snp-boot-diagnostics.yml
+        with:
+            source_revision: ${{ inputs.source_revision }}
+            publish_candidate: ${{ inputs.publish_diagnostic_candidate }}
+            artifact_run_id: ${{ inputs.diagnostic_artifact_run_id }}
+
     general-purpose-gpu:
         name: General-purpose profile and cache regressions
         runs-on: ubuntu-latest
@@ -22,6 +53,7 @@ jobs:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
             - run: |
                   python3 tests/image_profiles.py
+                  python3 tests/observability_config.py
                   python3 tests/general_purpose_attest.py
                   python3 tests/general_purpose_oci_workload.py
                   python3 tests/ci_images.py
@@ -105,12 +137,23 @@ jobs:
               with:
                   path: mkosi/kernel-builder/mkosi.output-acpi
                   key: ${{ steps.acpi-tools.outputs.cache-primary-key }}
-            - name: Lint the kernel patch with upstream checkpatch
+            - name: Lint the kernel patches with upstream checkpatch
               # Before the long boot step so a style failure surfaces first.
               run: |
                   . kernel/version
                   # Read stdin so checkpatch does not treat the tracked patch as a source file.
-                  "output/acpi/linux-${LINUX_VERSION}/scripts/checkpatch.pl" --no-tree --no-signoff - < kernel/patches/0001-acpi-trusted-aml.patch
+                  for patch in kernel/patches/*.patch; do
+                      "output/acpi/linux-${LINUX_VERSION}/scripts/checkpatch.pl" --no-tree --no-signoff - < "$patch"
+                  done
+            - name: Check every kernel patch is applied in the prepared source
+              # Reverting cleanly proves the tree the builder compiles carries each
+              # patch. --force, not --batch: --batch would treat a missing patch
+              # as "reversed" and apply it forward, passing on an unpatched tree.
+              run: |
+                  . kernel/version
+                  for patch in kernel/patches/*.patch; do
+                      patch -R --dry-run --force --fuzz=0 -p1 -d "output/acpi/linux-${LINUX_VERSION}" < "$patch"
+                  done
             - name: Boot control and enforcing kernels
               run: tests/acpi/run.sh --jobs 4
             - name: Upload AML test evidence

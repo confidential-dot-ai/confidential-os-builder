@@ -60,13 +60,18 @@ echo "initrd: dm-verity device created at /dev/mapper/root"
 # passes Disk.serial from the VM spec to QEMU, so the cluster declares the
 # device's purpose in YAML and the guest sees it before boot. See src/qemu.rs
 # for the matching `confos run` path.
+#
+# INVARIANT: scratch is the first virtio disk, other than the image disk vda,
+# whose serial is confai-scratch.
 SCRATCH_DEV=""
-for dev in /dev/vdb /dev/vdc /dev/vdd; do
-    [ -e "$dev" ] || continue
-    SERIAL=$(cat "/sys/block/$(basename "$dev")/serial" 2>/dev/null || true)
-    echo "initrd: examining $dev (serial=${SERIAL:-<none>})"
+for sysdev in /sys/block/vd*; do
+    dev="${sysdev##*/}"
+    # The image disk is vda: the verity open above read its partitions.
+    case "$dev" in vda) continue ;; esac
+    SERIAL=$(cat "$sysdev/serial" 2>/dev/null || true)
+    echo "initrd: examining /dev/$dev (serial=${SERIAL:-<none>})"
     if [ "$SERIAL" = "confai-scratch" ]; then
-        SCRATCH_DEV="$dev"
+        SCRATCH_DEV="/dev/$dev"
         break
     fi
 done

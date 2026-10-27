@@ -1,0 +1,27 @@
+#!/bin/sh
+# systemd-repart < v262 fills vfat partitions with `mcopy -s`. mtools recurses
+# in the build host's readdir() order and FAT keeps directory entries in
+# insertion order, so the ESP bytes depend on the build host's filesystem.
+# Walk the tree in sorted order instead, as systemd v262 does (commit
+# f191ca982c, systemd PR #42446). Delete this directory and ExtraSearchPaths=
+# in mkosi.conf once the tools tree ships systemd >= 262.
+#
+# repart runs mtools without PATH, hence the absolute paths.
+set -eu
+export LC_ALL=C
+[ "$1" = -s ] || exec /usr/bin/mcopy "$@"
+# repart < v262 runs: mcopy -s -p -Q -m -i IMAGE SOURCE... ::
+[ "$2 $3 $4 $5" = "-p -Q -m -i" ] || { echo "mcopy wrapper: unexpected arguments: $*" >&2; exit 1; }
+img=$6; shift 6
+put() { # $1 = source path, $2 = FAT destination directory
+    [ -L "$1" ] && return 0 # vfat has no symlinks; systemd v262 skips them too
+    if [ -d "$1" ]; then
+        /usr/bin/mmd -i "$img" "$2/${1##*/}"
+        for e in "$1"/.[!.]* "$1"/..?* "$1"/*; do # unmatched globs fail both tests
+            put "$e" "$2/${1##*/}"
+        done
+    elif [ -f "$1" ]; then
+        /usr/bin/mcopy -p -Q -m -i "$img" "$1" "$2/"
+    fi
+}
+while [ $# -gt 1 ]; do put "$1" ::; shift; done

@@ -1,0 +1,2 @@
+enable prometheus-node-exporter.service
+enable otelcol.service

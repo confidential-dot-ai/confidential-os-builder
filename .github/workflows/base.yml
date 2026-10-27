@@ -128,6 +128,22 @@ jobs:
             sudo chown -R "$(id -u):$(id -g)" mkosi/base/mkosi.tools
           fi
 
+      - name: Hash each partition (gate)
+        # Lets `compare` name the partition when disk.raw differs.
+        if: inputs.gate == true
+        run: |
+          set -euo pipefail
+          img=output/base/disk.raw
+          {
+            sfdisk --dump "$img"
+            sfdisk --json "$img" |
+              jq -r '.partitiontable as $t | $t.partitions[] | "\(.start * $t.sectorsize) \(.size * $t.sectorsize) \(.node)"' |
+              while read -r start size node; do
+                sum=$(dd if="$img" bs=1M iflag=skip_bytes,count_bytes skip="$start" count="$size" status=none | sha256sum)
+                echo "${sum%% *}  $node"
+              done
+          } > output/base/partitions
+
       - name: Upload measurement evidence (gate)
         # Gate mode ends here: evidence out, nothing published. The report
         # timestamp is metadata rather than a baked byte, so `compare`
@@ -139,6 +155,7 @@ jobs:
           path: |
             output/base/manifest.json
             output/base/roothash
+            output/base/partitions
           if-no-files-found: error
           retention-days: 7
 

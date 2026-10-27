@@ -157,7 +157,43 @@ fn check_builder_invariants(config: &str) -> Result<()> {
              instead (docs/module-signing.md)."
         );
     }
+    check_lockdown(config)?;
     super::aml::verify_config(config)
+}
+
+/// Root in the guest must not read kernel memory, where guest secrets such
+/// as the SNP VMPCK live: with it root could sign its own attestation
+/// reports. Lockdown blocks the runtime paths; the readers below are also
+/// compiled out.
+const LOCKDOWN: [(&str, &str); 2] = [
+    // An early LSM starts unconditionally, so neither CONFIG_LSM nor `lsm=`
+    // can leave the forced mode unenforced.
+    ("CONFIG_SECURITY_LOCKDOWN_LSM_EARLY", "y"),
+    ("CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY", "y"),
+];
+/// KEXEC, KEXEC_FILE and KEXEC_HANDOVER all select KEXEC_CORE, and
+/// CRASH_DUMP depends on it, so it stands for every kexec path.
+const MEMORY_READERS: [&str; 3] = ["CONFIG_DEVMEM", "CONFIG_PROC_KCORE", "CONFIG_KEXEC_CORE"];
+
+fn check_lockdown(config: &str) -> Result<()> {
+    let values = values(config);
+    for (symbol, value) in LOCKDOWN {
+        if values.get(symbol) != Some(&value) {
+            anyhow::bail!(
+                "resolved .config must have {symbol}={value}: confidentiality lockdown keeps \
+                 root out of kernel memory; consumer fragments cannot disable it"
+            );
+        }
+    }
+    for symbol in MEMORY_READERS {
+        if values.contains_key(symbol) {
+            anyhow::bail!(
+                "resolved .config enables {symbol}: it lets root read or replace kernel \
+                 memory; consumer fragments cannot enable it"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Fail if the resolved `.config` disagrees with what the fragments
@@ -553,7 +589,59 @@ mod tests {
         ];
         let snapshot = include_str!("../../kernel/config-x86_64.snapshot");
         check_fragment_options(&fragments, snapshot).unwrap();
-        check_builder_invariants(snapshot).unwrap();
+        for snapshot in SHIPPED_SNAPSHOTS {
+            check_builder_invariants(snapshot).unwrap();
+        }
+    }
+
+    const SHIPPED_SNAPSHOTS: [&str; 3] = [
+        include_str!("../../kernel/config-x86_64.snapshot"),
+        include_str!("../../kernel/config-x86_64-general-purpose.snapshot"),
+        include_str!("../../kernel/config-x86_64-general-purpose-gpu.snapshot"),
+    ];
+
+    type Edit = (&'static str, &'static str);
+
+    /// Each case is the resolved `.config` diff that `merge_config.sh` +
+    /// `olddefconfig` on the 6.18.49 tree produced from a shipped snapshot
+    /// and a consumer fragment re-enabling one symbol.
+    #[test]
+    fn builder_invariants_reject_weakened_lockdown() {
+        // (shipped line, resolved line) edits.
+        let cases: [&[Edit]; 5] = [
+            &[(
+                "CONFIG_SECURITY_LOCKDOWN_LSM_EARLY=y\n",
+                "# CONFIG_SECURITY_LOCKDOWN_LSM_EARLY is not set\n",
+            )],
+            &[
+                (
+                    "# CONFIG_LOCK_DOWN_KERNEL_FORCE_NONE is not set\n",
+                    "CONFIG_LOCK_DOWN_KERNEL_FORCE_NONE=y\n",
+                ),
+                (
+                    "CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY=y\n",
+                    "# CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY is not set\n",
+                ),
+            ],
+            &[("# CONFIG_DEVMEM is not set\n", "CONFIG_DEVMEM=y\n")],
+            &[("# CONFIG_PROC_KCORE is not set\n", "CONFIG_PROC_KCORE=y\n")],
+            // KEXEC_FILE resolves the same way: both select KEXEC_CORE.
+            &[(
+                "# CONFIG_KEXEC is not set\n",
+                "CONFIG_KEXEC=y\nCONFIG_KEXEC_CORE=y\n",
+            )],
+        ];
+        for snapshot in SHIPPED_SNAPSHOTS {
+            check_builder_invariants(snapshot).unwrap();
+            for edits in cases {
+                let mut resolved = snapshot.to_owned();
+                for (shipped, weakened) in edits {
+                    assert_eq!(resolved.matches(shipped).count(), 1, "{shipped}");
+                    resolved = resolved.replace(shipped, weakened);
+                }
+                assert!(check_builder_invariants(&resolved).is_err(), "{edits:?}");
+            }
+        }
     }
 
     #[test]
@@ -611,6 +699,7 @@ mod tests {
     #[test]
     fn builder_invariants_accept_module_sig_all_off() {
         let d = TempDir::new().unwrap();
+        let lockdown: String = LOCKDOWN.map(|(s, v)| format!("{s}={v}\n")).concat();
         for body in [
             "CONFIG_MODULE_SIG=y\nCONFIG_MODULE_SIG_KEY=\"\"\n# CONFIG_MODULE_SIG_ALL is not set\n",
             "CONFIG_MODULES=y\n",
@@ -618,7 +707,7 @@ mod tests {
             let resolved = write(
                 &d,
                 "resolved",
-                &format!("{body}{}", crate::kernel::aml::VALID_CONFIG),
+                &format!("{body}{}{lockdown}", crate::kernel::aml::VALID_CONFIG),
             );
             verify_builder_invariants(&resolved).unwrap();
         }

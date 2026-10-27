@@ -1,0 +1,2 @@
+# NVIDIA dcgm-exporter: GPU metrics on :9400 (docs/GPU-CC-OPERATIONS.md).
+enable dcgm-exporter.service

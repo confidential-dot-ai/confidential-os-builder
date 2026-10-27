@@ -19,6 +19,7 @@ the image-name portion of the GHCR tags.
 | `extra_kernel_inputs` | Additional paths that make the CI selector rebuild this recipe when changed. This is change-detection metadata, not another list of fragments to merge. |
 | `platform` | TEE target passed to `confos build`: `snp` for AMD SEV-SNP or `tdx` for Intel TDX. Selects the build/measurement path, not a host allocation. |
 | `memory` | Build-time VM memory parameter used by the measurement configuration. It does not allocate RAM, set GPU count, or promise a supported deployment topology. |
+| `smp` | Optional vCPU counts passed to the existing IGVM builder. Each SNP variant carries its own measured launch digest. |
 
 The `base` recipe preserves the existing builder defaults: **SNP, 2G, no
 optional profiles**. It does not mean these new container images target SNP.
@@ -26,6 +27,12 @@ Both `general-purpose` and `general-purpose-gpu` target **TDX**, with build-time
 memory parameters of 8G and 128G respectively. Runtime layouts need separate
 hardware acceptance and the matching manifest; do not infer allocation from
 these values.
+
+`general-purpose-snp` uses the same CPU kernel and ordered workload profiles
+as `general-purpose`, targeting SNP with measured 2- and 4-vCPU IGVM variants.
+These cover the vCPU counts of the CPU catalog's five sizes; each CPU/memory
+combination still requires hardware acceptance before Cloud advertises it.
+The native publisher includes every variant in both OCI representations.
 
 ## Where this plugs in
 
