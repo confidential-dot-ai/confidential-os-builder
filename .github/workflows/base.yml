@@ -66,7 +66,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           # mkosi is the only uv consumer; there is no Python dependency set.
           enable-cache: false
@@ -161,7 +161,7 @@ jobs:
 
       - name: Setup ORAS
         if: github.ref == 'refs/heads/main' && inputs.gate != true
-        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
 
       - name: Push to GHCR
         # Gate legs never publish, even on main: `:base` is the mutable tag
