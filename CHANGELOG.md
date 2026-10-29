@@ -9,6 +9,10 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Fixed
+- `general-purpose` images no longer boot with an ordering cycle between
+  `general-purpose-oci-workload-prepare.service` and `docker.socket`, which
+  systemd broke by dropping a job and could leave Docker and the OCI workload
+  stopped. **Alters measurements** of `general-purpose` images.
 - `general-purpose` images set `snp_measurement_registers=off`, so an SNP
   quote from `/attest` carries the `REPORT_DATA` the endpoint documents
   instead of the measurement-register commitment, which no verifier of that
