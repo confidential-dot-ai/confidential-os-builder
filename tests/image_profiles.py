@@ -215,6 +215,9 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
         self.assertIn("inputs.publish == true", workflow)
         recipes = json.loads((ROOT / "ci/images.json").read_text())
         self.assertIn("general-purpose", recipes["general-purpose"]["profiles"])
+        # SNP quotes from /attest carry the caller's REPORT_DATA, which is what
+        # its verifiers check.
+        self.assertIn("KernelCommandLine=snp_measurement_registers=off", conf.splitlines())
 
     def test_observability_profiles_are_loopback_only_and_destination_free(self):
         common = ROOT / "mkosi/base/mkosi.profiles/observability"
