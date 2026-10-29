@@ -13,6 +13,10 @@ build configs, since those invalidate published reference values.
   `general-purpose-oci-workload-prepare.service` and `docker.socket`, which
   systemd broke by dropping a job and could leave Docker and the OCI workload
   stopped. **Alters measurements** of `general-purpose` images.
+- `general-purpose` images set `snp_measurement_registers=off`, so an SNP
+  quote from `/attest` carries the `REPORT_DATA` the endpoint documents
+  instead of the measurement-register commitment, which no verifier of that
+  endpoint replays yet. **Alters measurements** of `general-purpose` images.
 - `output/OVMF.fd` is rebuilt with a `VirtioSerialDxe` fix: the driver tested
   the ring mapping with the condition inverted and never unmapped it, so when
   the console was stopped `IoMmuDxe` still held a mapping onto a freed bounce
