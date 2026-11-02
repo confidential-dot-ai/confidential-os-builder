@@ -9,6 +9,14 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Fixed
+- The `attest` and `attest-gpu` attestation-api configs no longer carry a
+  `[certs]` table. attestation-api since attestation-rs `92816f10` rejects
+  unknown fields and has no `[certs]`, so it refused the baked config and
+  never started. Older attestation-api builds, including the one these
+  profiles pin, fill the table with defaults: `attest-gpu` is unchanged, and
+  `attest` stops prefetching the Genoa VCEK chain at startup and fetches it
+  on first use instead. **Alters measurements** of every image built with
+  either profile.
 - Backport ACPICA's parser-bound initialization in `acpi_install_method`
   for Linux 6.18.60. This fixes the trusted-AML test's unhardened positive
   control. Trusted kernels still reject dynamic method installation.

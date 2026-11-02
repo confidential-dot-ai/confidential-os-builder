@@ -1,5 +1,8 @@
 # Baked by `confos build --profile attest`. This measured configuration is
 # read-only at runtime; change it at build time.
+#
+# Only tables every pinned attestation-api accepts: newer releases reject
+# unknown fields, and dropped the [certs] table for their collateral layer.
 
 [server]
 bind = "0.0.0.0:8400"
@@ -9,14 +12,6 @@ enabled = false
 
 [auth]
 api_keys = []
-
-[certs]
-cache_max_entries = 1024
-vcek_ttl_hours = 24
-chain_ttl_hours = 168
-crl_refresh_hours = 6
-tdx_collateral_ttl_hours = 24
-prefetch_chains = ["milan", "genoa"]
 
 [token]
 enabled = false
