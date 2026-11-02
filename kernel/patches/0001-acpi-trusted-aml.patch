@@ -11,7 +11,7 @@ fingerprints this patch and that source. The Linux-Version trailer names
 the source the hooks below were audited against; the builder refuses any
 other kernel/version until the patch is retargeted.
 
-Linux-Version: 6.18.49
+Linux-Version: 6.18.60
 ---
 --- a/drivers/acpi/Kconfig
 +++ b/drivers/acpi/Kconfig

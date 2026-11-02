@@ -26,6 +26,15 @@ build configs, since those invalidate published reference values.
   measurements**: every SNP launch digest changes; rebuild images and re-pin.
 
 ### Security
+- Bump the shared guest kernel from Linux 6.18.49 to 6.18.60, including the
+  IPv4 TCP use-after-free fix for CVE-2026-98432 (first fixed in 6.18.56).
+  This applies to the base, general-purpose CPU and general-purpose GPU
+  images without changing their hardening or networking policy.
+  **Alters measurements**: rebuild images and signed GPU modules, publish
+  new manifests and update verifier reference values before rollout.
+  Existing guests must boot the updated image. Updating containers alone
+  does not replace their guest kernel, and physical host kernels require
+  separate updates.
 - `output/OVMF.fd` is rebuilt from upstream edk2 plus a fix: when the IGVM
   carries the UKI, OVMF no longer passes the host's fw_cfg command line or
   initrd to it (which let the host replace the measured `.cmdline`, e.g. the
