@@ -43,9 +43,10 @@ if [ -d /usr/lib64 ]; then
     ln -s usr/lib64 "$fixture_root/lib64"
 fi
 touch "$fixture_root/confos-test-root" "$fixture_root/dev/null" \
-    "$fixture_root/dev/urandom" "$fixture_root/dev/vda2"
+    "$fixture_root/dev/urandom" "$fixture_root/dev/zero" "$fixture_root/dev/vda2"
 mount --bind /dev/null "$fixture_root/dev/null"
 mount --bind /dev/urandom "$fixture_root/dev/urandom"
+mount --bind /dev/zero "$fixture_root/dev/zero"
 printf 'roothash=%064d\n' 0 > "$fixture_root/proc/cmdline"
 printf '0.00 0.00\n' > "$fixture_root/proc/uptime"
 # A malformed test boot must never write the real host's sysrq-trigger.
@@ -66,8 +67,13 @@ exit 0
 SHIM
 cat > "$fixture_root/usr/sbin/blkid" <<'SHIM'
 #!/bin/bash
-# No operator-key disk. Expose both NoCloud and ConfigDrive disks to detection.
+# The operator-key disk exists while a test fills /opkey-disk. Expose both
+# NoCloud and ConfigDrive disks to detection.
 if [ "${1:-}" = -L ]; then
+    if [ "${2:-}" = opkeydata ] && [ -d /opkey-disk ]; then
+        echo /dev/opkeydata
+        exit 0
+    fi
     exit 1
 fi
 printf 'DEVNAME=/dev/vdb\nLABEL=cidata\nTYPE=iso9660\n\nDEVNAME=/dev/vdc\nLABEL=config-2\nTYPE=iso9660\n'
@@ -84,6 +90,10 @@ case "$*" in
         exec /usr/bin/mount -o remount,bind,ro /sysroot ;;
     "/dev/mapper/scratch /state")
         exec /usr/bin/mount -t tmpfs tmpfs /state ;;
+    "-o ro /dev/opkeydata /opkey")
+        exec /usr/bin/mount --bind /opkey-disk /opkey ;;
+    "-t configfs configfs /sys/kernel/config")
+        exit 0 ;;
     *)
         exec /usr/bin/mount "$@" ;;
 esac
@@ -99,6 +109,17 @@ SHIM
 cat > "$fixture_root/usr/sbin/switch_root" <<'SHIM'
 #!/bin/bash
 printf '%s\n' "$@" > /switch-root-args
+# The staged key is on this boot's private /run; keep a copy for the tests.
+if [ -e /sysroot/run/confai/operator-pubkey ]; then
+    cp /sysroot/run/confai/operator-pubkey /switch-root-pubkey
+fi
+SHIM
+cat > "$fixture_root/usr/sbin/sleep" <<'SHIM'
+#!/bin/bash
+# The fixture's sysrq-trigger is a plain file: end the power-off wait as a
+# failed boot, and skip every other wait.
+[ "${1:-}" = 2147483647 ] && exit 1
+exit 0
 SHIM
 chmod +x "$fixture_root"/usr/sbin/*
 chroot "$fixture_root" /usr/bin/python3 /tests.py

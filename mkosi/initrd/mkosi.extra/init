@@ -183,10 +183,8 @@ mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
 #   caught here. HOSTDATA is 32 bytes at offset 192 in every accepted
 #   report version.
 #
-# The initrd is the single place the key is hashed, so the credential-release
-# service can later trust the pubkey off this same disk without a separate
-# digest to cross-check: this initrd is measured, and it only binds the hash
-# of the exact bytes it reads.
+# The initrd is the single place the key is hashed, and it binds the hash of
+# the exact bytes it stages.
 #
 # Why a labelled secret disk and not a raw serial-tagged block device: the
 # secret arrives as a file inside an ISO filesystem (KubeVirt's SecretVolume
@@ -198,97 +196,123 @@ mkdir -p /sysroot/run/dbus /sysroot/var/log/journal
 # state executes first. The binding is fixed for the guest's lifetime and
 # reflects only the launch-supplied key.
 #
-# Fail-closed asymmetry (security-critical):
-#   - no opkey disk                 -> skip (unbound node; a non-operator boot)
-#   - disk present, binding FAILS   -> FATAL. Booting on with the key unbound
-#     (TDX: RTMR[3] unextended; SNP: HOSTDATA not matching) when a key was
-#     supplied would let the host strip or substitute the binding undetected.
-RTMR3=/sys/devices/virtual/misc/tdx_guest/measurements/rtmr3:sha384
-OPKEY_DEV=$(blkid -L opkeydata 2>/dev/null || true)
+# INVARIANT: switch_root runs only after the staged key is bound (TDX: RTMR[3]
+# extended once with its SHA-384; SNP: HOSTDATA equals its SHA-256), or with
+# no opkeydata disk where the launcher committed nothing (TDX, SNP with
+# all-zero HOSTDATA, or a guest with no attestation interface). Every other
+# outcome powers the guest off.
+fail_binding() {
+    echo "FATAL: launch binding failed: $1" >&2
+    echo o > /proc/sysrq-trigger
+    # sysrq-o powers off from a workqueue; PID 1 must never exit, or the kernel
+    # panics and reboots.
+    exec sleep "$POWER_OFF_WAIT_SECONDS"
+}
 
-if [ -n "$OPKEY_DEV" ]; then
-    echo "initrd: found opkeydata disk at $OPKEY_DEV — binding operator key"
-    fail_opkey() {
-        echo "FATAL: operator key supplied but binding failed: $1" >&2
-        echo b > /proc/sysrq-trigger
-        exit 1  # fallback if sysrq disabled
-    }
+TDX_MEASUREMENTS=/sys/devices/virtual/misc/tdx_guest/measurements
+RTMR3=$TDX_MEASUREMENTS/rtmr3:sha384
+STAGED_KEY=/sysroot/run/confai/operator-pubkey
+POWER_OFF_WAIT_SECONDS=2147483647
+UNSET_HOSTDATA_HEX=$(printf '%064d' 0)
+
+# Writes HOSTDATA, bytes 192..223 of our own report, to /snp-hostdata.bin.
+# REPORTDATA is 64 zero bytes: HOSTDATA is immutable, so freshness is
+# irrelevant.
+read_snp_hostdata() {
+    mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+    tsm=/sys/kernel/config/tsm/report/opkey
+    mkdir -p "$tsm" 2>/dev/null || return 1
+    dd if=/dev/zero bs=64 count=1 2>/dev/null > "$tsm/inblob" || return 1
+    # ONE read: outblob is generated per inblob write.
+    cat "$tsm/outblob" > /snp-report.bin || return 1
+    rmdir "$tsm" 2>/dev/null || true
+    dd if=/snp-report.bin of=/snp-hostdata.bin bs=1 skip=192 count=32 2>/dev/null
+}
+
+# Copy the key into the post-switch_root filesystem because the hardened
+# cred-release service cannot mount the ISO. Stage under /run because /etc is
+# read-only; the baked /etc/confai -> /run/confai symlink preserves the
+# consumer path. Bind the directory read-only to prevent ordinary
+# replacement.
+stage_key() {
+    disk=$1
     mkdir -p /opkey
-    mount -o ro "$OPKEY_DEV" /opkey 2>/dev/null || fail_opkey "mount $OPKEY_DEV failed"
-    [ -s /opkey/pubkey ] || fail_opkey "no /opkey/pubkey on disk"
-    # Copy the key into the post-switch_root filesystem because the hardened
-    # cred-release service cannot mount the ISO. The initrd stages exactly the
-    # bytes it binds, and the service rechecks that platform binding.
-    #
-    # Stage under /run because /etc is read-only; the baked /etc/confai ->
-    # /run/confai symlink preserves the consumer path. Bind the directory
-    # read-only to prevent ordinary replacement. The consumer still verifies
-    # the platform binding before trusting the key.
+    mount -o ro "$disk" /opkey 2>/dev/null || fail_binding "mount $disk failed"
+    [ -s /opkey/pubkey ] || fail_binding "no /opkey/pubkey on disk"
     mkdir -p /sysroot/run/confai
-    cp /opkey/pubkey /sysroot/run/confai/operator-pubkey || fail_opkey "stage pubkey failed"
-    chmod 0644 /sysroot/run/confai/operator-pubkey
+    cp /opkey/pubkey "$STAGED_KEY" || fail_binding "stage pubkey failed"
+    chmod 0644 "$STAGED_KEY" || fail_binding "chmod of the staged key failed"
     mount --bind /sysroot/run/confai /sysroot/run/confai \
         && mount -o remount,bind,ro /sysroot/run/confai \
-        || fail_opkey "read-only bind of /run/confai failed"
-
-    if [ -w "$RTMR3" ]; then
-        # --- TDX arm: extend SHA-384(pubkey) into RTMR[3] ---
-        # sha384sum prints "<hex>  -" -> 96 hex chars. Sole hash site.
-        DIGEST_HEX=$(sha384sum < /opkey/pubkey | cut -d' ' -f1)
-        case "$DIGEST_HEX" in
-            *[!0-9a-f]* | "") fail_opkey "sha384sum produced non-hex" ;;
-        esac
-        [ "${#DIGEST_HEX}" = "96" ] || fail_opkey "digest is ${#DIGEST_HEX} hex chars, want 96"
-        # Convert 96 hex chars -> 48 raw bytes in a tmpfs file, then write to
-        # the extend node with dd in ONE 48-byte write(2): the node rejects any
-        # other size, and bash printf splits its output at 0x0a bytes (~17% of
-        # digests), so redirecting printf at the node fails for those keys.
-        # sed turns "ab" into "\xab"; printf interprets the escapes.
-        esc=$(printf '%s' "$DIGEST_HEX" | sed 's/../\\x&/g')
-        # Intentional: $esc IS the format string — that's what interprets the
-        # \x escapes into raw bytes. DIGEST_HEX is validated [0-9a-f]{96}
-        # above, so $esc contains only \xNN sequences, no user-controlled
-        # format directives.
-        # shellcheck disable=SC2059
-        printf "$esc" > /opkey-digest.bin
-        n=$(wc -c < /opkey-digest.bin)
-        [ "$n" = "48" ] || fail_opkey "digest converted to $n bytes, want 48"
-        dd if=/opkey-digest.bin of="$RTMR3" bs=48 count=1 2>/dev/null \
-            || fail_opkey "write to $RTMR3 rejected"
-        rm -f /opkey-digest.bin
-        echo "initrd: RTMR[3] extended with operator key digest $DIGEST_HEX"
-    elif [ -c /dev/sev-guest ]; then
-        # --- SNP arm: verify sha256(pubkey) == report.HOSTDATA ---
-        WANT=$(sha256sum < /opkey/pubkey | cut -d' ' -f1)
-        case "$WANT" in
-            *[!0-9a-f]* | "") fail_opkey "sha256sum produced non-hex" ;;
-        esac
-        [ "${#WANT}" = "64" ] || fail_opkey "digest is ${#WANT} hex chars, want 64"
-        mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
-        TSM=/sys/kernel/config/tsm/report/opkey
-        mkdir -p "$TSM" 2>/dev/null || fail_opkey "no ConfigFS-TSM report dir (kernel lacks CONFIG_TSM_REPORTS?)"
-        # 64 zero bytes of REPORTDATA: freshness is irrelevant here — HOSTDATA
-        # is immutable and we read our own report through the kernel.
-        dd if=/dev/zero bs=64 count=1 2>/dev/null > "$TSM/inblob" \
-            || fail_opkey "TSM inblob write failed"
-        # ONE read: outblob is generated per inblob write; a second read
-        # returns nothing.
-        cat "$TSM/outblob" > /opkey-report.bin || fail_opkey "TSM outblob read failed"
-        n=$(wc -c < /opkey-report.bin)
-        [ "$n" -ge 224 ] || fail_opkey "SNP report is $n bytes, want >= 224"
-        GOT=$(dd if=/opkey-report.bin bs=1 skip=192 count=32 2>/dev/null | od -v -An -tx1 | tr -d ' \n')
-        rm -f /opkey-report.bin
-        rmdir "$TSM" 2>/dev/null || true
-        [ "${#GOT}" = "64" ] || fail_opkey "HOSTDATA extraction got ${#GOT} hex chars, want 64"
-        [ "$GOT" = "$WANT" ] || fail_opkey "HOSTDATA is $GOT but staged key implies $WANT (launcher stripped or substituted the binding)"
-        echo "initrd: HOSTDATA verified against operator key digest $WANT"
-    else
-        fail_opkey "no binding mechanism: neither writable $RTMR3 nor /dev/sev-guest"
-    fi
+        || fail_binding "read-only bind of /run/confai failed"
     umount /opkey 2>/dev/null || true
+}
+
+extend_rtmr3() {
+    digest=$(sha384sum < "$STAGED_KEY" | cut -d' ' -f1)
+    case "$digest" in
+        *[!0-9a-f]* | "") fail_binding "sha384sum produced non-hex" ;;
+    esac
+    [ "${#digest}" = 96 ] || fail_binding "digest is ${#digest} hex chars, want 96"
+    # Write the 48 raw bytes from a file with dd in ONE write(2): the node
+    # rejects any other size, and bash printf splits its output at 0x0a bytes
+    # (~17% of digests). $esc is the format string on purpose; the validated
+    # hex makes it only \xNN escapes.
+    esc=$(printf '%s' "$digest" | sed 's/../\\x&/g')
+    # shellcheck disable=SC2059
+    printf "$esc" > /opkey-digest.bin
+    n=$(wc -c < /opkey-digest.bin)
+    [ "$n" = 48 ] || fail_binding "digest converted to $n bytes, want 48"
+    dd if=/opkey-digest.bin of="$RTMR3" bs=48 count=1 2>/dev/null \
+        || fail_binding "write to $RTMR3 rejected"
+    rm -f /opkey-digest.bin
+    echo "initrd: RTMR[3] extended with operator key digest $digest"
+}
+
+# The one platform selection: how a staged key is bound. TDX binds it by
+# extending RTMR[3], with no launcher commitment to read. SNP binds it through
+# the launcher's HOSTDATA commitment, which every SNP outcome checks.
+if [ -d "$TDX_MEASUREMENTS" ]; then
+    TEE=tdx
+elif [ -c /dev/sev-guest ]; then
+    TEE=snp
+    read_snp_hostdata || fail_binding "read HOSTDATA from a ConfigFS-TSM report failed"
+    n=$(wc -c < /snp-hostdata.bin)
+    [ "$n" = 32 ] || fail_binding "HOSTDATA is $n bytes, want 32"
+    HOSTDATA=$(od -v -An -tx1 < /snp-hostdata.bin | tr -d ' \n')
 else
-    echo "initrd: no opkeydata disk — node boots unbound"
+    TEE=unattestable
 fi
+
+OPKEY_DEV=$(blkid -L opkeydata 2>/dev/null || true)
+if [ -n "$OPKEY_DEV" ]; then
+    echo "initrd: found opkeydata disk at $OPKEY_DEV — binding operator key"
+    DISK=disk
+else
+    DISK=nodisk
+fi
+
+case "$TEE,$DISK" in
+    tdx,disk)
+        stage_key "$OPKEY_DEV"
+        extend_rtmr3 ;;
+    snp,disk)
+        stage_key "$OPKEY_DEV"
+        want=$(sha256sum < "$STAGED_KEY" | cut -d' ' -f1)
+        [ "$HOSTDATA" = "$want" ] || fail_binding "HOSTDATA is $HOSTDATA but staged key implies $want (launcher stripped or substituted the binding)"
+        echo "initrd: HOSTDATA verified against operator key digest $want" ;;
+    unattestable,disk)
+        fail_binding "opkeydata disk on a guest with no attestation interface: neither $TDX_MEASUREMENTS nor /dev/sev-guest" ;;
+    tdx,nodisk)
+        echo "initrd: no opkeydata disk on TDX — node boots unbound, RTMR[3] unextended" ;;
+    snp,nodisk)
+        [ "$HOSTDATA" = "$UNSET_HOSTDATA_HEX" ] || fail_binding "no opkeydata disk but HOSTDATA is $HOSTDATA (launcher committed a binding)"
+        echo "initrd: no opkeydata disk and all-zero HOSTDATA — node boots unbound" ;;
+    unattestable,nodisk)
+        echo "initrd: no opkeydata disk and no attestation interface — node boots unbound" ;;
+    *)
+        fail_binding "no outcome for TEE=$TEE with $DISK" ;;
+esac
 
 echo "initrd: switching root..."
 exec switch_root /sysroot /sbin/init
