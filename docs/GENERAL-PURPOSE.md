@@ -110,7 +110,10 @@ For KubeVirt, attach:
   for host QGS; the CPU image uses the ConfigFS TSM quote path without vsock.
 - A public-key Secret disk with `volumeLabel: opkeydata` and a file named
   `pubkey`. Put one OpenSSH public key per line; supply customer and operator
-  keys here, not in the image. The initrd binds the exact bundle into RTMR[3].
+  keys here, not in the image. On TDX the initrd binds the exact bundle into
+  RTMR[3]. On SNP the launch must also set HOSTDATA to `SHA-256(pubkey)`
+  ([DEPLOYING.md](DEPLOYING.md#amd-sev-snp)), or the guest powers off.
+  A guest launched with this disk outside a TEE powers off.
   It may also carry one workload line; see [OCI workloads](#oci-workloads).
   On `general-purpose-gpu` it may carry `# confos-gpu-metrics/v1`, which
   serves the GPUs' metrics on 9400 beyond loopback; see

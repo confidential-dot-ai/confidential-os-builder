@@ -144,9 +144,20 @@ When a verifier follows [VERIFYING.md](VERIFYING.md) and the checks pass:
 - **Some `/etc` paths intentionally resolve to runtime state** —
   `/etc/ssh` is writable when the ssh profile is enabled so first-boot host
   keys can be generated; this also makes its SSH configuration root-writable.
-  `/etc/confai` points to the read-only-bound `/run/confai` directory that
-  holds the staged operator key, whose consumer rechecks the RTMR/HOSTDATA
-  binding. `/etc/resolv.conf` points to systemd-resolved's stub under `/run`.
+  `/etc/confai` points to the `/run/confai` directory that holds the staged
+  operator key. The initrd binds those bytes to RTMR[3] or HOSTDATA before
+  switch_root and bind-mounts the directory read-only against ordinary
+  replacement; consumers trust the file on that basis alone.
+  `/etc/resolv.conf` points to systemd-resolved's stub under `/run`.
+- **A launch binding the guest cannot check powers it off** — the host
+  supplies the `opkeydata` disk and, on SNP, HOSTDATA. A guest powers off
+  when it cannot bind the key it staged, and an SNP guest whose HOSTDATA is
+  not all zero powers off unless a disk carries the matching key. The initrd
+  takes the platform from interfaces that the measured kernel creates only on
+  that TEE (the TDX measurement registers, else `/dev/sev-guest`), so the rule
+  it applies is the one for the TEE that signs the evidence. The binding
+  ties the evidence to the bytes the guest uses, not to their publisher: the
+  verifier makes that tie ([VERIFYING.md](VERIFYING.md#operator-key-binding)).
 - **Writable state is ephemeral** — with no scratch disk, writes go to a RAM
   tmpfs; the scratch disk is re-keyed and reformatted every boot, so nothing
   survives shutdown either way. Each distinct declared directory receives

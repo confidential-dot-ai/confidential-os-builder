@@ -244,6 +244,35 @@ The `Test kernel AML enforcement` CI job runs this harness on
 checksum-verified source and uploads its logs,
 resolved test configurations and result files.
 
+### Operator-key binding
+
+A launcher can attach an `opkeydata` disk whose `pubkey` file the guest
+trusts, for example for SSH logins. The host delivers that disk, and neither
+the manifest nor the launch measurement covers it. The guest's initrd ties
+the file it staged to a separate field of the same signed evidence, and it
+powers the guest off when it cannot:
+
+| Platform | Field | Guest staged a `pubkey` file | Guest staged no file |
+|---|---|---|---|
+| SEV-SNP | `HOST_DATA` | `SHA-256(pubkey)` | 32 zero bytes |
+| TDX | `RTMR[3]` after the initrd | `SHA-384(48 zero bytes ‖ SHA-384(pubkey))` | 48 zero bytes |
+
+`RTMR[3]` starts at 48 zero bytes, and extending it with 48 bytes `d` sets it
+to `SHA-384(RTMR[3] ‖ d)`. The initrd extends it once, with
+`d = SHA-384(pubkey)`, before anything else does. For an image that extends
+`RTMR[3]` again at runtime, apply that image's extends to the table's value,
+in order, and compare the result.
+
+On SEV-SNP the host sets `HOST_DATA` at launch (QEMU `host-data=`). The
+launch digest and the manifest do not cover it.
+
+This shows which file the guest uses. It does not show that the file is the
+one its publisher meant: the host chooses the disk and, on SEV-SNP,
+`HOST_DATA`. Compute the table's value for the `pubkey` file you expect, or
+take the value for no file, and compare the field against it. Obtain that
+expectation as you obtain the manifest, through a channel the host cannot
+alter.
+
 ### SSH host keys of a general-purpose guest
 
 A `general-purpose` guest makes its SSH host keys at every boot, in its
@@ -348,6 +377,7 @@ For a production deployment, all of these should hold:
 - [ ] Fresh nonce round-tripped through the report/quote
 - [ ] Measurement matches the manifest (correct `smp` variant on SNP)
 - [ ] Debug policy bits are off
+- [ ] The [operator-key binding](#operator-key-binding) is the one for the `pubkey` file you expect, or the one for no file
 - [ ] Image was **not** built with `--profile dev` (its marker in the measured cmdline: `console=ttyS0`)
 - [ ] The measured cmdline carries `snp_measurement_registers=off` only if your verifier expects a plain `REPORT_DATA`
 - [ ] Approved artifacts include the mandatory trusted-AML kernel policy
