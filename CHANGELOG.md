@@ -35,6 +35,10 @@ build configs, since those invalidate published reference values.
   Existing guests must boot the updated image. Updating containers alone
   does not replace their guest kernel, and physical host kernels require
   separate updates.
+- Base and initrd apt snapshots advance from `20261011T000000Z` to
+  `20261030T000000Z`, picking up `ca-certificates` 20260816ubuntu0.26.04.1,
+  which distrusts the [compromised eMudhra intermediate CAs](https://emudhra.we-have-a-problem.com/).
+  **Alters measurements** of every image.
 - `output/OVMF.fd` is rebuilt from upstream edk2 plus a fix: when the IGVM
   carries the UKI, OVMF no longer passes the host's fw_cfg command line or
   initrd to it (which let the host replace the measured `.cmdline`, e.g. the
