@@ -9,6 +9,9 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Fixed
+- Backport ACPICA's parser-bound initialization in `acpi_install_method`
+  for Linux 6.18.60. This fixes the trusted-AML test's unhardened positive
+  control. Trusted kernels still reject dynamic method installation.
 - `general-purpose` images no longer boot with an ordering cycle between
   `general-purpose-oci-workload-prepare.service` and `docker.socket`, which
   systemd broke by dropping a job and could leave Docker and the OCI workload

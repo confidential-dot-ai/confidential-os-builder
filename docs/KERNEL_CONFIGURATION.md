@@ -91,7 +91,7 @@ page](https://kspp.github.io/Recommended_Settings) (as of 2026-07-12) that we do
 involved in that setting, and an explanation of why we don't apply it.
 
 For this analysis, we used `kernel/config-x86_64.snapshot` (the committed
-bare-baseline lockfile), used to compile Linux 6.18.49 on x86_64 with GCC 15 by
+bare-baseline lockfile), used to compile Linux 6.18.60 on x86_64 with GCC 15 by
 `mkosi/kernel-builder`. The
 kernel command line used in the CVM image is located in `mkosi/base/mkosi.conf`,
 and the sysctls applied inside our CVMs are located at
@@ -252,7 +252,7 @@ overflow/UAF detection with near-zero overhead.
 
 ---
 
-## Inapplicable settings on Linux 6.18.49 / x86 / GCC 15
+## Inapplicable settings on Linux 6.18.60 / x86 / GCC 15
 
 We do not apply any KSPP recommendations for ARM or other non-x86 architectures.
 The recommendations listed below are not applied because the Kconfig symbol no
