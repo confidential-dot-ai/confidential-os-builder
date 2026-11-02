@@ -57,7 +57,8 @@ jobs:
   build-and-push:
     needs: select
     if: contains(fromJSON(needs.select.outputs.images), 'base')
-    runs-on: ubuntu-latest
+    # host-deps pins apt to this runner's codename in the snapshot; keep it noble.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
