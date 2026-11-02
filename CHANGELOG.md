@@ -26,6 +26,14 @@ build configs, since those invalidate published reference values.
   measurements**: every SNP launch digest changes; rebuild images and re-pin.
 
 ### Security
+- The initrd hashes the staged copy of the `opkeydata` key at
+  `/run/confai/operator-pubkey`, the bytes its consumers read: on TDX it
+  extends RTMR[3] once with `SHA-384(pubkey)`, and on SNP it checks HOSTDATA
+  against `SHA-256(pubkey)`. A binding failure on either platform prints
+  `FATAL: launch binding failed: <reason>` and powers the guest off instead of
+  rebooting it. An SNP launch without an `opkeydata` disk must carry all-zero
+  HOSTDATA; a guest outside any TEE boots unbound without the disk and powers
+  off with it. **Alters measurements** of every image.
 - `output/OVMF.fd` is rebuilt from upstream edk2 plus a fix: when the IGVM
   carries the UKI, OVMF no longer passes the host's fw_cfg command line or
   initrd to it (which let the host replace the measured `.cmdline`, e.g. the

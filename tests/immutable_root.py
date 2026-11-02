@@ -2,6 +2,7 @@
 """Behavioral regressions; run through immutable-root.sh's disposable chroot."""
 
 import errno
+import hashlib
 import http.server
 import os
 from pathlib import Path
@@ -26,6 +27,47 @@ def run(*args, **kwargs):
         args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         timeout=30, **kwargs
     )
+
+
+TDX_MEASUREMENTS = Path("/sys/devices/virtual/misc/tdx_guest/measurements")
+RTMR3 = TDX_MEASUREMENTS / "rtmr3:sha384"
+SEV_GUEST = Path("/dev/sev-guest")
+DEV_NULL = os.makedev(1, 3)
+DEV_FULL = os.makedev(1, 7)
+TSM_REPORT = Path("/sys/kernel/config/tsm/report/opkey")
+
+
+def clear_platform():
+    shutil.rmtree("/sys/devices", ignore_errors=True)
+    shutil.rmtree("/sys/kernel", ignore_errors=True)
+    SEV_GUEST.unlink(missing_ok=True)
+
+
+def launch_tdx():
+    """Present a TDX guest's measurement sysfs without an rtmr3 node."""
+    clear_platform()
+    TDX_MEASUREMENTS.mkdir(parents=True)
+
+
+def snp_report(host_data):
+    """An SNP attestation report: HOSTDATA at offset 192 of 1184 bytes."""
+    return bytes(192) + host_data + bytes(1184 - 192 - len(host_data))
+
+
+def launch_snp(host_data):
+    """Present an SNP guest whose next ConfigFS-TSM report carries host_data."""
+    clear_platform()
+    os.mknod(SEV_GUEST, stat.S_IFCHR | 0o600, DEV_NULL)
+    TSM_REPORT.mkdir(parents=True)
+    (TSM_REPORT / "outblob").write_bytes(snp_report(host_data))
+
+
+def make_image():
+    shutil.rmtree("/image", ignore_errors=True)
+    image = Path("/image")
+    shutil.copytree("/default-state.d", image / "usr/lib/confai/state.d")
+    for directory in ("var", "home", "root", "tmp", "run", "etc"):
+        (image / directory).mkdir(parents=True)
 
 
 class CloudInitPolicyTests(unittest.TestCase):
@@ -190,13 +232,9 @@ class ScratchDiscoveryTests(unittest.TestCase):
     MOUNTS = Path("/mount-calls")
 
     def setUp(self):
-        shutil.rmtree("/image", ignore_errors=True)
+        make_image()
         self.CRYPTSETUP.write_text("")
         self.MOUNTS.unlink(missing_ok=True)
-        image = Path("/image")
-        shutil.copytree("/default-state.d", image / "usr/lib/confai/state.d")
-        for directory in ("var", "home", "root", "tmp", "run", "etc"):
-            (image / directory).mkdir(parents=True)
 
     def tearDown(self):
         shutil.rmtree("/image")
@@ -231,6 +269,118 @@ class ScratchDiscoveryTests(unittest.TestCase):
         self.boot()
         self.assertEqual(self.CRYPTSETUP.read_text(), "")
         self.assertIn("-t tmpfs tmpfs /state", self.MOUNTS.read_text())
+
+
+class LaunchBindingTests(unittest.TestCase):
+    """The host picks the opkeydata disk and SNP HOSTDATA; the guest binds the key or powers off."""
+
+    PUBKEY = b"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOperatorKeyBytesForTheTest operator\n"
+    DISK = Path("/opkey-disk")
+    SYSRQ = Path("/proc/sysrq-trigger")
+    SWITCH_ROOT = Path("/switch-root-args")
+    STAGED = Path("/switch-root-pubkey")
+    FATAL = "FATAL: launch binding failed: "
+
+    def setUp(self):
+        make_image()
+
+    def tearDown(self):
+        shutil.rmtree("/image")
+        shutil.rmtree(self.DISK, ignore_errors=True)
+        clear_platform()
+
+    def attach_key(self):
+        shutil.rmtree(self.DISK, ignore_errors=True)
+        self.DISK.mkdir()
+        (self.DISK / "pubkey").write_bytes(self.PUBKEY)
+
+    def boot(self):
+        self.SYSRQ.write_text("")
+        self.SWITCH_ROOT.unlink(missing_ok=True)
+        self.STAGED.unlink(missing_ok=True)
+        return run("/usr/bin/unshare", "--mount", "--propagation", "private",
+                   "/bin/bash", "/init-under-test")
+
+    def assert_boots(self, staged):
+        booted = self.boot()
+        self.assertEqual(booted.returncode, 0, booted.stdout)
+        self.assertNotIn("FATAL", booted.stdout)
+        self.assertEqual(self.SYSRQ.read_text(), "")
+        self.assertEqual(self.SWITCH_ROOT.read_text(), "/sysroot\n/sbin/init\n")
+        if staged is None:
+            self.assertFalse(self.STAGED.exists())
+        else:
+            self.assertEqual(self.STAGED.read_bytes(), staged)
+
+    def assert_powers_off(self):
+        booted = self.boot()
+        self.assertNotEqual(booted.returncode, 0, booted.stdout)
+        self.assertIn(self.FATAL, booted.stdout)
+        self.assertEqual(self.SYSRQ.read_text(), "o\n")
+        self.assertFalse(self.SWITCH_ROOT.exists(), booted.stdout)
+
+    def record_extends(self):
+        """Make rtmr3 a FIFO; return a reader of every byte written to it."""
+        os.mkfifo(RTMR3)
+        # Holding both ends keeps the init's open from blocking and its writes queued.
+        fd = os.open(RTMR3, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, fd)
+
+        def extends():
+            try:
+                return os.read(fd, 4096)
+            except BlockingIOError:
+                return b""
+        return extends
+
+    def test_tdx_key_disk_extends_rtmr3_once_with_the_staged_key_digest(self):
+        launch_tdx()
+        extends = self.record_extends()
+        self.attach_key()
+        self.assert_boots(staged=self.PUBKEY)
+        self.assertEqual(extends(), hashlib.sha384(self.PUBKEY).digest())
+
+    def test_tdx_without_key_disk_boots_unbound_without_extending(self):
+        launch_tdx()
+        extends = self.record_extends()
+        self.assert_boots(staged=None)
+        self.assertEqual(extends(), b"")
+
+    def test_tdx_rtmr3_rejecting_the_extend_powers_off(self):
+        launch_tdx()
+        # Writes to /dev/full fail with ENOSPC.
+        os.mknod(RTMR3, stat.S_IFCHR | 0o600, DEV_FULL)
+        self.attach_key()
+        self.assert_powers_off()
+
+    def test_snp_key_matching_hostdata_is_staged(self):
+        launch_snp(hashlib.sha256(self.PUBKEY).digest())
+        self.attach_key()
+        self.assert_boots(staged=self.PUBKEY)
+
+    def test_snp_key_not_matching_hostdata_powers_off(self):
+        self.attach_key()
+        for name, host_data in (("other key", hashlib.sha256(b"other key").digest()),
+                                ("zero", bytes(32))):
+            with self.subTest(host_data=name):
+                launch_snp(host_data)
+                self.assert_powers_off()
+
+    def test_snp_without_key_disk_boots_unbound_only_with_all_zero_hostdata(self):
+        with self.subTest(host_data="zero"):
+            launch_snp(bytes(32))
+            self.assert_boots(staged=None)
+        with self.subTest(host_data="key digest"):
+            launch_snp(hashlib.sha256(self.PUBKEY).digest())
+            self.assert_powers_off()
+
+    def test_outside_a_tee_boots_unbound_only_without_key_disk(self):
+        clear_platform()
+        with self.subTest(key_disk=False):
+            self.assert_boots(staged=None)
+        with self.subTest(key_disk=True):
+            self.attach_key()
+            self.assert_powers_off()
 
 
 class WritableStateTests(unittest.TestCase):

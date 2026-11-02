@@ -66,7 +66,9 @@ PCI slot order — and therefore guest device naming — stays deterministic.
 For launch-time HOST_DATA, append `,host-data=<base64>` to the
 `sev-snp-guest` object. `confos run --host-data <HEX>` accepts the same 32
 bytes as 64 lowercase hex characters. An `opkeydata` launch requires
-HOST_DATA to equal `SHA-256(pubkey)` over the exact file bytes on that volume.
+HOST_DATA to equal `SHA-256(pubkey)` over the exact file bytes on that volume;
+a launch without one requires HOST_DATA to be unset (all zero). The guest
+powers off otherwise.
 
 **vCPU count must match an IGVM variant** — SMP is part of the launch
 measurement. Memory size is not; size it freely. If you need a vCPU count
