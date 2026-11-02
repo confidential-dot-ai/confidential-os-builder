@@ -71,7 +71,8 @@ jobs:
 
     immutable-root:
         name: Immutable root regression tests
-        runs-on: ubuntu-latest
+        # host-deps pins apt to this runner's codename in the snapshot; keep it noble.
+        runs-on: ubuntu-24.04
         timeout-minutes: 15
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,7 +85,8 @@ jobs:
 
     trusted-aml:
         name: Test kernel AML enforcement
-        runs-on: ubuntu-latest
+        # host-deps pins apt to this runner's codename in the snapshot; keep it noble.
+        runs-on: ubuntu-24.04
         # Cold tools-tree builds took up to 40 min on a healthy mirror.
         timeout-minutes: 90
         permissions:
