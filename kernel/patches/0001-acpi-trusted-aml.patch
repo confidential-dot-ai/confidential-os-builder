@@ -16,8 +16,8 @@ fix so acpi_install_method works when CONFIG_ACPI_TRUSTED_AML is disabled.
 This preserves the method-injection positive control without weakening
 the trusted-mode rejection above the parser. Remove the compatibility
 hunk once the pinned kernel includes the upstream fix.
-Upstream: https://github.com/acpica/acpica/commit/19429ef91ebfb2144c918038dce13e297b4ef051
-Linux patch: https://lore.kernel.org/linux-acpi/20261020141051.2194123-21-pawel.chmielewski@intel.com/
+Link: https://github.com/acpica/acpica/commit/19429ef91ebfb2144c918038dce13e297b4ef051
+Link: https://lore.kernel.org/linux-acpi/20261020141051.2194123-21-pawel.chmielewski@intel.com/
 
 Linux-Version: 6.18.60
 ---
