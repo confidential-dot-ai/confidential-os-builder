@@ -13,13 +13,6 @@ enabled = false
 [auth]
 api_keys = []
 
-[certs]
-cache_max_entries = 1024
-tdx_collateral_ttl_hours = 24
-# NRAS JWKS for GPU EAT verification (only needed if this node also verifies;
-# serving evidence does not require NRAS egress).
-prefetch_nras_jwks = true
-
 [token]
 enabled = false
 
