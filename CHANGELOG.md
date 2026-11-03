@@ -8,6 +8,18 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-02
+
+**Changes measurements.** Every image built from this release has new
+launch digests, RTMRs and root hashes: the shared guest kernel moves to
+Linux 6.18.60, the base and initrd apt snapshots advance, OVMF is rebuilt,
+and the SEV-SNP kernel carries the measurement registers (#170). Whether a
+report commits to them is the profile's choice: a measured command line with
+`snp_measurement_registers=off` keeps `REPORT_DATA` plain, as `general-purpose`
+does below, and the choice is visible in the launch digest. Rebuild images,
+publish their manifests and update verifier reference values before rollout.
+See [Versioning](docs/VERSIONING.md) for the migration policy.
+
 ### Fixed
 - Backport ACPICA's parser-bound initialization in `acpi_install_method`
   for Linux 6.18.60. This fixes the trusted-AML test's unhardened positive
@@ -444,7 +456,10 @@ Initial public release.
 - `steep push` / `steep pull` (OCI via oras)
 - CI publishes base image as `ghcr.io/confidential-dot-ai/steep:base`
 
-[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.3...v0.5.0
+[0.4.3]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.3.0...v0.4.0
