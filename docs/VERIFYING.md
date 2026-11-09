@@ -269,6 +269,9 @@ The answer lists the guest's host public keys and carries a quote from
 }
 ```
 
+`attestation` is attestation-api's answer as it gave it. On `attest`
+images it also carries a `collateral` object when the guest could fetch one.
+
 The quote's report data is
 
     SHA-384( LP("confos/ssh-host-keys/v1") || LP(nonce) || LP(key_1) || ... || LP(key_n) )

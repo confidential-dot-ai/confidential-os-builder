@@ -12,11 +12,9 @@ build configs, since those invalidate published reference values.
 - The `attest` and `attest-gpu` attestation-api configs no longer carry a
   `[certs]` table. attestation-api since attestation-rs `92816f10` rejects
   unknown fields and has no `[certs]`, so it refused the baked config and
-  never started. Older attestation-api builds, including the one these
-  profiles pin, fill the table with defaults: `attest-gpu` is unchanged, and
-  `attest` stops prefetching the Genoa VCEK chain at startup and fetches it
-  on first use instead. **Alters measurements** of every image built with
-  either profile.
+  never started. The older build `attest-gpu` pins fills the table with
+  defaults, so its behaviour is unchanged. **Alters measurements** of every
+  image built with either profile.
 - Backport ACPICA's parser-bound initialization in `acpi_install_method`
   for Linux 6.18.60. This fixes the trusted-AML test's unhardened positive
   control. Trusted kernels still reject dynamic method installation.
@@ -129,8 +127,9 @@ build configs, since those invalidate published reference values.
 ### Changed
 - The `attest` profile pins attestation-api from attestation-rs `e967531` to
   `9b33b16` (`sha256:2b44ff9e…4f89`, tag `sha-9b33b16`). `/attest` answers
-  carry a top-level `collateral` field the service fetches from the vendors,
-  `/verify` takes `policies` in place of `params` and refuses unknown fields,
+  carry a top-level `collateral` field the service fetches from the vendors
+  (a guest without outbound HTTPS waits up to 5 s for it and answers
+  without it), `/verify` takes `policies` in place of `params` and refuses unknown fields,
   and `/certs/status` and `/certs/refresh` are gone. The image is now an OCI
   index; the sync script takes its one linux/amd64 image. `attest-gpu` keeps
   its own pin. **Alters measurements** of every image built with `attest`.
