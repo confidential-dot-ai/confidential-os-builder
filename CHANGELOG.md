@@ -127,6 +127,13 @@ build configs, since those invalidate published reference values.
   artifacts, matching the GPU attestation hook.
 
 ### Changed
+- The `attest` profile pins attestation-api from attestation-rs `e967531` to
+  `9b33b16` (`sha256:2b44ff9e…4f89`, tag `sha-9b33b16`). `/attest` answers
+  carry a top-level `collateral` field the service fetches from the vendors,
+  `/verify` takes `policies` in place of `params` and refuses unknown fields,
+  and `/certs/status` and `/certs/refresh` are gone. The image is now an OCI
+  index; the sync script takes its one linux/amd64 image. `attest-gpu` keeps
+  its own pin. **Alters measurements** of every image built with `attest`.
 - **Changes measurements for `attest-gpu` builds.** Pin the published GPU
   attestation runtime instead of the unpublished-artifact sentinel and stage
   its versioned libnvat/ICU dependencies. The CPU-only base is unaffected.
