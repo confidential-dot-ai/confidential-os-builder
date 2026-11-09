@@ -68,15 +68,17 @@ REPO="${IMAGE%@*}"
 
 # Newer images are an OCI index (the image plus a build attestation). The
 # pinned index digest covers its child digests, so take the one linux/amd64
-# image from it.
-if [ "$(echo "$MANIFEST" | jq -r '.mediaType // empty')" = "application/vnd.oci.image.index.v1+json" ]; then
+# image from it. A Docker manifest list has the same shape.
+case "$(echo "$MANIFEST" | jq -r '.mediaType // empty')" in
+application/vnd.oci.image.index.v1+json | application/vnd.docker.distribution.manifest.list.v2+json)
     PLATFORM_DIGEST=$(echo "$MANIFEST" | jq -r '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | if length == 1 then .[0].digest else empty end')
     if [ -z "$PLATFORM_DIGEST" ]; then
         echo "ERROR: $IMAGE does not list exactly one linux/amd64 image" >&2
         exit 1
     fi
     MANIFEST=$(oras manifest fetch "${ORAS_AUTH[@]}" "${REPO}@${PLATFORM_DIGEST}")
-fi
+    ;;
+esac
 
 # Pull every gzipped tar layer (covers both
 # vnd.docker.image.rootfs.diff.tar.gzip and
