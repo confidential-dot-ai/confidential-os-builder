@@ -9,6 +9,12 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Changed
+- Bump the shared guest kernel from Linux 6.18.60 to 6.18.62 for the base,
+  general-purpose CPU and general-purpose GPU images. Both kernel patches
+  apply unchanged and the resolved kernel configs are identical apart from
+  the version header. **Alters measurements**: rebuild images and signed
+  GPU modules, publish new manifests and update verifier reference values
+  before rollout.
 - Base and initrd apt snapshots advance from `20261030T000000Z` to
   `20261109T000000Z`, picking up `ca-certificates`
   20260816ubuntu0.26.04.2, `apt`/`libapt-pkg7.0` 3.2.1ubuntu0.1 and

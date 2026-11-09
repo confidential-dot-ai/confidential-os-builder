@@ -19,7 +19,7 @@ hunk once the pinned kernel includes the upstream fix.
 Link: https://github.com/acpica/acpica/commit/19429ef91ebfb2144c918038dce13e297b4ef051
 Link: https://lore.kernel.org/linux-acpi/20261020141051.2194123-21-pawel.chmielewski@intel.com/
 
-Linux-Version: 6.18.60
+Linux-Version: 6.18.62
 ---
 --- a/drivers/acpi/Kconfig
 +++ b/drivers/acpi/Kconfig
