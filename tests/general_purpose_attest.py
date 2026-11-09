@@ -233,6 +233,7 @@ class ProfileTests(unittest.TestCase):
                 server = config.get("server", {})
                 tables = {**config, "server.tls": server.get("tls", {})}
                 for table, values in tables.items():
+                    self.assertIn(table, fields)
                     self.assertLessEqual(set(values), fields[table], table)
                 host, _, port = server.get("bind", "0.0.0.0:8400").rpartition(":")
                 ipaddress.ip_address(host.strip("[]"))
