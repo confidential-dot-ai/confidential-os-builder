@@ -5,6 +5,7 @@ against a stand-in for attestation-api."""
 import base64
 import hashlib
 import http.server
+import ipaddress
 import json
 from pathlib import Path
 import shutil
@@ -222,6 +223,37 @@ class ProfileTests(unittest.TestCase):
                 tables = set(config) | {f"server.{k}" for k, v in config["server"].items()
                                         if isinstance(v, dict)}
                 self.assertLessEqual(tables, accepted)
+
+    def test_baked_configs_pass_the_pinned_attestation_api_checks(self):
+        # Config::load and Config::validate in attestation-rs 9b33b16.
+        fields = {
+            "server": {"bind", "tls"},
+            "server.tls": {"enabled", "cert_path", "key_path"},
+            "auth": {"api_keys"},
+            "nras": {"gpu_url", "switch_url"},
+            "token": {"enabled", "issuer", "duration_minutes", "key_path"},
+            "attestation": {"enabled", "platforms", "allow_debug", "allow_revoked_or_unlisted_tcb",
+                            "allow_nonzero_vmpl", "tdx_quote_method"},
+        }
+        platforms = {"snp", "tdx", "az-snp", "az-tdx", "gcp-snp", "gcp-tdx"}
+        for profile in ("attest", "attest-gpu"):
+            with self.subTest(profile=profile):
+                baked = PROFILES / profile / "mkosi.extra/etc/attestation-api/config.toml"
+                config = tomllib.loads(baked.read_text())
+                server = config.get("server", {})
+                tables = {**config, "server.tls": server.get("tls", {})}
+                for table, values in tables.items():
+                    self.assertLessEqual(set(values), fields[table], table)
+                host, _, port = server.get("bind", "0.0.0.0:8400").rpartition(":")
+                ipaddress.ip_address(host.strip("[]"))
+                self.assertLess(int(port), 65536)
+                self.assertFalse(tables["server.tls"].get("enabled", False))
+                token = config.get("token", {})
+                if token.get("enabled"):
+                    self.assertGreater(token.get("duration_minutes", 5), 0)
+                attestation = config.get("attestation", {})
+                self.assertIn(attestation.get("tdx_quote_method", "auto"), {"auto", "vsock", "configfs"})
+                self.assertLessEqual({p.lower() for p in attestation.get("platforms", [])}, platforms)
 
     def test_a_config_that_binds_elsewhere_stops_the_build(self):
         with tempfile.TemporaryDirectory() as tmp:
