@@ -8,6 +8,13 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+### Changed
+- Base and initrd apt snapshots advance from `20261030T000000Z` to
+  `20261109T000000Z`, picking up `ca-certificates`
+  20260816ubuntu0.26.04.2, `apt`/`libapt-pkg7.0` 3.2.1ubuntu0.1 and
+  `libpcre2-8-0` 10.46-1ubuntu0.1. Host build deps follow the base pin.
+  **Alters measurements** of every image.
+
 ## [0.6.0] — 2026-11-02
 
 **Changes measurements.** Every image built from this release has new
