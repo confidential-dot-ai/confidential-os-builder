@@ -213,19 +213,9 @@ class ProfileTests(unittest.TestCase):
                 self.assertEqual(changed, [('bind = "0.0.0.0:8400"', 'bind = "127.0.0.1:8401"')])
                 self.assertTrue(config.read_text().endswith("\n"))
 
-    def test_baked_configs_use_only_tables_every_attestation_api_accepts(self):
-        # attestation-rs since 92816f10 rejects unknown fields and has no [certs].
-        accepted = {"server", "server.tls", "auth", "token", "attestation"}
-        for profile in ("attest", "attest-gpu"):
-            with self.subTest(profile=profile):
-                baked = PROFILES / profile / "mkosi.extra/etc/attestation-api/config.toml"
-                config = tomllib.loads(baked.read_text())
-                tables = set(config) | {f"server.{k}" for k, v in config["server"].items()
-                                        if isinstance(v, dict)}
-                self.assertLessEqual(tables, accepted)
-
     def test_baked_configs_pass_the_pinned_attestation_api_checks(self):
-        # Config::load and Config::validate in attestation-rs 9b33b16.
+        # Config::load and Config::validate in attestation-rs 9b33b16, the `attest` pin.
+        # `attest-gpu` pins an older build; this schema is the floor its config must also meet.
         fields = {
             "server": {"bind", "tls"},
             "server.tls": {"enabled", "cert_path", "key_path"},
