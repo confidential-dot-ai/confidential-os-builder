@@ -39,7 +39,8 @@ mkdir -p "${TMPDIR:=/tmp}"
 # a binary that supports both SEV-SNP (`/dev/sev-guest`) and Intel TDX
 # (`/dev/tdx_guest`); see crates/attestation-api/src/config.rs's
 # SUPPORTED_ATTESTATION_PLATFORMS for the full list.
-IMAGE="ghcr.io/confidential-dot-ai/attestation-api@sha256:8dfb4db34d966374c3dbd81548c532a2015123d41f3aab553cea1cb7a327c8e9"
+# attestation-rs 9b33b16 (tag sha-9b33b16).
+IMAGE="ghcr.io/confidential-dot-ai/attestation-api@sha256:2b44ff9eb5ff1d51a39eeac05fc9ecc37352582afd7f3d8bd5d4e83495884f89"
 ORAS_AUTH=()
 if [ -f "$SRCDIR/mkosi.local/oras-auth.json" ]; then
     ORAS_AUTH=(--registry-config "$SRCDIR/mkosi.local/oras-auth.json")
