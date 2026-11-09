@@ -37,7 +37,7 @@ mkdir -p "${TMPDIR:=/tmp}"
 # launch measurement of any `--profile attest` build — intended behaviour.
 # Sourced from `confidential-dot-ai/attestation-rs` CI, which now publishes
 # a binary that supports both SEV-SNP (`/dev/sev-guest`) and Intel TDX
-# (`/dev/tdx_guest`); see attestation-api/src/config.rs's
+# (`/dev/tdx_guest`); see crates/attestation-api/src/config.rs's
 # SUPPORTED_ATTESTATION_PLATFORMS for the full list.
 IMAGE="ghcr.io/confidential-dot-ai/attestation-api@sha256:8dfb4db34d966374c3dbd81548c532a2015123d41f3aab553cea1cb7a327c8e9"
 ORAS_AUTH=()
@@ -64,6 +64,18 @@ MANIFEST=$(oras manifest fetch "${ORAS_AUTH[@]}" "$IMAGE")
 # Repository part of the image ref, without the @digest. Used to fetch
 # blobs by their layer digest (oras blob fetch needs <repo>@<blob-digest>).
 REPO="${IMAGE%@*}"
+
+# Newer images are an OCI index (the image plus a build attestation). The
+# pinned index digest covers its child digests, so take the one linux/amd64
+# image from it.
+if [ "$(echo "$MANIFEST" | jq -r '.mediaType // empty')" = "application/vnd.oci.image.index.v1+json" ]; then
+    PLATFORM_DIGEST=$(echo "$MANIFEST" | jq -r '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | if length == 1 then .[0].digest else empty end')
+    if [ -z "$PLATFORM_DIGEST" ]; then
+        echo "ERROR: $IMAGE does not list exactly one linux/amd64 image" >&2
+        exit 1
+    fi
+    MANIFEST=$(oras manifest fetch "${ORAS_AUTH[@]}" "${REPO}@${PLATFORM_DIGEST}")
+fi
 
 # Pull every gzipped tar layer (covers both
 # vnd.docker.image.rootfs.diff.tar.gzip and
