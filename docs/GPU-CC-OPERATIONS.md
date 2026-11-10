@@ -134,7 +134,8 @@ The `general-purpose-gpu` recipe, the plain GPU VM, runs NVIDIA's
 `dcgm-exporter.service`. `mkosi.sync` fetches the exporter, the DCGM
 libraries and their licenses from NVIDIA's image by blob digest into
 `/usr/local/bin/dcgm-exporter` and `/opt/dcgm`, inside the measured root.
-It serves Prometheus text on **TCP 9400 on every address, `GET /metrics`**.
+It serves Prometheus text on **TCP 9400, `GET /metrics`**: on loopback, or on
+every address when the launch-bound `pubkey` file asks for it.
 
 - **Series:** the fields in `/etc/dcgm-exporter/counters.csv`, which is
   confidential-inference's `images/sglang/dcgm-counters.csv`, so a GPU VM and
@@ -149,15 +150,18 @@ It serves Prometheus text on **TCP 9400 on every address, `GET /metrics`**.
   the GPUs or SSH. After recovering persistence, restart the exporter.
   It runs as a `DynamicUser` with only the NVIDIA device nodes, no
   capabilities and no `AF_VSOCK`.
-- **Exposure:** it binds every address, so the platform's collector can
-  scrape it through the guest's network and a local collector can read it on
-  loopback. There is no endpoint authentication, and the exporter serves
-  read-only telemetry. Confidential Cloud's instance policy admits only its
-  own collector and the owner's other instances in the project to 9400, and
-  the port is never public unless the owner publishes it. Turning an
-  instance's `gpuMetrics` off stops the platform's scrape and closes the
-  port to the collector. Workloads, including a `--network host` container,
-  must not bind 9400.
+- **Exposure:** it binds loopback only, unless the `pubkey` file of the
+  `opkeydata` disk carries the line `# confos-gpu-metrics/v1`, in which case it
+  binds every address so that a collector outside the guest can scrape it
+  (`/usr/lib/confai/dcgm-exporter-start`). The initrd binds that file's exact
+  bytes into RTMR[3] or checks them against HOSTDATA, so a verifier that
+  recomputes the launch binding knows whether the guest serves its GPU
+  metrics beyond itself; without the line nothing outside the guest reaches
+  them. There is no endpoint authentication: with the line, anything that
+  reaches the guest's 9400, the host included, reads the series, and the
+  launcher's network policy decides who that is. Confidential Cloud writes
+  the line for an instance whose `gpuMetrics` is on. Workloads, including a
+  `--network host` container, must not bind 9400.
 - **Other GPU images** run nothing for metrics. A Kubernetes node image leaves
   GPU metrics to the cluster's own dcgm-exporter (for example
   confidential-inference's), as other managed Kubernetes services do.

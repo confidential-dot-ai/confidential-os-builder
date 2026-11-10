@@ -1,0 +1,12 @@
+#!/bin/sh
+# Start dcgm-exporter on loopback, or on every address when the launch-bound
+# pubkey file carries the line `# confos-gpu-metrics/v1`. The initrd binds that
+# file's exact bytes into RTMR[3] or checks them against HOSTDATA, so whether
+# the guest serves its GPU metrics beyond itself is part of what a verifier
+# checks, and without the line nothing outside the guest can reach them.
+pubkey=/run/confai/operator-pubkey
+address=127.0.0.1:9400
+if grep -qxF '# confos-gpu-metrics/v1' "$pubkey" 2>/dev/null; then
+    address=:9400
+fi
+exec /usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address="$address"

@@ -232,7 +232,7 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
         self.assertIn("127.0.0.1:8889", otel)
         self.assertNotIn("9400", otel)
         self.assertIn("127.0.0.1:9400", gpu_otel)
-        self.assertIn("--address=:9400", dcgm)
+        self.assertIn("ExecStart=/usr/lib/confai/dcgm-exporter-start", dcgm)
         self.assertEqual(otel, gpu_otel.replace(
             "        - job_name: dcgm\n"
             "          static_configs:\n"
@@ -285,7 +285,7 @@ class GpuMetricsTests(unittest.TestCase):
         preset = (EXTRA / "usr/lib/systemd/system-preset/30-general-purpose-gpu.preset").read_text().splitlines()
         self.assertIn("enable dcgm-exporter.service", preset)
         unit = (EXTRA / "etc/systemd/system/dcgm-exporter.service").read_text().splitlines()
-        self.assertIn("ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=:9400", unit)
+        self.assertIn("ExecStart=/usr/lib/confai/dcgm-exporter-start", unit)
         self.assertIn("Environment=LD_LIBRARY_PATH=/opt/dcgm/lib", unit)
         self.assertIn("After=nvidia-persistenced.service nvidia-cc-ready.service", unit)
         self.assertIn("BindsTo=nvidia-persistenced.service", unit)
@@ -294,6 +294,38 @@ class GpuMetricsTests(unittest.TestCase):
         for setting in ("DynamicUser=yes", "NoNewPrivileges=yes", "ProtectSystem=strict", "CapabilityBoundingSet=", "DevicePolicy=closed"):
             self.assertIn(setting, unit)
         self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", unit)
+
+    def test_exporter_leaves_loopback_only_when_the_bound_pubkey_asks(self):
+        start = EXTRA / "usr/lib/confai/dcgm-exporter-start"
+        self.assertTrue(os.access(start, os.X_OK))
+        script = start.read_text()
+        self.assertIn("pubkey=/run/confai/operator-pubkey", script)
+        self.assertIn("exec /usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv", script)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            pubkey, exporter = tmp / "pubkey", tmp / "dcgm-exporter"
+            exporter.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            exporter.chmod(0o755)
+            copy = tmp / "start"
+            copy.write_text(script.replace("/run/confai/operator-pubkey", str(pubkey))
+                            .replace("/usr/local/bin/dcgm-exporter", str(exporter)))
+
+            def address(content):
+                if content is None:
+                    pubkey.unlink(missing_ok=True)
+                else:
+                    pubkey.write_text(content)
+                out = subprocess.run(["sh", str(copy)], capture_output=True, text=True, check=True).stdout.split()
+                self.assertEqual(out[0], "--collectors=/etc/dcgm-exporter/counters.csv")
+                return out[1]
+            key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHwcz1ZWdpesQj0g1D1Cdceg8JdZMFFgKA+foafqkkUg a@b\n"
+            self.assertEqual(address(None), "--address=127.0.0.1:9400")
+            self.assertEqual(address(key), "--address=127.0.0.1:9400")
+            self.assertEqual(address(key + "# confos-gpu-metrics/v1\n"), "--address=:9400")
+            # Only the exact line: not a prefix, a suffix or an indented copy.
+            for near in ("# confos-gpu-metrics/v1 x\n", " # confos-gpu-metrics/v1\n", "# confos-gpu-metrics/v2\n",
+                         "ssh-ed25519 AAAA # confos-gpu-metrics/v1\n"):
+                self.assertEqual(address(key + near), "--address=127.0.0.1:9400", near)
 
     def test_exporter_is_staged_by_digest_and_only_in_this_recipe(self):
         sync = (PROFILE / "mkosi.sync").read_text()
