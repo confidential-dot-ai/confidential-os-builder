@@ -9,6 +9,11 @@ build configs, since those invalidate published reference values.
 ## [Unreleased]
 
 ### Changed
+- The `general-purpose-gpu` image's dcgm-exporter listens on TCP 9400 on
+  every address instead of loopback alone, so the platform's collector can
+  scrape a GPU instance's GPU metrics. The local OpenTelemetry Collector
+  still reads it on `127.0.0.1:9400`. **Alters measurements** of the
+  `general-purpose-gpu` image.
 - Bump the shared guest kernel from Linux 6.18.60 to 6.18.62 for the base,
   general-purpose CPU and general-purpose GPU images. Both kernel patches
   apply unchanged and the resolved kernel configs are identical apart from

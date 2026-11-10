@@ -14,7 +14,12 @@ Type=exec
 # The embedded DCGM host engine loads its modules from /opt/dcgm/lib, staged
 # by mkosi.sync and kept out of the image's linker cache.
 Environment=LD_LIBRARY_PATH=/opt/dcgm/lib
-ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=127.0.0.1:9400
+# Every address, so the platform's collector can scrape it through the
+# guest's network as well as a local one on loopback. The platform's policy
+# admits only its collector and the owner's own project to 9400, and the
+# port is public only if the owner publishes it. The exporter serves
+# read-only telemetry.
+ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=:9400
 Restart=always
 RestartSec=5
 
