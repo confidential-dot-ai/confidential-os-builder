@@ -112,6 +112,9 @@ For KubeVirt, attach:
   `pubkey`. Put one OpenSSH public key per line; supply customer and operator
   keys here, not in the image. The initrd binds the exact bundle into RTMR[3].
   It may also carry one workload line; see [OCI workloads](#oci-workloads).
+  On `general-purpose-gpu` it may carry `# confos-gpu-metrics/v1`, which
+  serves the GPUs' metrics on 9400 beyond loopback; see
+  [GPU metrics](GPU-CC-OPERATIONS.md#6-gpu-metrics-on-port-9400-general-purpose-gpu-only).
 - A separate ext4 PVC formatted once with filesystem label `user-data`, mounted
   at `/var/lib/user-data`. Retain it when replacing the VM; never reformat it
   during recovery. Docker/containerd require that mount before starting.

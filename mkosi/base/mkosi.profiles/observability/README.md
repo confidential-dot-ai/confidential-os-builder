@@ -20,7 +20,10 @@ consume the workload's memory. They do not cap the native GPU exporter.
 Filesystem metrics include writable OS overlays and the user-data disk.
 Virtual filesystems and individual Docker container mounts are excluded.
 All endpoints are unauthenticated and must remain on loopback unless a
-protected access path is explicitly configured.
+protected access path is explicitly configured. The one exception is
+`general-purpose-gpu`'s dcgm-exporter, which binds every address only when
+the launch-bound `pubkey` file asks for it (see
+[GPU metrics](../../../../docs/GPU-CC-OPERATIONS.md#6-gpu-metrics-on-port-9400-general-purpose-gpu-only)).
 
 Run `python3 tests/observability_config.py` on a Docker host to validate
 both collector configurations against the pinned container before building.
