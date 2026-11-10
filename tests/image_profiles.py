@@ -232,7 +232,7 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
         self.assertIn("127.0.0.1:8889", otel)
         self.assertNotIn("9400", otel)
         self.assertIn("127.0.0.1:9400", gpu_otel)
-        self.assertIn("127.0.0.1:9400", dcgm)
+        self.assertIn("--address=:9400", dcgm)
         self.assertEqual(otel, gpu_otel.replace(
             "        - job_name: dcgm\n"
             "          static_configs:\n"
@@ -285,7 +285,7 @@ class GpuMetricsTests(unittest.TestCase):
         preset = (EXTRA / "usr/lib/systemd/system-preset/30-general-purpose-gpu.preset").read_text().splitlines()
         self.assertIn("enable dcgm-exporter.service", preset)
         unit = (EXTRA / "etc/systemd/system/dcgm-exporter.service").read_text().splitlines()
-        self.assertIn("ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=127.0.0.1:9400", unit)
+        self.assertIn("ExecStart=/usr/local/bin/dcgm-exporter --collectors=/etc/dcgm-exporter/counters.csv --address=:9400", unit)
         self.assertIn("Environment=LD_LIBRARY_PATH=/opt/dcgm/lib", unit)
         self.assertIn("After=nvidia-persistenced.service nvidia-cc-ready.service", unit)
         self.assertIn("BindsTo=nvidia-persistenced.service", unit)
