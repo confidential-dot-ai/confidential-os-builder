@@ -35,7 +35,7 @@ The Linux-Version trailer names the source the hooks below were audited
 against; the builder refuses any other kernel/version until the patch is
 retargeted.
 
-Linux-Version: 6.18.60
+Linux-Version: 6.18.62
 ---
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
