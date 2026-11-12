@@ -50,6 +50,10 @@ pub struct Fingerprint {
     /// SHA-256 of the SEV-SNP measurement register patch.
     #[serde(default)]
     pub snp_mr_patch_sha256: String,
+    // Committed IPE boot policy (kernel/ipe-boot-policy): compiled into the
+    // kernel, so editing it changes vmlinuz. `default` for pre-field manifests.
+    #[serde(default)]
+    pub ipe_boot_policy_sha256: String,
     pub tools_tree_digest: String,
 }
 
@@ -57,6 +61,12 @@ pub struct Fingerprint {
 #[serde(deny_unknown_fields)]
 pub struct Outputs {
     pub vmlinuz_sha256: String,
+    /// Whether the resolved config built IPE in. Recorded here so consumers
+    /// read what was built instead of re-deriving it from the snapshot.
+    /// `default` for pre-field manifests (whose fingerprint no longer
+    /// matches, so they rebuild).
+    #[serde(default)]
+    pub ipe: bool,
 }
 
 impl Fingerprint {
@@ -99,6 +109,7 @@ mod tests {
             snapshot_config_sha256: "d".repeat(64),
             module_signing_cert_sha256: "1".repeat(64),
             randstruct_seed_sha256: "2".repeat(64),
+            ipe_boot_policy_sha256: "3".repeat(64),
             tools_tree_digest: "e".repeat(64),
             trusted_dsdt_sha256: "4".repeat(64),
             trusted_aml_patch_sha256: "5".repeat(64),

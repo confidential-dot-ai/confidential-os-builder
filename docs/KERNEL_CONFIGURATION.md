@@ -406,3 +406,8 @@ addresses is closed more completely than the recommendation itself would.
 - `mkosi/base/mkosi.conf` — image kernel command line
   (`page_alloc.shuffle=1`, `hash_pointers=always`).
 - `kernel/dev.config` — dev-profile inversions of the hardening baseline (serial console, debugfs); these changes are never shipped in production images.
+- `kernel/ipe.config` — opt-in IPE execution policy sealed to the image's
+  dm-verity root ([threat model](THREAT_MODEL.md)). Sealing needs the kernel
+  out of the root partition, so `mkosi/base/mkosi.repart/10-root.conf`
+  excludes `/usr/lib/modules/<version>/vmlinuz` by version, and every build
+  fails until a pin bump updates that line to match `kernel/version`.

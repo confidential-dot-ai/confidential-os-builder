@@ -1,0 +1,7 @@
+# IPE boot policy compiled into the kernel (CONFIG_IPE_BOOT_POLICY). This
+# base allows only the initramfs; `confos build` appends the image's
+# dm-verity root hash before relinking (src/kernel/ipe.rs). Final for the
+# life of the guest: see docs/THREAT_MODEL.md.
+policy_name=confos policy_version=0.0.0
+DEFAULT action=DENY
+op=EXECUTE boot_verified=TRUE action=ALLOW
