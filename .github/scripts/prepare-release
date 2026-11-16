@@ -6,10 +6,11 @@
 # does no git or network work — the caller commits.
 #
 # The section opens with a lead paragraph on measurements, which is what
-# consumers read first (docs/VERSIONING.md). RELEASE_SUMMARY, when set, is
-# that paragraph. Otherwise a standard one is written if any entry is
-# marked "Alters measurements". No marked entry means no lead: a release is
-# never declared measurement-neutral on the strength of a missing marker.
+# consumers read first. RELEASE_SUMMARY, when set, is that lead, written as
+# given. Otherwise a standard one is written if any entry says it alters or
+# changes measurements, the two phrases CHANGELOG.md's header asks for. No
+# such entry means no lead: a release is never declared measurement-neutral
+# on the strength of a missing marker.
 
 set -euo pipefail
 
@@ -42,11 +43,18 @@ newer_than() {
   return 1
 }
 
-readonly STANDARD_LEAD='**Changes measurements.** Images built from this
-release have new measurements; the entries below marked **Alters
-measurements** say which images and why. Rebuild images, publish their
-manifests and update verifier reference values before rollout. See
-[Versioning](docs/VERSIONING.md) for the migration policy.'
+# Print the lead for a release whose entries change measurements. REPO_URL
+# makes the link absolute: the paragraph is also read in GitHub release
+# notes, where a relative link does not resolve.
+standard_lead() {
+  cat <<EOF
+**Changes measurements.** Images built from this release have new
+measurements; the entries below that alter or change measurements say which
+images and why. Rebuild images, publish their manifests and update verifier
+reference values before rollout. See
+[Versioning]($1/blob/main/docs/VERSIONING.md) for the migration policy.
+EOF
+}
 
 # Print FILE's [Unreleased] section, without its heading.
 unreleased_section() {
@@ -57,18 +65,6 @@ unreleased_section() {
   ' "$1"
 }
 
-# Reflow stdin into one paragraph of lines no longer than 78 columns.
-wrap() {
-  awk '
-    { for (i = 1; i <= NF; i++) {
-        if (line == "") line = $i
-        else if (length(line) + 1 + length($i) <= 78) line = line " " $i
-        else { print line; line = $i }
-    } }
-    END { if (line != "") print line }
-  '
-}
-
 main() {
   if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
     echo "usage: prepare-release VERSION DATE [DIR]" >&2
@@ -76,10 +72,13 @@ main() {
   fi
 
   local version=$1 date=$2 dir=${3:-.}
+  # How a section opens when nobody has written its lead: a subsection, an
+  # entry or a comment.
+  local not_lead_re='^(#|[-*+][[:space:]]|<!--)'
   local date_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
   local manifest="$dir/Cargo.toml" lock="$dir/Cargo.lock" changelog="$dir/CHANGELOG.md"
   local name current previous file
-  local new_manifest new_lock new_changelog section lead
+  local new_manifest new_lock new_changelog section first lead repo
 
   [[ "$version" =~ $VERSION_RE ]] || die "invalid version: $version (want X.Y.Z)"
   [[ "$date" =~ $date_re ]] || die "invalid date: $date (want YYYY-MM-DD)"
@@ -100,12 +99,19 @@ main() {
   section=$(unreleased_section "$changelog")
   grep -q '[^[:space:]]' <<<"$section" || die "nothing under [Unreleased] in $changelog"
 
-  lead=$(wrap <<<"${RELEASE_SUMMARY-}")
-  if ! grep -m1 '[^[:space:]]' <<<"$section" | grep -q '^#'; then
-    # Text before the first subsection: someone already wrote the lead.
+  # Command substitution drops the summary's trailing blank lines.
+  lead=$(tr -d '\r' <<<"${RELEASE_SUMMARY-}" | sed '/[^[:space:]]/,$!d')
+  if grep -Eq '^(#{1,2} |\[[^]]*\]: )' <<<"$lead"; then
+    die "the summary must not contain a top-level heading or a link definition"
+  fi
+  first=$(grep -m1 '[^[:space:]]' <<<"$section")
+  if [[ ! "$first" =~ $not_lead_re ]]; then
+    # Prose before the first subsection or entry: the lead is already written.
     [ -z "$lead" ] || die "[Unreleased] already opens with a lead paragraph"
-  elif [ -z "$lead" ] && grep -qi 'alters measurements' <<<"$section"; then
-    lead=$(wrap <<<"$STANDARD_LEAD")
+  elif [ -z "$lead" ] &&
+    tr -s '[:space:]' ' ' <<<"$section" | grep -Eqi '(alters|changes) measurements'; then
+    repo=$(sed -n 's|^\[Unreleased\]: \(.*\)/compare/.*$|\1|p' "$changelog")
+    lead=$(standard_lead "$repo")
   fi
   previous=$(sed -n 's|^\[Unreleased\]: .*/compare/v\(.*\)\.\.\.HEAD$|\1|p' "$changelog")
   [[ "$previous" =~ $VERSION_RE ]] ||

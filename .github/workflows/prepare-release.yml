@@ -2,7 +2,7 @@
 # and rolls CHANGELOG.md's [Unreleased] entries into a dated section
 # (.github/scripts/prepare-release), opening it with a lead paragraph on
 # measurements: the summary input if given, else a standard one when any
-# entry is marked "Alters measurements". Never merges — a human owns the
+# entry says it alters or changes measurements. Never merges — a human owns the
 # merge. Merging is what releases: tag-release.yml tags the merge commit and release.yml
 # publishes from the tag.
 #
@@ -18,7 +18,7 @@ on:
         required: true
         type: string
       summary:
-        description: "Lead paragraph for the release, in Markdown (default: a standard one if any entry alters measurements)"
+        description: "Lead paragraph for the release, in Markdown (default: a standard one if any entry alters or changes measurements)"
         required: false
         type: string
 
@@ -74,16 +74,22 @@ jobs:
           branch="release/v$VERSION"
           title="release: v$VERSION"
 
+          awk -v heading="## [$VERSION]" '
+            /^## \[/ { in_section = (index($0, heading " ") == 1); next }
+            /^\[[^]]*\]: / { in_section = 0 }
+            in_section { print }
+          ' CHANGELOG.md >"$RUNNER_TEMP/section.md"
           {
             printf 'Bumps confos to %s and rolls the changelog. ' "$VERSION"
-            printf 'Before merging, check that the lead paragraph of the %s section ' "$VERSION"
-            printf 'below says what this release does to measurements. '
+            if grep -m1 '[^[:space:]]' "$RUNNER_TEMP/section.md" | grep -Eq '^(#|[-*+] )'; then
+              printf 'No entry says it alters or changes measurements, so the %s section ' "$VERSION"
+              printf 'has no lead paragraph. Add one before merging if that is wrong. '
+            else
+              printf 'Before merging, check that the lead paragraph of the %s section ' "$VERSION"
+              printf 'below says what this release does to measurements. '
+            fi
             printf 'Merging tags the merge commit %s and publishes the release.\n\n' "\`v$VERSION\`"
-            awk -v heading="## [$VERSION]" '
-              /^## \[/ { in_section = (index($0, heading " ") == 1); next }
-              /^\[[^]]*\]: / { in_section = 0 }
-              in_section { print }
-            ' CHANGELOG.md
+            cat "$RUNNER_TEMP/section.md"
           } >"$RUNNER_TEMP/body.md"
 
           git config user.name "prepare-release"

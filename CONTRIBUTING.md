@@ -37,11 +37,11 @@ Run the **prepare release** workflow from `main` with the version to cut
 `release: vX.Y.Z` PR that bumps the package version and moves the
 changelog's `[Unreleased]` entries into a dated section.
 
-The section opens with a lead paragraph on measurements
-([docs/VERSIONING.md](docs/VERSIONING.md)). Pass `-f summary='…'` to write
-it yourself; otherwise the workflow adds a standard one when any entry is
-marked "Alters measurements", and none when no entry is. Read it in the PR
-before you merge.
+The section opens with a lead paragraph on what the release does to
+measurements. Pass `-f summary='…'` to write it yourself; otherwise the
+workflow adds a standard one when any entry says it alters or changes
+measurements, and none when no entry does. The PR body says which happened;
+read the lead there before you merge.
 
 Merging is the release: the **tag release** workflow tags the merge commit
 `vX.Y.Z`, and the tag starts the cargo-dist workflow that builds the
