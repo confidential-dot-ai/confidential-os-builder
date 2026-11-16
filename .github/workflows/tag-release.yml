@@ -1,8 +1,11 @@
-# Tags a release when its PR lands. A push to main that raises the package
-# version in Cargo.toml gets the tag vX.Y.Z on exactly that commit, and the
-# tag starts release.yml (cargo-dist), which builds and publishes. Consumers
-# pin confos by commit, so the tag never goes anywhere but the commit that
-# changed the version; a push that leaves the version alone is a no-op.
+# Tags a release when its PR lands. When a push to main raises the package
+# version in Cargo.toml, the first commit of that push carrying the new
+# version gets the tag vX.Y.Z, and the tag starts release.yml (cargo-dist),
+# which builds and publishes. Consumers pin confos by commit, so the tag
+# goes on the commit that changed the version even when the push brought
+# later commits with it. Whether a change is a release is decided by
+# .github/scripts/release-tag; a push that leaves the version alone is a
+# no-op.
 #
 # The tag is pushed with the pin-watch GitHub App token, with no
 # GITHUB_TOKEN fallback: a tag pushed with GITHUB_TOKEN starts no workflow,
@@ -17,10 +20,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: tag-release
-  cancel-in-progress: false
-
 jobs:
   tag:
     if: github.repository == 'confidential-dot-ai/confidential-os-builder'
@@ -28,6 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Decide whether this push is a release
         id: decide
@@ -35,45 +35,35 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          # For package_field and newer_than.
-          source .github/scripts/prepare-release
-
-          version=$(package_field Cargo.toml version)
-          git fetch --no-tags --depth=1 origin "$BEFORE"
           git show "$BEFORE:Cargo.toml" >"$RUNNER_TEMP/Cargo.toml.before"
-          previous=$(package_field "$RUNNER_TEMP/Cargo.toml.before" version)
 
-          if [ "$version" = "$previous" ]; then
-            echo "tag-release: version is still $version; nothing to tag"
+          # Oldest first, so the tag goes on the commit that made the bump.
+          tag='' commit=''
+          for commit in $(git rev-list --first-parent --reverse "$BEFORE..$GITHUB_SHA"); do
+            git show "$commit:Cargo.toml" >"$RUNNER_TEMP/Cargo.toml"
+            git show "$commit:CHANGELOG.md" >"$RUNNER_TEMP/CHANGELOG.md"
+            tag=$(bash .github/scripts/release-tag "$RUNNER_TEMP/Cargo.toml.before" \
+              "$RUNNER_TEMP/Cargo.toml" "$RUNNER_TEMP/CHANGELOG.md")
+            [ -z "$tag" ] || break
+          done
+          if [ -z "$tag" ]; then
+            echo "tag-release: the package version did not change; nothing to tag"
             exit 0
           fi
-          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
-            echo "tag-release: $version is not a plain X.Y.Z; tag it by hand" >&2
-            exit 1
-          }
-          newer_than "$version" "$previous" || {
-            echo "tag-release: version went from $previous to $version" >&2
-            exit 1
-          }
-          grep -q "^## \[$version\] — [0-9-]*\$" CHANGELOG.md || {
-            echo "tag-release: CHANGELOG.md has no dated [$version] section" >&2
-            exit 1
-          }
 
-          if remote=$(git ls-remote --exit-code origin "refs/tags/v$version^{}" "refs/tags/v$version"); then
+          # Empty when the tag does not exist; a failed lookup fails the step.
+          remote=$(git ls-remote origin "refs/tags/$tag^{}")
+          if [ -n "$remote" ]; then
             # A re-run after the tag went out: fine if it is on this commit.
-            if grep -q "^${GITHUB_SHA}[[:space:]]" <<<"$remote"; then
-              echo "tag-release: v$version is already on $GITHUB_SHA"
+            if [ "${remote%%[[:space:]]*}" = "$commit" ]; then
+              echo "tag-release: $tag is already on $commit"
               exit 0
             fi
-            echo "tag-release: v$version already exists on another commit" >&2
+            echo "tag-release: $tag already exists on another commit" >&2
             exit 1
-          else
-            status=$?
-            # 2 is "no such ref"; anything else is a failed lookup.
-            [ "$status" -eq 2 ] || exit "$status"
           fi
-          echo "tag=v$version" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "commit=$commit" >>"$GITHUB_OUTPUT"
       - name: Create GitHub App token
         id: app-token
         if: steps.decide.outputs.tag != ''
@@ -86,11 +76,12 @@ jobs:
         if: steps.decide.outputs.tag != ''
         env:
           TAG: ${{ steps.decide.outputs.tag }}
+          COMMIT: ${{ steps.decide.outputs.commit }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           git config user.name "tag-release"
           git config user.email "actions@github.com"
-          git tag -a "$TAG" -m "confos $TAG" "$GITHUB_SHA"
+          git tag -a "$TAG" -m "confos $TAG" "$COMMIT"
           git push "https://x-access-token:$APP_TOKEN@github.com/$GITHUB_REPOSITORY.git" \
             "refs/tags/$TAG"

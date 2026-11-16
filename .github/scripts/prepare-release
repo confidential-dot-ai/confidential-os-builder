@@ -7,8 +7,10 @@
 
 set -euo pipefail
 
+readonly VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
 die() {
-  echo "prepare-release: $*" >&2
+  echo "${0##*/}: $*" >&2
   exit 1
 }
 
@@ -41,12 +43,12 @@ main() {
   fi
 
   local version=$1 date=$2 dir=${3:-.}
-  local version_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
   local date_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
   local manifest="$dir/Cargo.toml" lock="$dir/Cargo.lock" changelog="$dir/CHANGELOG.md"
   local name current previous file
+  local new_manifest new_lock new_changelog
 
-  [[ "$version" =~ $version_re ]] || die "invalid version: $version (want X.Y.Z)"
+  [[ "$version" =~ $VERSION_RE ]] || die "invalid version: $version (want X.Y.Z)"
   [[ "$date" =~ $date_re ]] || die "invalid date: $date (want YYYY-MM-DD)"
   for file in "$manifest" "$lock" "$changelog"; do
     [ -f "$file" ] || die "not found: $file"
@@ -55,7 +57,7 @@ main() {
   name=$(package_field "$manifest" name)
   current=$(package_field "$manifest" version)
   [ -n "$name" ] || die "no [package] name in $manifest"
-  [[ "$current" =~ $version_re ]] || die "no [package] version in $manifest"
+  [[ "$current" =~ $VERSION_RE ]] || die "no [package] version in $manifest"
   newer_than "$version" "$current" || die "$version is not newer than $current"
 
   grep -qx '## \[Unreleased\]' "$changelog" || die "no [Unreleased] section in $changelog"
@@ -68,33 +70,29 @@ main() {
     END { exit !found }
   ' "$changelog" || die "nothing under [Unreleased] in $changelog"
   previous=$(sed -n 's|^\[Unreleased\]: .*/compare/v\(.*\)\.\.\.HEAD$|\1|p' "$changelog")
-  [[ "$previous" =~ $version_re ]] ||
+  [[ "$previous" =~ $VERSION_RE ]] ||
     die "no [Unreleased] compare link in $changelog"
   [ "$previous" = "$current" ] ||
     die "[Unreleased] compare link starts at v$previous, not v$current"
 
-  # Not local: the EXIT trap runs after main has returned.
-  tmp=$(mktemp -d "${TMPDIR:-/tmp}/prepare-release.XXXXXXXX")
-  trap 'rm -rf "$tmp"' EXIT
-
-  awk -v version="$version" '
+  new_manifest=$(awk -v version="$version" '
     /^\[/ { in_package = ($0 == "[package]") }
     in_package && !done && $1 == "version" && $2 == "=" {
       print "version = \"" version "\""; done = 1; next
     }
     { print }
     END { exit !done }
-  ' "$manifest" >"$tmp/Cargo.toml" || die "could not bump $manifest"
+  ' "$manifest") || die "could not bump $manifest"
 
-  awk -v name="$name" -v current="$current" -v version="$version" '
+  new_lock=$(awk -v name="$name" -v current="$current" -v version="$version" '
     after_name && !done && $0 == "version = \"" current "\"" {
       print "version = \"" version "\""; done = 1; after_name = 0; next
     }
     { after_name = ($0 == "name = \"" name "\""); print }
     END { exit !done }
-  ' "$lock" >"$tmp/Cargo.lock" || die "no $name $current entry in $lock (is Cargo.lock stale?)"
+  ' "$lock") || die "no $name $current entry in $lock (is Cargo.lock stale?)"
 
-  awk -v version="$version" -v date="$date" -v previous="$previous" '
+  new_changelog=$(awk -v version="$version" -v date="$date" -v previous="$previous" '
     $0 == "## [Unreleased]" && !rolled {
       print; print ""; print "## [" version "] — " date
       rolled = 1; next
@@ -107,11 +105,11 @@ main() {
     }
     { print }
     END { exit !(rolled && linked) }
-  ' "$changelog" >"$tmp/CHANGELOG.md" || die "could not roll $changelog"
+  ' "$changelog") || die "could not roll $changelog"
 
-  cat "$tmp/Cargo.toml" >"$manifest"
-  cat "$tmp/Cargo.lock" >"$lock"
-  cat "$tmp/CHANGELOG.md" >"$changelog"
+  printf '%s\n' "$new_manifest" >"$manifest"
+  printf '%s\n' "$new_lock" >"$lock"
+  printf '%s\n' "$new_changelog" >"$changelog"
   echo "prepare-release: $name $current -> $version ($date)"
 }
 

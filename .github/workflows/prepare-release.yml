@@ -30,15 +30,10 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
     steps:
-      - name: Require main and a plain version
+      - name: Require main
         run: |
-          set -euo pipefail
           [ "$GITHUB_REF" = refs/heads/main ] || {
             echo "prepare-release: run this from main, not $GITHUB_REF" >&2
-            exit 1
-          }
-          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
-            echo "prepare-release: invalid version: $VERSION (want X.Y.Z)" >&2
             exit 1
           }
       - name: Create GitHub App token
@@ -52,21 +47,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app-token.outputs.token }}
+      # First, because the script is what vets the version input.
+      - name: Bump the version and roll the changelog
+        run: bash .github/scripts/prepare-release "$VERSION" "$(date -u +%F)"
       - name: Refuse a version that is already tagged or in review
         run: |
           set -euo pipefail
-          for ref in "refs/tags/v$VERSION" "refs/heads/release/v$VERSION"; do
-            if git ls-remote --exit-code origin "$ref" >/dev/null; then
-              echo "prepare-release: $ref already exists" >&2
-              exit 1
-            else
-              status=$?
-              # 2 is "no such ref"; anything else is a failed lookup.
-              [ "$status" -eq 2 ] || exit "$status"
-            fi
-          done
-      - name: Bump the version and roll the changelog
-        run: bash .github/scripts/prepare-release "$VERSION" "$(date -u +%F)"
+          # Empty when neither exists; a failed lookup fails the step.
+          existing=$(git ls-remote origin "refs/tags/v$VERSION" "refs/heads/release/v$VERSION")
+          [ -z "$existing" ] || {
+            echo "prepare-release: already exists: $existing" >&2
+            exit 1
+          }
       - name: Open the release PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -97,5 +89,9 @@ jobs:
             exit 1
           }
           git push origin "HEAD:refs/heads/$branch"
+          # A branch without a PR would block the next attempt at this version.
           gh pr create --base main --head "$branch" --title "$title" \
-            --body-file "$RUNNER_TEMP/body.md"
+            --body-file "$RUNNER_TEMP/body.md" || {
+            git push origin --delete "$branch"
+            exit 1
+          }

@@ -5,6 +5,7 @@ set -euo pipefail
 TEST_SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly TEST_SCRIPT_DIR
 readonly PREPARE_RELEASE="$TEST_SCRIPT_DIR/../prepare-release"
+readonly RELEASE_TAG="$TEST_SCRIPT_DIR/../release-tag"
 readonly REPO_URL=https://github.com/confidential-dot-ai/confidential-os-builder
 
 fail() {
@@ -18,7 +19,7 @@ trap 'rm -rf "$test_dir"' EXIT
 # A tree shaped like the repo's: a dependency that shares the package's
 # version, so only a scoped edit leaves it alone.
 write_tree() {
-  local dir=$1 unreleased=$2
+  local dir=$1
   mkdir -p "$dir"
   cat >"$dir/Cargo.toml" <<'EOF'
 [package]
@@ -48,28 +49,35 @@ name = "confos-extra"
 version = "0.6.0"
 EOF
   {
-    printf '# Changelog\n\nIntro.\n\n## [Unreleased]\n'
-    printf '%s' "$unreleased"
+    printf '# Changelog\n\nIntro.\n\n## [Unreleased]\n\n'
+    printf '### Changed\n- New thing.\n\n'
     printf '## [0.6.0] — 2026-11-02\n\n### Fixed\n- Old fix.\n\n'
     printf '[Unreleased]: %s/compare/v0.6.0...HEAD\n' "$REPO_URL"
     printf '[0.6.0]: %s/compare/v0.5.0...v0.6.0\n' "$REPO_URL"
   } >"$dir/CHANGELOG.md"
 }
 
-readonly ENTRIES=$'\n### Changed\n- New thing.\n\n'
-
 case_number=0
 new_case() {
   case_number=$((case_number + 1))
   case_dir="$test_dir/case-$case_number"
-  write_tree "$case_dir" "${1-$ENTRIES}"
+  write_tree "$case_dir"
 }
 
-expect_failure() {
+# Edit FILE of the current case in place with a sed expression.
+mutate() {
+  sed "$2" "$case_dir/$1" >"$test_dir/tmp"
+  mv "$test_dir/tmp" "$case_dir/$1"
+}
+
+# A fresh tree, optionally mutated, must be refused and left untouched.
+expect_failure() { # VERSION DATE MESSAGE [FILE SED_EXPR]
   local version=$1 date=$2 message=$3
+  new_case
+  if [ "$#" -eq 5 ]; then mutate "$4" "$5"; fi
   cp -R "$case_dir" "$case_dir.before"
   if bash "$PREPARE_RELEASE" "$version" "$date" "$case_dir" \
-    >"$test_dir/stdout" 2>"$test_dir/stderr"; then
+    >/dev/null 2>"$test_dir/stderr"; then
     fail "$version on $date unexpectedly succeeded"
   fi
   grep -q -- "$message" "$test_dir/stderr" || {
@@ -136,37 +144,69 @@ new_case
 bash "$PREPARE_RELEASE" 0.10.0 2026-11-16 "$case_dir" >/dev/null ||
   fail "0.10.0 should be newer than 0.6.0"
 
-new_case
 expect_failure 0.6.0 2026-11-16 'not newer than 0.6.0'
-new_case
 expect_failure 0.5.9 2026-11-16 'not newer than 0.6.0'
-new_case
 expect_failure v0.7.0 2026-11-16 'invalid version'
-new_case
 expect_failure 0.7 2026-11-16 'invalid version'
-new_case
 expect_failure 0.7.0-rc.1 2026-11-16 'invalid version'
-new_case
 expect_failure 0.07.0 2026-11-16 'invalid version'
-new_case
 expect_failure 0.7.0 16-11-2026 'invalid date'
-new_case $'\n'
-expect_failure 0.7.0 2026-11-16 'nothing under \[Unreleased\]'
+expect_failure 0.7.0 2026-11-16 'nothing under \[Unreleased\]' \
+  CHANGELOG.md '/^### Changed$/d; /^- New thing\.$/d'
+expect_failure 0.7.0 2026-11-16 'no \[Unreleased\] section' \
+  CHANGELOG.md 's/^## \[Unreleased\]$/## Unreleased/'
+expect_failure 0.7.0 2026-11-16 'compare link' \
+  CHANGELOG.md 's/^\[Unreleased\]: .*$//'
+expect_failure 0.7.0 2026-11-16 'starts at v0.5.0, not v0.6.0' \
+  CHANGELOG.md 's|/compare/v0.6.0...HEAD$|/compare/v0.5.0...HEAD|'
+expect_failure 0.7.0 2026-11-16 'Cargo.lock' \
+  Cargo.lock 's/^name = "confos"$/name = "renamed"/'
+
+# release-tag: OLD_CARGO_TOML is an untouched tree's, the rest the case's.
 new_case
-sed 's/^## \[Unreleased\]$/## Unreleased/' "$case_dir/CHANGELOG.md" >"$test_dir/tmp"
-mv "$test_dir/tmp" "$case_dir/CHANGELOG.md"
-expect_failure 0.7.0 2026-11-16 'no \[Unreleased\] section'
+readonly before="$case_dir/Cargo.toml"
+
+expect_tag() { # EXPECTED
+  local actual
+  actual=$(bash "$RELEASE_TAG" "$before" "$case_dir/Cargo.toml" "$case_dir/CHANGELOG.md") ||
+    fail "release-tag should print '$1'"
+  [ "$actual" = "$1" ] || fail "release-tag printed '$actual', want '$1'"
+}
+
+expect_no_tag() { # MESSAGE [OLD_CARGO_TOML]
+  if bash "$RELEASE_TAG" "${2:-$before}" "$case_dir/Cargo.toml" "$case_dir/CHANGELOG.md" \
+    >/dev/null 2>"$test_dir/stderr"; then
+    fail "release-tag unexpectedly succeeded, want: $1"
+  fi
+  grep -q -- "$1" "$test_dir/stderr" || {
+    cat "$test_dir/stderr" >&2
+    fail "release-tag did not report: $1"
+  }
+}
+
+# What prepare-release writes is what release-tag accepts.
 new_case
-sed 's/^\[Unreleased\]: .*$//' "$case_dir/CHANGELOG.md" >"$test_dir/tmp"
-mv "$test_dir/tmp" "$case_dir/CHANGELOG.md"
-expect_failure 0.7.0 2026-11-16 'compare link'
+bash "$PREPARE_RELEASE" 0.7.0 2026-11-16 "$case_dir" >/dev/null
+expect_tag v0.7.0
+
+# A Cargo.toml change that leaves the version alone is not a release.
 new_case
-sed 's|/compare/v0.6.0...HEAD$|/compare/v0.5.0...HEAD|' "$case_dir/CHANGELOG.md" >"$test_dir/tmp"
-mv "$test_dir/tmp" "$case_dir/CHANGELOG.md"
-expect_failure 0.7.0 2026-11-16 'starts at v0.5.0, not v0.6.0'
+mutate Cargo.toml 's/^edition = .*/edition = "2024"/'
+expect_tag ''
+
 new_case
-sed 's/^name = "confos"$/name = "renamed"/' "$case_dir/Cargo.lock" >"$test_dir/tmp"
-mv "$test_dir/tmp" "$case_dir/Cargo.lock"
-expect_failure 0.7.0 2026-11-16 'Cargo.lock'
+mutate Cargo.toml 's/^version = "0.6.0"/version = "0.7.0"/'
+expect_no_tag 'no dated \[0.7.0\] section'
+new_case
+mutate Cargo.toml 's/^version = "0.6.0"/version = "0.5.0"/'
+expect_no_tag 'went backwards, from 0.6.0 to 0.5.0'
+new_case
+mutate Cargo.toml 's/^version = "0.6.0"/version = "0.7.0-rc.1"/'
+expect_no_tag 'tag it by hand'
+# An unreadable version is an error on either side, never "unchanged".
+new_case
+mutate Cargo.toml 's/^version = "0.6.0"/version="0.6.0"/'
+expect_no_tag 'no plain X.Y.Z'
+expect_no_tag 'no plain X.Y.Z' "$case_dir/Cargo.toml"
 
 echo "prepare-release tests passed"
