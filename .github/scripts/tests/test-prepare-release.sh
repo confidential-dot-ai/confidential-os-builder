@@ -71,7 +71,7 @@ mutate() {
 }
 
 # A fresh tree, optionally mutated, must be refused and left untouched.
-expect_failure() { # VERSION DATE MESSAGE [FILE SED_EXPR]
+expect_failure() { # VERSION DATE MESSAGE [FILE SED_EXPR]; env passes through
   local version=$1 date=$2 message=$3
   new_case
   if [ "$#" -eq 5 ]; then mutate "$4" "$5"; fi
@@ -132,6 +132,43 @@ EOF
 } >"$expected/CHANGELOG.md"
 diff -ru "$expected" "$case_dir" || fail "0.7.0 produced an unexpected tree"
 
+# Puts a hand-written lead under [Unreleased]. Backslash-newline is the
+# portable way to add lines in a sed replacement.
+readonly WITH_LEAD=$'s/^## \\[Unreleased\\]$/&\\\n\\\nHand-written lead. Alters measurements./'
+
+# The lead paragraph. The fixture's entry is unmarked, so the tree above got
+# none; a marked entry gets the standard one, between heading and entries.
+lead_of() { # print the lines between the 0.7.0 heading and its first subsection
+  awk '/^## \[0.7.0\]/ { on = 1; next } /^###/ { on = 0 } on && NF' "$case_dir/CHANGELOG.md"
+}
+
+new_case
+mutate CHANGELOG.md 's/^- New thing\.$/- New thing. **Alters measurements** of x./'
+bash "$PREPARE_RELEASE" 0.7.0 2026-11-16 "$case_dir" >/dev/null
+lead_of | head -1 | grep -q '^\*\*Changes measurements\.\*\* Images built from this release have new' ||
+  fail "a marked entry should get the standard lead"
+grep -A1 '^## \[0.7.0\]' "$case_dir/CHANGELOG.md" | tail -1 | grep -q '^$' ||
+  fail "the lead should be set off from the heading by a blank line"
+bash "$RELEASE_TAG" "$test_dir/case-1/Cargo.toml" "$case_dir/Cargo.toml" \
+  "$case_dir/CHANGELOG.md" >/dev/null || fail "release-tag should accept a section with a lead"
+
+# RELEASE_SUMMARY replaces the standard wording, marked entry or not, and
+# is reflowed into one paragraph.
+new_case
+RELEASE_SUMMARY=$'**Changes measurements.**  Kernel moves\nto 6.18.62. '"$(printf 'word %.0s' {1..20})" \
+  bash "$PREPARE_RELEASE" 0.7.0 2026-11-16 "$case_dir" >/dev/null
+lead_of | head -1 | grep -q '^\*\*Changes measurements\.\*\* Kernel moves to 6.18.62. word' ||
+  fail "RELEASE_SUMMARY should become the lead"
+[ "$(lead_of | wc -l)" -eq 2 ] || fail "a long summary should wrap onto a second line"
+if lead_of | grep -q '.\{79\}'; then fail "lead lines should fit in 78 columns"; fi
+
+# A lead already written under [Unreleased] is kept as it is.
+new_case
+mutate CHANGELOG.md "$WITH_LEAD"
+bash "$PREPARE_RELEASE" 0.7.0 2026-11-16 "$case_dir" >/dev/null
+[ "$(lead_of)" = 'Hand-written lead. Alters measurements.' ] ||
+  fail "an existing lead should be left alone"
+
 # A patch release is as valid as a minor one.
 new_case
 bash "$PREPARE_RELEASE" 0.6.1 2026-11-16 "$case_dir" >/dev/null ||
@@ -159,6 +196,8 @@ expect_failure 0.7.0 2026-11-16 'compare link' \
   CHANGELOG.md 's/^\[Unreleased\]: .*$//'
 expect_failure 0.7.0 2026-11-16 'starts at v0.5.0, not v0.6.0' \
   CHANGELOG.md 's|/compare/v0.6.0...HEAD$|/compare/v0.5.0...HEAD|'
+RELEASE_SUMMARY='Another lead.' expect_failure 0.7.0 2026-11-16 'already opens with a lead' \
+  CHANGELOG.md "$WITH_LEAD"
 expect_failure 0.7.0 2026-11-16 'Cargo.lock' \
   Cargo.lock 's/^name = "confos"$/name = "renamed"/'
 

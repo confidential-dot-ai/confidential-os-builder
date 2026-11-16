@@ -4,6 +4,12 @@
 # Cargo.toml and Cargo.lock, and roll CHANGELOG.md's [Unreleased] entries
 # into a section dated DATE. Touches nothing unless every check passes, and
 # does no git or network work — the caller commits.
+#
+# The section opens with a lead paragraph on measurements, which is what
+# consumers read first (docs/VERSIONING.md). RELEASE_SUMMARY, when set, is
+# that paragraph. Otherwise a standard one is written if any entry is
+# marked "Alters measurements". No marked entry means no lead: a release is
+# never declared measurement-neutral on the strength of a missing marker.
 
 set -euo pipefail
 
@@ -36,6 +42,33 @@ newer_than() {
   return 1
 }
 
+readonly STANDARD_LEAD='**Changes measurements.** Images built from this
+release have new measurements; the entries below marked **Alters
+measurements** say which images and why. Rebuild images, publish their
+manifests and update verifier reference values before rollout. See
+[Versioning](docs/VERSIONING.md) for the migration policy.'
+
+# Print FILE's [Unreleased] section, without its heading.
+unreleased_section() {
+  awk '
+    /^## \[/ { in_unreleased = ($0 == "## [Unreleased]"); next }
+    /^\[[^]]*\]: / { in_unreleased = 0 }
+    in_unreleased { print }
+  ' "$1"
+}
+
+# Reflow stdin into one paragraph of lines no longer than 78 columns.
+wrap() {
+  awk '
+    { for (i = 1; i <= NF; i++) {
+        if (line == "") line = $i
+        else if (length(line) + 1 + length($i) <= 78) line = line " " $i
+        else { print line; line = $i }
+    } }
+    END { if (line != "") print line }
+  '
+}
+
 main() {
   if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
     echo "usage: prepare-release VERSION DATE [DIR]" >&2
@@ -46,7 +79,7 @@ main() {
   local date_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
   local manifest="$dir/Cargo.toml" lock="$dir/Cargo.lock" changelog="$dir/CHANGELOG.md"
   local name current previous file
-  local new_manifest new_lock new_changelog
+  local new_manifest new_lock new_changelog section lead
 
   [[ "$version" =~ $VERSION_RE ]] || die "invalid version: $version (want X.Y.Z)"
   [[ "$date" =~ $date_re ]] || die "invalid date: $date (want YYYY-MM-DD)"
@@ -64,11 +97,16 @@ main() {
   if grep -q "^## \[$version\]" "$changelog"; then
     die "$changelog already has a [$version] section"
   fi
-  awk '
-    /^## \[/ { in_unreleased = ($0 == "## [Unreleased]"); next }
-    in_unreleased && /[^[:space:]]/ { found = 1 }
-    END { exit !found }
-  ' "$changelog" || die "nothing under [Unreleased] in $changelog"
+  section=$(unreleased_section "$changelog")
+  grep -q '[^[:space:]]' <<<"$section" || die "nothing under [Unreleased] in $changelog"
+
+  lead=$(wrap <<<"${RELEASE_SUMMARY-}")
+  if ! grep -m1 '[^[:space:]]' <<<"$section" | grep -q '^#'; then
+    # Text before the first subsection: someone already wrote the lead.
+    [ -z "$lead" ] || die "[Unreleased] already opens with a lead paragraph"
+  elif [ -z "$lead" ] && grep -qi 'alters measurements' <<<"$section"; then
+    lead=$(wrap <<<"$STANDARD_LEAD")
+  fi
   previous=$(sed -n 's|^\[Unreleased\]: .*/compare/v\(.*\)\.\.\.HEAD$|\1|p' "$changelog")
   [[ "$previous" =~ $VERSION_RE ]] ||
     die "no [Unreleased] compare link in $changelog"
@@ -92,9 +130,10 @@ main() {
     END { exit !done }
   ' "$lock") || die "no $name $current entry in $lock (is Cargo.lock stale?)"
 
-  new_changelog=$(awk -v version="$version" -v date="$date" -v previous="$previous" '
+  new_changelog=$(LEAD=$lead awk -v version="$version" -v date="$date" -v previous="$previous" '
     $0 == "## [Unreleased]" && !rolled {
       print; print ""; print "## [" version "] — " date
+      if (ENVIRON["LEAD"] != "") { print ""; print ENVIRON["LEAD"] }
       rolled = 1; next
     }
     /^\[Unreleased\]: / && !linked {

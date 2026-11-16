@@ -1,8 +1,9 @@
 # Opens the release PR for a version you choose: bumps the package version
 # and rolls CHANGELOG.md's [Unreleased] entries into a dated section
-# (.github/scripts/prepare-release). Never merges — a human writes the
-# section's lead paragraph on measurements and owns the merge. Merging is
-# what releases: tag-release.yml tags the merge commit and release.yml
+# (.github/scripts/prepare-release), opening it with a lead paragraph on
+# measurements: the summary input if given, else a standard one when any
+# entry is marked "Alters measurements". Never merges — a human owns the
+# merge. Merging is what releases: tag-release.yml tags the merge commit and release.yml
 # publishes from the tag.
 #
 # Uses the pin-watch GitHub App token, with no GITHUB_TOKEN fallback: a PR
@@ -15,6 +16,10 @@ on:
       version:
         description: "Version to release, as X.Y.Z (no leading v)"
         required: true
+        type: string
+      summary:
+        description: "Lead paragraph for the release, in Markdown (default: a standard one if any entry alters measurements)"
+        required: false
         type: string
 
 permissions:
@@ -49,6 +54,8 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
       # First, because the script is what vets the version input.
       - name: Bump the version and roll the changelog
+        env:
+          RELEASE_SUMMARY: ${{ inputs.summary }}
         run: bash .github/scripts/prepare-release "$VERSION" "$(date -u +%F)"
       - name: Refuse a version that is already tagged or in review
         run: |
@@ -69,8 +76,8 @@ jobs:
 
           {
             printf 'Bumps confos to %s and rolls the changelog. ' "$VERSION"
-            printf 'Before merging, add a lead paragraph to the %s section ' "$VERSION"
-            printf 'saying whether this release changes measurements. '
+            printf 'Before merging, check that the lead paragraph of the %s section ' "$VERSION"
+            printf 'below says what this release does to measurements. '
             printf 'Merging tags the merge commit %s and publishes the release.\n\n' "\`v$VERSION\`"
             awk -v heading="## [$VERSION]" '
               /^## \[/ { in_section = (index($0, heading " ") == 1); next }
