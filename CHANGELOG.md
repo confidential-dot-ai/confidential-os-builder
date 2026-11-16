@@ -4,7 +4,10 @@ All notable changes to Confidential OS Builder are documented here. The format f
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 the policy in [docs/VERSIONING.md](docs/VERSIONING.md) — in particular,
 entries call out changes that **alter measurements** of otherwise-identical
-build configs, since those invalidate published reference values.
+build configs, since those invalidate published reference values. Such an
+entry says **Alters measurements** or **Changes measurements** in those
+words: the release tooling looks for them to open the release's section with
+a warning.
 
 ## [Unreleased]
 

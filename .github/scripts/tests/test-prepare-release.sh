@@ -71,7 +71,7 @@ mutate() {
 }
 
 # A fresh tree, optionally mutated, must be refused and left untouched.
-expect_failure() { # VERSION DATE MESSAGE [FILE SED_EXPR]
+expect_failure() { # VERSION DATE MESSAGE [FILE SED_EXPR]; env passes through
   local version=$1 date=$2 message=$3
   new_case
   if [ "$#" -eq 5 ]; then mutate "$4" "$5"; fi
@@ -132,6 +132,57 @@ EOF
 } >"$expected/CHANGELOG.md"
 diff -ru "$expected" "$case_dir" || fail "0.7.0 produced an unexpected tree"
 
+# The lead paragraph. The fixture's entry is unmarked, so the tree above got
+# none.
+write_tree "$test_dir/pristine"
+readonly PRISTINE_MANIFEST="$test_dir/pristine/Cargo.toml"
+readonly MARKED='s/^- New thing\.$/- New thing. **Alters measurements** of x./'
+# Puts a hand-written lead under [Unreleased]. Backslash-newline is the
+# portable way to add lines in a sed replacement.
+readonly WITH_LEAD=$'s/^## \\[Unreleased\\]$/&\\\n\\\nHand-written lead. Alters measurements./'
+
+lead_of() { # print the lines between the 0.7.0 heading and its first subsection
+  awk '/^## \[0.7.0\]/ { on = 1; next } /^###/ { on = 0 } on && NF' "$case_dir/CHANGELOG.md"
+}
+
+# Each way an entry can say it: gets the standard lead, set off by blank lines.
+expect_standard_lead() { # FILE SED_EXPR
+  new_case
+  mutate "$1" "$2"
+  bash "$PREPARE_RELEASE" 0.7.0 2026-11-16 "$case_dir" >/dev/null ||
+    fail "should prepare after: $2"
+  lead_of | head -1 | grep -q '^\*\*Changes measurements\.\*\* Images built from this release have new$' ||
+    fail "no standard lead after: $2"
+}
+
+expect_standard_lead CHANGELOG.md "$MARKED"
+grep -A1 '^## \[0.7.0\]' "$case_dir/CHANGELOG.md" | tail -1 | grep -q '^$' ||
+  fail "the lead should be set off from the heading by a blank line"
+lead_of | grep -q "^\[Versioning\]($REPO_URL/blob/main/docs/VERSIONING.md) " ||
+  fail "the lead should link to the versioning doc by absolute URL"
+tag=$(bash "$RELEASE_TAG" "$PRISTINE_MANIFEST" "$case_dir/Cargo.toml" "$case_dir/CHANGELOG.md")
+[ "$tag" = v0.7.0 ] || fail "release-tag should accept a section with a lead, got '$tag'"
+
+expect_standard_lead CHANGELOG.md 's/^- New thing\.$/- **Changes measurements.** New thing./'
+expect_standard_lead CHANGELOG.md $'s/^- New thing\\.$/- New thing. **Alters\\\n  measurements** of x./'
+# Entries with no subsection heading are entries, not a lead.
+expect_standard_lead CHANGELOG.md $'/^### Changed$/d; s/^- New thing\\.$/- New thing. Alters measurements./'
+
+# RELEASE_SUMMARY is the lead as given, marked entry or not.
+new_case
+mutate CHANGELOG.md "$MARKED"
+RELEASE_SUMMARY=$'\n**Changes measurements.**  Kernel moves\r\nto 6.18.62.\n\nSecond paragraph.\n' \
+  bash "$PREPARE_RELEASE" 0.7.0 2026-11-16 "$case_dir" >/dev/null
+[ "$(lead_of)" = $'**Changes measurements.**  Kernel moves\nto 6.18.62.\nSecond paragraph.' ] ||
+  fail "RELEASE_SUMMARY should become the lead, unchanged"
+
+# A lead already written under [Unreleased] is kept as it is.
+new_case
+mutate CHANGELOG.md "$WITH_LEAD"
+bash "$PREPARE_RELEASE" 0.7.0 2026-11-16 "$case_dir" >/dev/null
+[ "$(lead_of)" = 'Hand-written lead. Alters measurements.' ] ||
+  fail "an existing lead should be left alone"
+
 # A patch release is as valid as a minor one.
 new_case
 bash "$PREPARE_RELEASE" 0.6.1 2026-11-16 "$case_dir" >/dev/null ||
@@ -159,12 +210,15 @@ expect_failure 0.7.0 2026-11-16 'compare link' \
   CHANGELOG.md 's/^\[Unreleased\]: .*$//'
 expect_failure 0.7.0 2026-11-16 'starts at v0.5.0, not v0.6.0' \
   CHANGELOG.md 's|/compare/v0.6.0...HEAD$|/compare/v0.5.0...HEAD|'
+RELEASE_SUMMARY=$'Fine.\n## [9.9.9] — 2026-01-01' expect_failure 0.7.0 2026-11-16 'top-level heading'
+RELEASE_SUMMARY='[x]: https://example.com' expect_failure 0.7.0 2026-11-16 'link definition'
+RELEASE_SUMMARY='Another lead.' expect_failure 0.7.0 2026-11-16 'already opens with a lead' \
+  CHANGELOG.md "$WITH_LEAD"
 expect_failure 0.7.0 2026-11-16 'Cargo.lock' \
   Cargo.lock 's/^name = "confos"$/name = "renamed"/'
 
 # release-tag: OLD_CARGO_TOML is an untouched tree's, the rest the case's.
-new_case
-readonly before="$case_dir/Cargo.toml"
+readonly before=$PRISTINE_MANIFEST
 
 expect_tag() { # EXPECTED
   local actual

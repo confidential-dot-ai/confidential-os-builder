@@ -35,9 +35,13 @@ in the README; the pure-Rust unit tests run anywhere.
 Run the **prepare release** workflow from `main` with the version to cut
 (`gh workflow run prepare-release.yml -f version=X.Y.Z`). It opens a
 `release: vX.Y.Z` PR that bumps the package version and moves the
-changelog's `[Unreleased]` entries into a dated section. Add a lead
-paragraph to that section saying whether the release changes measurements
-([docs/VERSIONING.md](docs/VERSIONING.md)), then merge.
+changelog's `[Unreleased]` entries into a dated section.
+
+The section opens with a lead paragraph on what the release does to
+measurements. Pass `-f summary='…'` to write it yourself; otherwise the
+workflow adds a standard one when any entry says it alters or changes
+measurements, and none when no entry does. The PR body says which happened;
+read the lead there before you merge.
 
 Merging is the release: the **tag release** workflow tags the merge commit
 `vX.Y.Z`, and the tag starts the cargo-dist workflow that builds the
