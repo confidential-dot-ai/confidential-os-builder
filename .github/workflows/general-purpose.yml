@@ -17,6 +17,10 @@ on:
           - general-purpose-gpu
         default: all
   push:
+    # Branches only. Without this a tag push starts the workflow too, and
+    # path filters are not evaluated for tags, so every release tag rebuilt
+    # the whole matrix on a commit main had already built.
+    branches: ['**']
     paths:
       - .github/workflows/general-purpose.yml
       - .github/actions/**
