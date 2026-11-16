@@ -68,6 +68,7 @@ jobs:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
             - run: bash .github/scripts/tests/test-kernel-checksum.sh
             - run: bash .github/scripts/tests/test-kernel-release.sh
+            - run: bash .github/scripts/tests/test-prepare-release.sh
 
     immutable-root:
         name: Immutable root regression tests

@@ -30,6 +30,20 @@ in the README; the pure-Rust unit tests run anywhere.
 - Keep docs in sync: if you add or change a CLI flag, update the matching
   table in README.md in the same change.
 
+## Releasing
+
+Run the **prepare release** workflow from `main` with the version to cut
+(`gh workflow run prepare-release.yml -f version=X.Y.Z`). It opens a
+`release: vX.Y.Z` PR that bumps the package version and moves the
+changelog's `[Unreleased]` entries into a dated section. Add a lead
+paragraph to that section saying whether the release changes measurements
+([docs/VERSIONING.md](docs/VERSIONING.md)), then merge.
+
+Merging is the release: the **tag release** workflow tags the merge commit
+`vX.Y.Z`, and the tag starts the cargo-dist workflow that builds the
+binaries and publishes the GitHub release. Nothing is tagged unless the
+merge raises the version in `Cargo.toml`.
+
 ## License
 
 By contributing you agree that your contributions are licensed under the

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# Decide whether a change to Cargo.toml is a release. Given the manifest
+# before the change, the manifest after it and the changelog after it,
+# print the tag to create (vX.Y.Z) when the package version rose, and
+# nothing when it did not move. Anything else — a version that is not a
+# plain X.Y.Z, one that went backwards, a release with no dated changelog
+# section — is an error, never a silent "no release". Does no git or
+# network work.
+
+set -euo pipefail
+
+# For package_field, newer_than, die and VERSION_RE.
+# shellcheck source-path=SCRIPTDIR
+source "$(dirname -- "${BASH_SOURCE[0]}")/prepare-release"
+
+main() {
+  if [ "$#" -ne 3 ]; then
+    echo "usage: release-tag OLD_CARGO_TOML NEW_CARGO_TOML CHANGELOG" >&2
+    return 2
+  fi
+
+  local old_manifest=$1 new_manifest=$2 changelog=$3 previous version
+  previous=$(package_field "$old_manifest" version)
+  version=$(package_field "$new_manifest" version)
+
+  [[ "$previous" =~ $VERSION_RE ]] ||
+    die "no plain X.Y.Z [package] version in $old_manifest"
+  [[ "$version" =~ $VERSION_RE ]] ||
+    die "no plain X.Y.Z [package] version in $new_manifest; tag it by hand"
+  [ "$version" != "$previous" ] || return 0
+  newer_than "$version" "$previous" ||
+    die "version went backwards, from $previous to $version"
+  grep -Eq "^## \[$version\] — [0-9]{4}-[0-9]{2}-[0-9]{2}\$" "$changelog" ||
+    die "$changelog has no dated [$version] section"
+  echo "v$version"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
