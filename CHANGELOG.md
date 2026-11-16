@@ -10,6 +10,14 @@ build configs, since those invalidate published reference values.
 
 ## [0.7.0] — 2026-11-16
 
+**Changes measurements.** Every image built from this release has new
+launch digests, RTMRs and root hashes: the shared guest kernel moves to
+Linux 6.18.62 and the base and initrd apt snapshots advance to
+`20261109T000000Z`. The `general-purpose-gpu` image also serves dcgm-exporter
+beyond loopback only when the launch asks for it. Rebuild images, publish
+their manifests and update verifier reference values before rollout. See
+[Versioning](docs/VERSIONING.md) for the migration policy.
+
 ### Changed
 - The `general-purpose-gpu` image's dcgm-exporter listens on TCP 9400 on
   every address only when the launch-bound `pubkey` file carries the line
