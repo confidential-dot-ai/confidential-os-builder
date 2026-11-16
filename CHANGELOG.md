@@ -8,6 +8,8 @@ build configs, since those invalidate published reference values.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-16
+
 ### Changed
 - The `general-purpose-gpu` image's dcgm-exporter listens on TCP 9400 on
   every address only when the launch-bound `pubkey` file carries the line
@@ -476,7 +478,8 @@ Initial public release.
 - `steep push` / `steep pull` (OCI via oras)
 - CI publishes base image as `ghcr.io/confidential-dot-ai/steep:base`
 
-[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.2...v0.4.3
