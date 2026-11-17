@@ -31,6 +31,11 @@ permissions: read-all
 env:
     CARGO_TERM_COLOR: always
 
+# A dispatch may publish diagnostic candidates, so it never supersedes another run.
+concurrency:
+    group: test-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+    cancel-in-progress: true
+
 jobs:
     snp-boot-diagnostics:
         if: github.event_name == 'workflow_dispatch' && inputs.snp_boot_diagnostics
