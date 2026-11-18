@@ -44,9 +44,10 @@ permissions:
   contents: read
   packages: write
 
+# Main publishes per-commit images, so its runs never cancel each other.
 concurrency:
   group: general-purpose-gpu-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   validate:
