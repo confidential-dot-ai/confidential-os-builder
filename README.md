@@ -1,5 +1,9 @@
 # Confidential OS Builder
 
+[![Test](https://github.com/confidential-dot-ai/confidential-os-builder/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/confidential-dot-ai/confidential-os-builder/actions/workflows/test.yml?query=branch%3Amain)
+[![Base image](https://github.com/confidential-dot-ai/confidential-os-builder/actions/workflows/base.yml/badge.svg?branch=main)](https://github.com/confidential-dot-ai/confidential-os-builder/actions/workflows/base.yml?query=branch%3Amain)
+[![General-purpose images](https://github.com/confidential-dot-ai/confidential-os-builder/actions/workflows/general-purpose.yml/badge.svg?branch=main)](https://github.com/confidential-dot-ai/confidential-os-builder/actions/workflows/general-purpose.yml?query=branch%3Amain)
+
 Confidential OS Builder (`confos`) is a confidential VM image builder for
 AMD SEV-SNP and Intel TDX. It produces bit-identical, attestable disk images
 from declarative configuration. The `build` command builds a dm-verity
