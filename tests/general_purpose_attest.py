@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import tomllib
 import unittest
 import urllib.error
 import urllib.request
@@ -210,6 +211,17 @@ class ProfileTests(unittest.TestCase):
                 changed = [(old, new) for old, new in zip(before, after, strict=True) if old != new]
                 self.assertEqual(changed, [('bind = "0.0.0.0:8400"', 'bind = "127.0.0.1:8401"')])
                 self.assertTrue(config.read_text().endswith("\n"))
+
+    def test_baked_configs_use_only_tables_every_attestation_api_accepts(self):
+        # attestation-rs since 92816f10 rejects unknown fields and has no [certs].
+        accepted = {"server", "server.tls", "auth", "token", "attestation"}
+        for profile in ("attest", "attest-gpu"):
+            with self.subTest(profile=profile):
+                baked = PROFILES / profile / "mkosi.extra/etc/attestation-api/config.toml"
+                config = tomllib.loads(baked.read_text())
+                tables = set(config) | {f"server.{k}" for k, v in config["server"].items()
+                                        if isinstance(v, dict)}
+                self.assertLessEqual(tables, accepted)
 
     def test_a_config_that_binds_elsewhere_stops_the_build(self):
         with tempfile.TemporaryDirectory() as tmp:
