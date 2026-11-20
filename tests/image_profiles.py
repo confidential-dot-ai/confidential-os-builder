@@ -293,7 +293,14 @@ class GpuModuleLatchTests(unittest.TestCase):
         for name in ("ssh.service", "containerd.service", "docker.service"):
             self.assertIn(name, before)
         self.assertIn("FailureAction=poweroff-force", unit)
+        self.assertIn("Wants=nvidia-cc-ready.service", unit)
+        for name in ("ssh", "containerd", "docker"):
+            drop_in = (gpu / f"etc/systemd/system/{name}.service.d/10-modules-latch.conf").read_text().splitlines()
+            self.assertEqual("[Unit]", drop_in[0])
+            self.assertIn("Requires=nvidia-modules-latch.service", drop_in)
+            self.assertIn("After=nvidia-modules-latch.service", drop_in)
         self.assertIn("ExecStart=/sbin/sysctl -w kernel.modules_disabled=1", service.splitlines())
+        # The latch must still run when GPU bring-up was skipped or failed.
         self.assertFalse([line for line in text.splitlines() if line.startswith(("Requires=", "BindsTo="))])
 
 
