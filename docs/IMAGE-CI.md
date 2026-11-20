@@ -25,9 +25,12 @@ Runs triggered by Dependabot drop `general-purpose-gpu` from the matrix. They
 read Dependabot secrets, which do not hold `MODULE_SIG_KEY_PEM`, and a run
 trying out freshly bumped third-party actions should not see the
 module-signing key. To build the GPU image with a Dependabot change, review
-the bumped actions, then dispatch the workflow on its branch (`gh workflow run
-general-purpose.yml --ref <branch> -f image=general-purpose-gpu`). Every other
-run still fails when the key is missing.
+the bumped actions, push the reviewed commit to a new branch of your own and
+dispatch the workflow there (`gh workflow run general-purpose.yml --ref
+<branch> -f image=general-purpose-gpu`). Do not dispatch on the Dependabot
+branch itself: its earlier runs saved caches there with the unreviewed actions,
+and a run on that branch restores them. Every other run still fails when the
+key is missing.
 
 The tools stamp is compared byte-for-byte with its written key. Previously,
 trimming the stored key removed the empty extra-package field's newline while
