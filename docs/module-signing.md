@@ -14,7 +14,7 @@ lockdown plumbing.
 | | Where | Notes |
 |---|---|---|
 | Public certificate | `kernel/module-signing.crt`, committed | The default. Built into the system keyring and shipped inside every image, so it is public by construction. Measured — its sha256 is a kernel fingerprint input, so replacing it changes the image measurement. |
-| Private key | `MODULE_SIG_KEY_PEM` (contents) or `MODULE_SIG_KEY` (path) in `bin/confos-fetch-gpu`'s environment | Signs the out-of-tree modules via `scripts/sign-file`. Never committed; lives in the org-level Actions secret. |
+| Private key | `MODULE_SIG_KEY_PEM` (contents) or `MODULE_SIG_KEY` (path) in `bin/confos-fetch-gpu`'s environment | Signs the out-of-tree modules via `scripts/sign-file`. Never committed; lives in the org-level Actions and Dependabot secrets. |
 
 A fresh clone builds a reproducible image with no setup: the default
 certificate is already here, and only *signing* new modules needs the key.
@@ -71,11 +71,18 @@ Then:
 1. Commit `kernel/module-signing.crt` (public — safe to publish).
 2. Store the **key and certificate concatenated** as one PEM in the
    organisation-level Actions secret `MODULE_SIG_KEY_PEM`, so both this repo's
-   and consumers' GPU builds inherit it:
+   and consumers' GPU builds inherit it. Store the same PEM as the
+   organisation-level Dependabot secret of the same name: runs triggered by
+   Dependabot read only Dependabot secrets, and their GPU builds fail without
+   it. Set both from a file, which keeps the line breaks intact:
    ```sh
-   cat /tmp/module-signing.key kernel/module-signing.crt   # -> paste as the secret
+   cat /tmp/module-signing.key kernel/module-signing.crt > /tmp/module-signing.pem
+   gh secret set MODULE_SIG_KEY_PEM --org <org> < /tmp/module-signing.pem
+   gh secret set MODULE_SIG_KEY_PEM --org <org> --app dependabot < /tmp/module-signing.pem
    ```
-3. Shred `/tmp/module-signing.key` and `/tmp/x509.genkey`.
+   The key must be PEM (`BEGIN PRIVATE KEY`), not an OpenSSH-format key.
+3. Shred `/tmp/module-signing.key`, `/tmp/module-signing.pem` and
+   `/tmp/x509.genkey`.
 
 `-days 36500` avoids an expiry that would silently stop module loading on a
 long-lived image; this is not a revocation-managed PKI.
