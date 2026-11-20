@@ -15,7 +15,7 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "dep:chrono"]
+cli = ["dep:clap", "dep:jiff"]
 
 [dependencies]
 igvm = "0.4"
@@ -28,4 +28,4 @@ hex = "0.4"
 zerocopy = { version = "0.8", features = ["derive"] }
 bitfield-struct = "0.10"
 uguid = "2"
-chrono = { version = "0.4", features = ["serde"], optional = true }
+jiff = { version = "1", default-features = false, features = ["std"], optional = true }

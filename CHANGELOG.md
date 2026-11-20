@@ -11,6 +11,13 @@ a warning.
 
 ## [Unreleased]
 
+### Changed
+- Replace the `chrono` dependency, which RUSTSEC-2026-0543 marks
+  unmaintained, with `jiff`. `build.timestamp` and the kernel manifest's
+  `built_at` keep their format. `igvm-tools`' `generated_at` is now whole
+  seconds with a `Z` suffix, as its README documents, instead of
+  nanoseconds with `+00:00`.
+
 ## [0.7.0] — 2026-11-16
 
 **Changes measurements.** Every image built from this release has new

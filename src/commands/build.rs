@@ -455,7 +455,7 @@ pub fn run(args: &BuildArgs) -> anyhow::Result<()> {
     let build_manifest = manifest::BuildManifest {
         version: manifest::MANIFEST_VERSION,
         build: manifest::BuildConfig {
-            timestamp: chrono_now(),
+            timestamp: crate::utc_now_rfc3339(),
             memory: args.memory.clone(),
             format: "raw".to_string(),
             platform: platform_tag,
@@ -960,10 +960,6 @@ fn human_size(path: &Path) -> anyhow::Result<String> {
 // `make build-<NAME>` Makefile targets chain fetch + build. Keeping this Rust
 // code unaware of registries and pinned digests means the confos CLI stays
 // focused on the image-build pipeline.
-
-fn chrono_now() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
 
 /// Copy the mkosi initrd and remove its gzip timestamp before measuring it.
 fn prepare_initrd(output: &Path, mkosi_initrd: &Path) -> anyhow::Result<PathBuf> {
