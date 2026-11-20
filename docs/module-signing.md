@@ -6,8 +6,9 @@ refuses to load the out-of-tree NVIDIA modules.
 
 Integrity does **not** rest on these signatures: the
 module bytes live in the dm-verity-measured rootfs, and the boot sequence
-latches `kernel.modules_disabled=1` once they are loaded. The signature is
-lockdown plumbing.
+latches `kernel.modules_disabled=1` once they are loaded. SSH and the
+container runtimes are ordered after that latch, and the guest powers off if
+it cannot be set. The signature is lockdown plumbing.
 
 ## Certificate and key
 

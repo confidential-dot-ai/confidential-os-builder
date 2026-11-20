@@ -280,6 +280,23 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
             self.assertIn("OutputDirectory=mkosi.output", (ROOT / "mkosi" / tree / "mkosi.conf").read_text())
 
 
+class GpuModuleLatchTests(unittest.TestCase):
+    def test_logins_and_workloads_wait_for_the_latch(self):
+        gpu = ROOT / "mkosi/base/mkosi.profiles/gpu/mkosi.extra"
+        preset = (gpu / "usr/lib/systemd/system-preset/10-nvidia.preset").read_text().splitlines()
+        self.assertIn("enable nvidia-modules-latch.service", preset)
+        text = (gpu / "etc/systemd/system/nvidia-modules-latch.service").read_text()
+        unit, service = text.split("[Service]")
+        unit = unit.splitlines()
+        self.assertIn("After=nvidia-cc-ready.service systemd-modules-load.service", unit)
+        before = next(line for line in unit if line.startswith("Before=")).removeprefix("Before=").split()
+        for name in ("ssh.service", "containerd.service", "docker.service"):
+            self.assertIn(name, before)
+        self.assertIn("FailureAction=poweroff-force", unit)
+        self.assertIn("ExecStart=/sbin/sysctl -w kernel.modules_disabled=1", service.splitlines())
+        self.assertFalse([line for line in text.splitlines() if line.startswith(("Requires=", "BindsTo="))])
+
+
 class GpuMetricsTests(unittest.TestCase):
     def test_exporter_runs_unprivileged_after_gpu_bring_up(self):
         preset = (EXTRA / "usr/lib/systemd/system-preset/30-general-purpose-gpu.preset").read_text().splitlines()
