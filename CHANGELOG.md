@@ -17,6 +17,13 @@ a warning.
   `built_at` keep their format. `igvm-tools`' `generated_at` is now whole
   seconds with a `Z` suffix, as its README documents, instead of
   nanoseconds with `+00:00`.
+- GPU images start `ssh.service`, `containerd.service` and `docker.service`
+  only after `nvidia-modules-latch.service` has set
+  `kernel.modules_disabled=1`, and power off if the latch cannot be set.
+  Before, those services could start while GPU bring-up (up to 300 s) was
+  still running and module loading was still open. SSH and Docker now become
+  available after GPU bring-up, not alongside it. **Alters measurements** of
+  the `general-purpose-gpu` image and of any image using the `gpu` profile.
 
 ## [0.7.0] — 2026-11-16
 

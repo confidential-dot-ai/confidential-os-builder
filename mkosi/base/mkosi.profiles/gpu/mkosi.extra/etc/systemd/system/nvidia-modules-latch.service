@@ -6,6 +6,14 @@ Description=Latch kernel.modules_disabled after the GPU driver is loaded
 # bring-up was skipped (e.g. a CPU-only boot of the GPU image), where it simply
 # hardens a kernel that loaded nothing.
 After=nvidia-cc-ready.service systemd-modules-load.service
+# Until the latch is set a validly signed module still loads, so nothing that
+# hands out a root shell or starts a workload may run first. These units wait
+# for GPU bring-up as a result. Naming a unit a composition leaves out is
+# harmless.
+Before=ssh.service containerd.service docker.service
+# Fail closed: Before= makes those units wait for this one to finish, not to
+# succeed.
+FailureAction=poweroff-force
 
 [Service]
 Type=oneshot
