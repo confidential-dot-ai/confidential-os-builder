@@ -73,6 +73,12 @@ jobs:
           else
             images=$(bin/ci-images --base "$BEFORE" --omit-base)
           fi
+          # Dependabot runs read Dependabot secrets, which do not hold the
+          # module-signing key. See docs/IMAGE-CI.md.
+          if [ "$GITHUB_ACTOR" = 'dependabot[bot]' ]; then
+            images=$(jq -c 'map(select(. != "general-purpose-gpu"))' <<<"$images")
+            echo "Skipped general-purpose-gpu: Dependabot runs have no module-signing key." >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "images=$images" >> "$GITHUB_OUTPUT"
           echo "Affected workload images: $images" >> "$GITHUB_STEP_SUMMARY"
       - name: Test profile invariants and GPU-count handling

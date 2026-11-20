@@ -21,6 +21,14 @@ The base push build and PR repro gate use the same classifier. General-purpose
 builds use its output as a dynamic matrix, with two build legs per selected
 image. This avoids running the base repro gate for a GPU-only profile edit.
 
+Runs triggered by Dependabot drop `general-purpose-gpu` from the matrix. They
+read Dependabot secrets, which do not hold `MODULE_SIG_KEY_PEM`, and a run
+trying out freshly bumped third-party actions should not see the
+module-signing key. To build the GPU image with a Dependabot change, review
+the bumped actions, then dispatch the workflow on its branch (`gh workflow run
+general-purpose.yml --ref <branch> -f image=general-purpose-gpu`). Every other
+run still fails when the key is missing.
+
 The tools stamp is compared byte-for-byte with its written key. Previously,
 trimming the stored key removed the empty extra-package field's newline while
 the expected key retained it, forcing normal builds to miss even with a
