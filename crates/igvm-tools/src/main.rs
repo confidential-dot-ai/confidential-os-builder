@@ -298,7 +298,9 @@ fn do_build(args: &BuildArgs) -> Result<(), String> {
                     sha256: sha256_hex(s),
                 }),
             },
-            generated_at: chrono::Utc::now().to_rfc3339(),
+            generated_at: jiff::Timestamp::now()
+                .strftime("%Y-%m-%dT%H:%M:%SZ")
+                .to_string(),
         };
 
         let json = serde_json::to_string_pretty(&manifest)
