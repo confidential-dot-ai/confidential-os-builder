@@ -65,6 +65,8 @@ jobs:
                   python3 tests/gpu_module_cache.py
                   python3 tests/host_deps.py
                   python3 tests/verify_apt_cache.py
+            - name: Boot systemd with the GPU modules latch
+              run: python3 tests/gpu_modules_latch_boot.py
 
     kernel-checksum:
         name: Test kernel.org checksum verification
