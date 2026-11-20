@@ -20,9 +20,12 @@ a warning.
 - GPU images start `ssh.service`, `containerd.service` and `docker.service`
   only after `nvidia-modules-latch.service` has set
   `kernel.modules_disabled=1`, and power off if the latch cannot be set.
-  Before, those services could start while GPU bring-up (up to 300 s) was
-  still running and module loading was still open. SSH and Docker now become
-  available after GPU bring-up, not alongside it. **Alters measurements** of
+  Before, those services could start while GPU bring-up was still running
+  and module loading was still open. SSH and Docker now become available
+  after the whole bring-up sequence, not alongside it. Its stages time out
+  one after another (device reset 600 s, `nvidia-persistenced` 300 s,
+  CC-ready 300 s), so a hung bring-up delays SSH by up to 20 minutes.
+  **Alters measurements** of
   the `general-purpose-gpu` image and of any image using the `gpu` profile.
 
 ## [0.7.0] — 2026-11-16
