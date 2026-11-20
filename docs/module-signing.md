@@ -95,6 +95,20 @@ verity measures the module bytes and `modules_disabled=1` latches after boot,
 so the signature is not the trust root. An image that wants a stronger claim
 supplies its own certificate and keeps the key to itself.
 
+### Exposure in Dependabot runs
+
+The Dependabot copy of the key is read by runs on Dependabot branches. Those
+runs execute freshly bumped third-party actions before anyone has reviewed
+them, in the same job that later reads the key, so a malicious release of one
+of those actions could capture it. This is accepted for the default key, for
+the reason above: its holder can sign a module but cannot place it in a
+measured image, or load it once the boot sequence has latched module loading
+off.
+
+A project that supplies its own certificate and relies on the key staying
+private should leave the key out of Dependabot secrets. Its Dependabot runs
+then stop at the GPU pre-check with `Missing MODULE_SIG_KEY_PEM secret`.
+
 ## Rotation
 
 Replacing the certificate changes the kernel measurement, so it is a reviewed
