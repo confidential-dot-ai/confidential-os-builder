@@ -74,15 +74,18 @@ Then:
    and consumers' GPU builds inherit it. Store the same PEM as the
    organisation-level Dependabot secret of the same name: runs triggered by
    Dependabot read only Dependabot secrets, and their GPU builds fail without
-   it. Set both from a file, which keeps the line breaks intact:
+   it. Set both from a file, which keeps the line breaks intact. The file
+   holds the private key, so it goes in a directory only you can read:
    ```sh
-   cat /tmp/module-signing.key kernel/module-signing.crt > /tmp/module-signing.pem
-   gh secret set MODULE_SIG_KEY_PEM --org <org> < /tmp/module-signing.pem
-   gh secret set MODULE_SIG_KEY_PEM --org <org> --app dependabot < /tmp/module-signing.pem
+   org=your-org
+   pem_dir=$(umask 077 && mktemp -d)
+   (umask 077 && cat /tmp/module-signing.key kernel/module-signing.crt > "$pem_dir/module-signing.pem")
+   gh secret set MODULE_SIG_KEY_PEM --org "$org" < "$pem_dir/module-signing.pem"
+   gh secret set MODULE_SIG_KEY_PEM --org "$org" --app dependabot < "$pem_dir/module-signing.pem"
+   rm -rf "$pem_dir"
    ```
    The key must be PEM (`BEGIN PRIVATE KEY`), not an OpenSSH-format key.
-3. Shred `/tmp/module-signing.key`, `/tmp/module-signing.pem` and
-   `/tmp/x509.genkey`.
+3. Shred `/tmp/module-signing.key` and `/tmp/x509.genkey`.
 
 `-days 36500` avoids an expiry that would silently stop module loading on a
 long-lived image; this is not a revocation-managed PKI.
@@ -91,8 +94,10 @@ long-lived image; this is not a revocation-managed PKI.
 
 Anyone holding the default key can sign a module that loads in an image built
 with the default certificate. That is acceptable here for the reason above —
-verity measures the module bytes and `modules_disabled=1` latches after boot,
-so the signature is not the trust root. An image that wants a stronger claim
+verity measures the module bytes and the boot sequence sets
+`kernel.modules_disabled=1` once the driver is loaded, so the signature is not
+the trust root. Until that write succeeds, a correctly signed module still
+loads. An image that wants a stronger claim
 supplies its own certificate and keeps the key to itself.
 
 ### Exposure in Dependabot runs
@@ -101,13 +106,15 @@ The Dependabot copy of the key is read by runs on Dependabot branches. Those
 runs execute freshly bumped third-party actions before anyone has reviewed
 them, in the same job that later reads the key, so a malicious release of one
 of those actions could capture it. This is accepted for the default key, for
-the reason above: its holder can sign a module but cannot place it in a
-measured image, or load it once the boot sequence has latched module loading
-off.
+the reason above. Its holder can sign a module, but an image rebuilt with
+that module has a different measurement and no longer matches the published
+reference values, and a running image refuses the module once
+`kernel.modules_disabled=1` is set.
 
 A project that supplies its own certificate and relies on the key staying
-private should leave the key out of Dependabot secrets. Its Dependabot runs
-then stop at the GPU pre-check with `Missing MODULE_SIG_KEY_PEM secret`.
+private should leave the key out of Dependabot secrets. If no repository or
+organisation Dependabot secret supplies `MODULE_SIG_KEY_PEM`, its Dependabot
+runs stop at the GPU pre-check with `Missing MODULE_SIG_KEY_PEM secret`.
 
 ## Rotation
 
