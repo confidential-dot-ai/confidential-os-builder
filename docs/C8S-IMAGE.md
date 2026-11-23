@@ -2,8 +2,8 @@
 
 The c8s node-image definition (profile, kernel fragments, build entry
 point, validation scenarios) lives in the c8s repo:
-[`node-guest-image/`](https://github.com/confidential-dot-ai/c8s/tree/main/node-guest-image)
-([c8s#264](https://github.com/confidential-dot-ai/c8s/issues/264)).
+[`node-guest-image/`](https://github.com/confidential-dot-ai/confidential-kubernetes/tree/main/node-guest-image)
+([c8s#264](https://github.com/confidential-dot-ai/confidential-kubernetes/issues/264)).
 
 This repo is consumed purely as the builder: the profile is staged via
 `confos build --profile-dir`, the kernel fragment via
