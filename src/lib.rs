@@ -373,9 +373,24 @@ pub mod commands {
     pub mod run;
 }
 
+/// Current UTC time to the second, e.g. `2026-07-09T12:34:56Z`.
+pub(crate) fn utc_now_rfc3339() -> String {
+    rfc3339_seconds(jiff::Timestamp::now())
+}
+
+fn rfc3339_seconds(instant: jiff::Timestamp) -> String {
+    instant.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_sync_input;
+
+    #[test]
+    fn rfc3339_seconds_drops_the_fraction_and_uses_z() {
+        let instant: jiff::Timestamp = "2026-07-09T14:34:56.987654321+02:00".parse().unwrap();
+        assert_eq!(super::rfc3339_seconds(instant), "2026-07-09T12:34:56Z");
+    }
 
     #[test]
     fn parse_sync_input_splits_on_first_eq() {

@@ -222,7 +222,7 @@ fn run_with_tools(
         linux_version: version.linux_version.clone(),
         inputs,
         outputs,
-        built_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        built_at: crate::utc_now_rfc3339(),
     };
     km::write(&manifest_path, &manifest)?;
     println!("kernel: {}", vmlinuz_path.display());
