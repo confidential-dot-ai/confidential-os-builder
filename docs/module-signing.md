@@ -32,9 +32,16 @@ That profile gives a passwordless root login on the serial port, so use it
 only for a disposable guest that holds no secrets. The capture is best
 effort: a forced power-off can cut the last lines.
 
-`attestation-api.service` does not wait for
-the latch: it gives no shell and runs no workload, and a verifier may need
-its GPU evidence before the GPU is marked ready.
+Some services in the GPU images are left off the latch on purpose:
+
+| Unit | Why it does not wait |
+|---|---|
+| `attestation-api.service` | Gives no shell and runs no workload. A verifier may need its GPU evidence before the GPU is marked ready, and the latch waits for that state. |
+| `general-purpose-attest.service` | Serves the SSH host keys with a quote. It has no capabilities and sets `ProtectKernelModules=yes`, so it cannot load a module. |
+| `dcgm-exporter.service` | Serves GPU metrics as a `DynamicUser` with no capabilities and `ProtectKernelModules=yes`. No shell, no container. |
+
+`general-purpose-oci-workload.service` needs no drop-in of its own: it
+requires `docker.service`, which requires the latch.
 
 ## Certificate and key
 

@@ -314,7 +314,9 @@ class GpuModuleLatchTests(unittest.TestCase):
             before = [line for line in unit.splitlines() if line.startswith(("Before=", "RequiredBy=", "WantedBy="))]
             self.assertFalse([line for line in before if "attestation-api.service" in line], name)
         # Nor may it wait for a unit that waits for the latch, in its own file
-        # or in a drop-in from any profile.
+        # or in a drop-in from any profile. Only dependency lines are read, so
+        # a comment naming one of these units does not trip this. A change
+        # that needs attestation to depend on one has to change this test.
         held = ("nvidia-modules-latch", "nvidia-cc-ready", "ssh.service", "containerd.service", "docker.service")
         texts = [profiles / "attest-gpu/mkosi.extra/etc/systemd/system/attestation-api.service"]
         texts += profiles.glob("*/mkosi.extra/**/attestation-api.service.d/*.conf")
