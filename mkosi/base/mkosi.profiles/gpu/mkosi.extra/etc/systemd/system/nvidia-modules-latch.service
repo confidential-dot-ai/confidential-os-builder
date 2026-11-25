@@ -14,8 +14,12 @@ Wants=nvidia-cc-ready.service
 # for the whole GPU bring-up sequence as a result. Each also requires the
 # latch from its own 10-modules-latch.conf drop-in, which holds even if this
 # unit cannot be loaded. Naming a unit a composition leaves out is harmless.
+# attestation-api.service is left out on purpose: it gives no shell and runs
+# no workload, and a verifier may need its GPU evidence before CC-ready,
+# which this unit waits for.
 Before=ssh.service containerd.service docker.service
-# Fail closed when the sysctl write itself fails.
+# Fail closed when the sysctl write itself fails: power off at once, with no
+# retry. See docs/module-signing.md for how to find the cause.
 FailureAction=poweroff-force
 
 [Service]

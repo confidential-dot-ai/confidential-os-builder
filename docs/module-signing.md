@@ -10,6 +10,32 @@ latches `kernel.modules_disabled=1` once they are loaded. SSH and the
 container runtimes are ordered after that latch, and the guest powers off if
 it cannot be set. The signature is lockdown plumbing.
 
+If the latch command fails, the guest powers off at once, with no retry. No
+failed unit is left to inspect and SSH never starts. If the latch unit is
+missing or cannot be loaded, nothing powers off: the guest stays up, and SSH
+and the container runtimes never start.
+
+After a power-off the journal is lost with the guest, and a production image
+copies it to no console. Reading the cause takes a separate debug build whose
+journal reaches a serial port the host captures.
+The [`dev` profile](../mkosi/base/mkosi.profiles/dev/mkosi.conf) forwards the
+journal to `ttyS0`, which also needs:
+
+- The serial driver from `kernel/dev.config`. The build takes one
+  `--kernel-config-fragment`, so pass a file that combines the GPU fragment
+  with `kernel/dev.config`. Passing `kernel/dev.config` alone drops the GPU
+  options.
+- A launcher that exposes `ttyS0`, captured from before the boot. KubeVirt
+  exposes it; `confos run` does not.
+
+The `dev` profile also gives a passwordless root login on that serial port,
+so use it only for a disposable guest that holds no secrets. This path has
+not been exercised on a GPU image.
+
+`attestation-api.service` does not wait for
+the latch: it gives no shell and runs no workload, and a verifier may need
+its GPU evidence before the GPU is marked ready.
+
 ## Certificate and key
 
 | | Where | Notes |

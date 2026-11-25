@@ -8,8 +8,9 @@ services writing marks in start order.
 
 The latch's own ExecStart never runs here. Writing kernel.modules_disabled
 would latch the host kernel until reboot, so every case replaces the command,
-and the container is not privileged, which keeps /proc/sys read-only. The
-real sysctl write and real GPU bring-up belong to hardware acceptance.
+and the container is not privileged, which keeps /proc/sys read-only. Each
+boot checks both and fails if either stops holding. The real sysctl write and
+real GPU bring-up belong to hardware acceptance.
 """
 
 from pathlib import Path
@@ -81,7 +82,10 @@ class LatchBootTests(unittest.TestCase):
             drop_in = UNITS / f"{name}.service.d"
             if drop_in.is_dir():
                 shutil.copytree(drop_in, system / drop_in.name)
-        install("nvidia-cc-ready.service", stub(mark("cc-ready", f"; sleep {BRING_UP_SECONDS}")))
+        # The first stub to run also records how /proc/sys is mounted. It only
+        # reads; nothing here ever tries the write.
+        install("nvidia-cc-ready.service", stub(mark(
+            "cc-ready", f"; findmnt -no OPTIONS /proc/sys > /proc-sys-options; sleep {BRING_UP_SECONDS}")))
         if latch:
             install(LATCH, (UNITS / LATCH).read_text())
             command = mark("latch") if latch == "ok" else mark("latch-attempt", "; exit 1")
@@ -99,11 +103,17 @@ class LatchBootTests(unittest.TestCase):
         container = docker("create", *RUN_FLAGS, IMAGE, "/lib/systemd/systemd").stdout.strip()
         self.assertTrue(container)
         self.addCleanup(docker, "rm", "-f", container)
+        privileged = docker("inspect", "-f", "{{.HostConfig.Privileged}}", container).stdout.strip()
+        self.assertEqual("false", privileged, "a privileged container could write the host's sysctls")
         self.assertEqual(0, docker("cp", f"{tmp.name}/.", f"{container}:/").returncode)
         try:
             docker("start", "-a", container, timeout=90)
         except subprocess.TimeoutExpired:
             self.fail("the container did not power off")
+        options = Path(tmp.name) / "proc-sys-options"
+        docker("cp", f"{container}:/proc-sys-options", str(options))
+        self.assertTrue(options.exists(), "the boot did not record how /proc/sys is mounted")
+        self.assertIn("ro", options.read_text().strip().split(","), "/proc/sys must be read-only in the test container")
         marks = Path(tmp.name) / "marks"
         docker("cp", f"{container}:/marks", str(marks))
         return marks.read_text().split() if marks.exists() else []

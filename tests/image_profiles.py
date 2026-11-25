@@ -303,6 +303,24 @@ class GpuModuleLatchTests(unittest.TestCase):
         # The latch must still run when GPU bring-up was skipped or failed.
         self.assertFalse([line for line in text.splitlines() if line.startswith(("Requires=", "BindsTo="))])
 
+    def test_attestation_does_not_wait_for_the_latch(self):
+        # A verifier may gate CC-ready on GPU evidence, and the latch waits for
+        # CC-ready, so ordering attestation after the latch could never finish.
+        profiles = ROOT / "mkosi/base/mkosi.profiles"
+        for name in ("nvidia-modules-latch.service", "nvidia-cc-ready.service"):
+            unit = (profiles / "gpu/mkosi.extra/etc/systemd/system" / name).read_text()
+            before = [line for line in unit.splitlines() if line.startswith(("Before=", "RequiredBy=", "WantedBy="))]
+            self.assertFalse([line for line in before if "attestation-api.service" in line], name)
+        # Nor may it wait for a unit that waits for the latch, in its own file
+        # or in a drop-in from any profile.
+        held = ("nvidia-modules-latch", "nvidia-cc-ready", "ssh.service", "containerd.service", "docker.service")
+        texts = [profiles / "attest-gpu/mkosi.extra/etc/systemd/system/attestation-api.service"]
+        texts += profiles.glob("*/mkosi.extra/**/attestation-api.service.d/*.conf")
+        for path in texts:
+            waits = [line for line in path.read_text().splitlines()
+                     if line.startswith(("After=", "Requires=", "Wants=", "BindsTo=", "PartOf="))]
+            self.assertFalse([line for line in waits if any(name in line for name in held)], path)
+
 
 class GpuMetricsTests(unittest.TestCase):
     def test_exporter_runs_unprivileged_after_gpu_bring_up(self):
