@@ -300,7 +300,8 @@ class GpuModuleLatchTests(unittest.TestCase):
             self.assertIn("Requires=nvidia-modules-latch.service", drop_in)
             self.assertIn("After=nvidia-modules-latch.service", drop_in)
         self.assertIn("ExecStart=/sbin/sysctl -w kernel.modules_disabled=1", service.splitlines())
-        self.assertIn("TimeoutStartSec=30", service.splitlines())
+        self.assertIn("JobRunningTimeoutSec=30", unit)
+        self.assertIn("JobTimeoutAction=poweroff-immediate", unit)
         # The latch must still run when GPU bring-up was skipped or failed.
         self.assertFalse([line for line in text.splitlines() if line.startswith(("Requires=", "BindsTo="))])
 

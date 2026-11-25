@@ -89,7 +89,7 @@ class LatchBootTests(unittest.TestCase):
         if latch:
             install(LATCH, (UNITS / LATCH).read_text())
             command = {"ok": mark("latch"), "fail": mark("latch-attempt", "; exit 1"),
-                       "hang": mark("latch-attempt", "; sleep infinity")}[latch]
+                       "hang": mark("latch-attempt", '; trap "" TERM; sleep infinity')}[latch]
             override = system / f"{LATCH}.d"
             override.mkdir()
             (override / "99-test.conf").write_text(f"[Service]\nExecStart=\nExecStart={command}\n")
@@ -130,7 +130,8 @@ class LatchBootTests(unittest.TestCase):
 
     def test_a_hung_latch_powers_off_at_the_units_own_timeout(self):
         # Nothing here shortens the timeout: the boot ends only because the
-        # shipped unit bounds its start.
+        # shipped unit bounds its start. The stub ignores SIGTERM, as a write
+        # stuck in the kernel would.
         self.assertEqual(["cc-ready", "latch-attempt"], self.boot("hang"))
 
     def test_protected_units_do_not_start_without_the_latch_unit(self):

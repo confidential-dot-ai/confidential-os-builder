@@ -22,6 +22,14 @@ Before=ssh.service containerd.service docker.service
 # Fail closed when the sysctl write itself fails or hangs: power off at once,
 # with no retry. See docs/module-signing.md for how to find the cause.
 FailureAction=poweroff-force
+# A oneshot has no start timeout by default, and a write that never returned
+# would leave the guest up with nothing started and nothing failed. The clock
+# starts when the command does, not while this unit waits for GPU bring-up.
+# poweroff-immediate, because poweroff-force first waits 90 s for a command
+# that ignores signals. It skips the filesystem sync: SSH and the runtimes
+# have not started, but another boot service's pending writes can be lost.
+JobRunningTimeoutSec=30
+JobTimeoutAction=poweroff-immediate
 
 [Service]
 Type=oneshot
@@ -29,9 +37,6 @@ RemainAfterExit=yes
 # One-way latch: once 1, it cannot be set back to 0 without a reboot. That is
 # the point — no module may load for the rest of this boot.
 ExecStart=/sbin/sysctl -w kernel.modules_disabled=1
-# A oneshot has no start timeout by default, and a write that never returned
-# would leave the guest up with nothing started and nothing failed.
-TimeoutStartSec=30
 
 # vsock fence: only attestation-api may use AF_VSOCK (see kernel/gpu.config).
 RestrictAddressFamilies=AF_UNIX

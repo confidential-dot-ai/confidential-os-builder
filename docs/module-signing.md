@@ -16,10 +16,12 @@ never starts. If the latch unit is missing or cannot be loaded, nothing
 powers off: the guest stays up, and SSH and the container runtimes do not
 start at boot.
 
-The ordering covers the boot. It does not stop a process that is already
-root from starting those units by hand or stopping the latch unit. The image
-has no console login, and cloud-init, which is not ordered against the latch,
-runs only the seed baked into the measured image.
+A later `systemctl start` of those units still requires the latch. The
+ordering is systemd policy, though, and does not bind a process that is
+already root, which can override it. Stopping the latch unit does not reopen
+module loading: the kernel setting holds until reboot. The image has no
+console login, and cloud-init, which is not ordered against the latch, runs
+only the seed baked into the measured image.
 
 After a power-off the journal is lost with the guest, and a production image
 copies it to no console. Reading the cause takes a separate debug build whose
