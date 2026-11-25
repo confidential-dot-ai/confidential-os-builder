@@ -44,8 +44,8 @@ Some services in the GPU images are left off the latch on purpose:
 requires `docker.service`, which requires the latch. Two helpers do run
 earlier and start nothing: `general-purpose-ssh-host-keys.service` makes the
 host keys the attest port vouches for, and
-`general-purpose-oci-workload-prepare.service` only points Docker's storage
-at the scratch disk.
+`general-purpose-oci-workload-prepare.service` only sets Docker's data root
+when the launch bundle names a workload.
 
 ## Certificate and key
 
