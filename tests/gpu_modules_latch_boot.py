@@ -2,8 +2,8 @@
 """Boot systemd with the gpu profile's latch unit and drop-ins around stubs.
 
 Checks what the unit text cannot show: that ssh, containerd and docker wait
-for the modules latch, do not start without it, and that a failed latch
-powers the guest off. It runs systemd as PID 1 in a container, with stub
+for the modules latch, do not start without it, and that a failed or hung
+latch powers the guest off. It runs systemd as PID 1 in a container, with stub
 services writing marks in start order.
 
 The latch's own ExecStart never runs here. Writing kernel.modules_disabled
@@ -66,7 +66,7 @@ class LatchBootTests(unittest.TestCase):
             raise RuntimeError(build.stderr)
 
     def boot(self, latch):
-        """Boot with the latch succeeding ("ok"), failing ("fail") or absent (None)."""
+        """Boot with the latch succeeding ("ok"), failing ("fail"), hanging ("hang") or absent (None)."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         system = Path(tmp.name) / "etc/systemd/system"
@@ -88,7 +88,8 @@ class LatchBootTests(unittest.TestCase):
             "cc-ready", f"; findmnt -no OPTIONS /proc/sys > /proc-sys-options; sleep {BRING_UP_SECONDS}")))
         if latch:
             install(LATCH, (UNITS / LATCH).read_text())
-            command = mark("latch") if latch == "ok" else mark("latch-attempt", "; exit 1")
+            command = {"ok": mark("latch"), "fail": mark("latch-attempt", "; exit 1"),
+                       "hang": mark("latch-attempt", "; sleep infinity")}[latch]
             override = system / f"{LATCH}.d"
             override.mkdir()
             (override / "99-test.conf").write_text(f"[Service]\nExecStart=\nExecStart={command}\n")
@@ -126,6 +127,11 @@ class LatchBootTests(unittest.TestCase):
 
     def test_a_failed_latch_powers_off_before_anything_starts(self):
         self.assertEqual(["cc-ready", "latch-attempt"], self.boot("fail"))
+
+    def test_a_hung_latch_powers_off_at_the_units_own_timeout(self):
+        # Nothing here shortens the timeout: the boot ends only because the
+        # shipped unit bounds its start.
+        self.assertEqual(["cc-ready", "latch-attempt"], self.boot("hang"))
 
     def test_protected_units_do_not_start_without_the_latch_unit(self):
         self.assertEqual(["cc-ready", "finish"], self.boot(None))

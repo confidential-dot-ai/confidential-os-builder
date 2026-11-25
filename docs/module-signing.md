@@ -10,10 +10,16 @@ latches `kernel.modules_disabled=1` once they are loaded. SSH and the
 container runtimes are ordered after that latch, and the guest powers off if
 it cannot be set. The signature is lockdown plumbing.
 
-If the latch command fails, the guest powers off at once, with no retry. No
-failed unit is left to inspect and SSH never starts. If the latch unit is
-missing or cannot be loaded, nothing powers off: the guest stays up, and SSH
-and the container runtimes never start.
+If the latch command fails, or has not returned after 30 seconds, the guest
+powers off at once, with no retry. No failed unit is left to inspect and SSH
+never starts. If the latch unit is missing or cannot be loaded, nothing
+powers off: the guest stays up, and SSH and the container runtimes do not
+start at boot.
+
+The ordering covers the boot. It does not stop a process that is already
+root from starting those units by hand or stopping the latch unit. The image
+has no console login, and cloud-init, which is not ordered against the latch,
+runs only the seed baked into the measured image.
 
 After a power-off the journal is lost with the guest, and a production image
 copies it to no console. Reading the cause takes a separate debug build whose

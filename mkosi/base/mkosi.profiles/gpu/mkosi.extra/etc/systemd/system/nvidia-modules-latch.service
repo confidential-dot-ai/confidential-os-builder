@@ -9,8 +9,9 @@ After=nvidia-cc-ready.service systemd-modules-load.service
 # Whatever starts the latch also starts GPU bring-up, so After= above always
 # has something to wait for. Wants, not Requires, for the reason given above.
 Wants=nvidia-cc-ready.service
-# Until the latch is set a validly signed module still loads, so nothing that
-# hands out a root shell or starts a workload may run first. These units wait
+# Until the latch is set a validly signed module still loads, so the units
+# that hand out root shells and start workloads must not run first: SSH, and
+# the container runtimes that every workload goes through. These units wait
 # for the whole GPU bring-up sequence as a result. Each also requires the
 # latch from its own 10-modules-latch.conf drop-in, which holds even if this
 # unit cannot be loaded. Naming a unit a composition leaves out is harmless.
@@ -18,8 +19,8 @@ Wants=nvidia-cc-ready.service
 # no workload, and a verifier may need its GPU evidence before CC-ready,
 # which this unit waits for.
 Before=ssh.service containerd.service docker.service
-# Fail closed when the sysctl write itself fails: power off at once, with no
-# retry. See docs/module-signing.md for how to find the cause.
+# Fail closed when the sysctl write itself fails or hangs: power off at once,
+# with no retry. See docs/module-signing.md for how to find the cause.
 FailureAction=poweroff-force
 
 [Service]
@@ -28,6 +29,9 @@ RemainAfterExit=yes
 # One-way latch: once 1, it cannot be set back to 0 without a reboot. That is
 # the point — no module may load for the rest of this boot.
 ExecStart=/sbin/sysctl -w kernel.modules_disabled=1
+# A oneshot has no start timeout by default, and a write that never returned
+# would leave the guest up with nothing started and nothing failed.
+TimeoutStartSec=30
 
 # vsock fence: only attestation-api may use AF_VSOCK (see kernel/gpu.config).
 RestrictAddressFamilies=AF_UNIX
