@@ -17,20 +17,9 @@ and the container runtimes never start.
 
 After a power-off the journal is lost with the guest, and a production image
 copies it to no console. Reading the cause takes a separate debug build whose
-journal reaches a serial port the host captures.
-The [`dev` profile](../mkosi/base/mkosi.profiles/dev/mkosi.conf) forwards the
-journal to `ttyS0`, which also needs:
-
-- The serial driver from `kernel/dev.config`. The build takes one
-  `--kernel-config-fragment`, so pass a file that combines the GPU fragment
-  with `kernel/dev.config`. Passing `kernel/dev.config` alone drops the GPU
-  options.
-- A launcher that exposes `ttyS0`, captured from before the boot. KubeVirt
-  exposes it; `confos run` does not.
-
-The `dev` profile also gives a passwordless root login on that serial port,
-so use it only for a disposable guest that holds no secrets. This path has
-not been exercised on a GPU image.
+journal reaches a serial port the host captures from before the boot. The
+[`dev` profile](../mkosi/base/mkosi.profiles/dev/mkosi.conf) is the starting
+point, but no such build of a GPU image is documented or has been exercised.
 
 `attestation-api.service` does not wait for
 the latch: it gives no shell and runs no workload, and a verifier may need
