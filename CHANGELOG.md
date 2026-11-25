@@ -28,7 +28,7 @@ a warning.
   The power-off follows a latch command that fails or has not returned
   after 30 seconds, is immediate and leaves no failed unit to inspect.
   A missing or unloadable latch unit does not power the guest off: those
-  services stay down and nothing reports a failure.
+  services stay down, with at most systemd's own unit-load error logged.
   `attestation-api.service` does not wait for the latch.
   **Alters measurements** of
   the `general-purpose-gpu` image and of any image using the `gpu` profile.

@@ -36,12 +36,16 @@ Some services in the GPU images are left off the latch on purpose:
 
 | Unit | Why it does not wait |
 |---|---|
-| `attestation-api.service` | Gives no shell and runs no workload. A verifier may need its GPU evidence before the GPU is marked ready, and the latch waits for that state. |
+| `attestation-api.service` | Gives no shell and runs no workload. A verifier may need its GPU evidence before the GPU is marked ready, and the latch waits for `nvidia-cc-ready.service` to finish, whether or not the GPU got there. |
 | `general-purpose-attest.service` | Serves the SSH host keys with a quote. It has no capabilities and sets `ProtectKernelModules=yes`, so it cannot load a module. |
 | `dcgm-exporter.service` | Serves GPU metrics as a `DynamicUser` with no capabilities and `ProtectKernelModules=yes`. No shell, no container. |
 
 `general-purpose-oci-workload.service` needs no drop-in of its own: it
-requires `docker.service`, which requires the latch.
+requires `docker.service`, which requires the latch. Two helpers do run
+earlier and start nothing: `general-purpose-ssh-host-keys.service` makes the
+host keys the attest port vouches for, and
+`general-purpose-oci-workload-prepare.service` only points Docker's storage
+at the scratch disk.
 
 ## Certificate and key
 
