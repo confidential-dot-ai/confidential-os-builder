@@ -20,6 +20,9 @@ copies it to no console. Reading the cause takes a separate debug build whose
 journal reaches a serial port the host captures from before the boot. The
 [`dev` profile](../mkosi/base/mkosi.profiles/dev/mkosi.conf) is the starting
 point, but no such build of a GPU image is documented or has been exercised.
+That profile gives a passwordless root login on the serial port, so use it
+only for a disposable guest that holds no secrets. The capture is best
+effort: a forced power-off can cut the last lines.
 
 `attestation-api.service` does not wait for
 the latch: it gives no shell and runs no workload, and a verifier may need
