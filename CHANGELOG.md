@@ -25,6 +25,8 @@ a warning.
   after the whole bring-up sequence, not alongside it. Its stages time out
   one after another (device reset 600 s, `nvidia-persistenced` 300 s,
   CC-ready 300 s), so a hung bring-up delays SSH by up to 20 minutes.
+  A GPU guest that refuses SSH within that time is still booting; one that
+  powered off did so by design.
   The power-off follows a latch command that fails or has not returned
   after 30 seconds, is immediate and leaves no failed unit to inspect.
   A missing or unloadable latch unit does not power the guest off: those

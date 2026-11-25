@@ -19,9 +19,11 @@ start at boot.
 A later `systemctl start` of those units still requires the latch. The
 ordering is systemd policy, though, and does not bind a process that is
 already root, which can override it. Stopping the latch unit does not reopen
-module loading: the kernel setting holds until reboot. The image has no
-console login, and cloud-init, which is not ordered against the latch, runs
-only the seed baked into the measured image.
+module loading: the kernel setting holds until reboot. It does stop SSH and
+the container runtimes, because they require it, which ends open sessions
+and running containers. A production image has no console login, and
+cloud-init, which is not ordered against the latch, runs only the seed baked
+into the measured image.
 
 After a power-off the journal is lost with the guest, and a production image
 copies it to no console. Reading the cause takes a separate debug build whose
@@ -39,6 +41,10 @@ Some services in the GPU images are left off the latch on purpose:
 | `attestation-api.service` | Gives no shell and runs no workload. A verifier may need its GPU evidence before the GPU is marked ready, and the latch waits for `nvidia-cc-ready.service` to finish, whether or not the GPU got there. |
 | `general-purpose-attest.service` | Serves the SSH host keys with a quote. It has no capabilities and sets `ProtectKernelModules=yes`, so it cannot load a module. |
 | `dcgm-exporter.service` | Serves GPU metrics as a `DynamicUser` with no capabilities and `ProtectKernelModules=yes`. No shell, no container. |
+
+The latch covers exactly `ssh.service`, `containerd.service` and
+`docker.service`. An image that adds another login or workload service to the
+`gpu` profile must give it its own `Requires=` and `After=` drop-in.
 
 `general-purpose-oci-workload.service` needs no drop-in of its own: it
 requires `docker.service`, which requires the latch. Two helpers do run
