@@ -12,6 +12,22 @@ a warning.
 ## [Unreleased]
 
 ### Changed
+- Bump the shared guest kernel from Linux 6.18.62 to 6.18.65 for the base,
+  general-purpose CPU and general-purpose GPU images. Linux 6.18.65 carries
+  ACPICA's parser-bound initialization in `acpi_install_method`, so the
+  trusted-AML patch drops its copy of that hunk; its enforcement hunks and
+  the SEV-SNP measurement-register patch apply unchanged. The resolved
+  kernel configs lose `CONFIG_SATA_INIC162X`, which 6.18.65 removes, and
+  are otherwise identical apart from the version header. **Alters
+  measurements**: rebuild images and signed GPU modules, publish new
+  manifests and update verifier reference values before rollout.
+- Base and initrd apt snapshots advance from `20261109T000000Z` to
+  `20261126T000000Z`, picking up `krb5` 1.22.1-2ubuntu4.3, `glibc`
+  2.43-2ubuntu2.7, `perl` 5.40.1-7ubuntu0.4, `libexpat1` 2.7.4-1ubuntu0.3,
+  `libsqlite3-0` 3.46.1-9ubuntu0.4, `cloud-init` 26.2-0ubuntu1~26.04.2,
+  `python3-jwt` 2.10.1-4ubuntu1.4 and `python3-oauthlib` 3.3.1-1ubuntu0.1.
+  Host build deps follow the base pin. **Alters measurements** of every
+  image.
 - Replace the `chrono` dependency, which RUSTSEC-2026-0543 marks
   unmaintained, with `jiff`. `build.timestamp` and the kernel manifest's
   `built_at` keep their format. `igvm-tools`' `generated_at` is now whole
