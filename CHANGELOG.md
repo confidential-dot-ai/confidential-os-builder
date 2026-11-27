@@ -46,6 +46,16 @@ reference values before rollout. See
   seconds with a `Z` suffix, as its README documents, instead of
   nanoseconds with `+00:00`.
 
+### Security
+- The initrd hashes the staged copy of the `opkeydata` key at
+  `/run/confai/operator-pubkey`, the bytes its consumers read: on TDX it
+  extends RTMR[3] once with `SHA-384(pubkey)`, and on SNP it checks HOSTDATA
+  against `SHA-256(pubkey)`. A binding failure on either platform prints
+  `FATAL: launch binding failed: <reason>` and powers the guest off instead of
+  rebooting it. An SNP launch without an `opkeydata` disk must carry all-zero
+  HOSTDATA; a guest outside any TEE boots unbound without the disk and powers
+  off with it. **Alters measurements** of every image.
+
 ## [0.7.0] — 2026-11-16
 
 **Changes measurements.** Every image built from this release has new

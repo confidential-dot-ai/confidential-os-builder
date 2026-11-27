@@ -66,7 +66,11 @@ PCI slot order — and therefore guest device naming — stays deterministic.
 For launch-time HOST_DATA, append `,host-data=<base64>` to the
 `sev-snp-guest` object. `confos run --host-data <HEX>` accepts the same 32
 bytes as 64 lowercase hex characters. An `opkeydata` launch requires
-HOST_DATA to equal `SHA-256(pubkey)` over the exact file bytes on that volume.
+HOST_DATA to equal `SHA-256(pubkey)` over the exact file bytes on that volume;
+a launch without that volume requires HOST_DATA to be unset (all zero).
+Otherwise the guest powers off instead of booting. The launch digest and the
+manifest do not cover HOST_DATA: publish its expected value to verifiers with
+the reference measurements ([VERIFYING.md](VERIFYING.md#operator-key-binding)).
 
 **vCPU count must match an IGVM variant** — SMP is part of the launch
 measurement. Memory size is not; size it freely. If you need a vCPU count
@@ -123,7 +127,8 @@ Confidential OS Builder's guest kernel is built for KubeVirt SNP quirks
 (KubeVirt forces `iommu_platform=true` on virtio devices; the required kernel
 config handles this). You still need a KubeVirt version and node stack with
 SEV-SNP + IGVM support to get measured launches; without it the image boots as
-a plain VM with no attestation.
+a plain VM with no attestation. Attach an `opkeydata` disk only to a TEE
+launch: a plain VM that finds one cannot bind the key and powers off.
 
 ## Storage
 
