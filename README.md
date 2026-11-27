@@ -273,6 +273,7 @@ Push flags:
 | `--registry <URL>` | `ghcr.io/confidential-dot-ai/confidential-os-builder` (env: `CONFOS_OCI_REGISTRY`) | Registry repository — matches where CI publishes `base`. |
 | `--cdi` | off | Pack everything into a single `tar+gzip` layer with `disk.raw` under `disk/` — the layout KubeVirt CDI's registry importer expects. |
 | `--tag <TAG>` | basename of `<DIR>` | Image tag. |
+| `--digest-file <PATH>` | off | After a successful push, write the pushed manifest's digest (`sha256:<hex>`) to `PATH`. |
 
 ### `confos igvm` — generate additional IGVM SMP variants
 

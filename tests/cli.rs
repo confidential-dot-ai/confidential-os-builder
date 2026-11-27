@@ -301,6 +301,135 @@ fn test_push_requires_dir() {
     cmd.args(["push"]).assert().failure();
 }
 
+const FAKE_MANIFEST: &str = r#"{"schemaVersion":2}"#;
+
+/// A push dir plus a fake `oras` that logs its args to `args` and writes
+/// FAKE_MANIFEST to any `--export-manifest` path before exiting with `code`.
+fn fake_oras_push(code: i32) -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    let image = root.path().join("image");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&image).unwrap();
+    std::fs::write(image.join("disk.raw"), b"disk").unwrap();
+    std::fs::write(image.join("manifest.json"), b"{}").unwrap();
+    let oras = bin.join("oras");
+    std::fs::write(
+        &oras,
+        format!(
+            r#"#!/bin/sh
+printf '%s\n' "$@" > '{args}'
+while [ $# -gt 0 ]; do
+    if [ "$1" = --export-manifest ]; then printf '%s' '{FAKE_MANIFEST}' > "$2"; fi
+    shift
+done
+exit {code}
+"#,
+            args = root.path().join("args").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&oras, std::fs::Permissions::from_mode(0o755)).unwrap();
+    root
+}
+
+fn confos_push(
+    root: &std::path::Path,
+    cdi: bool,
+    digest_file: Option<&std::path::Path>,
+) -> assert_cmd::assert::Assert {
+    let path = format!(
+        "{}:{}",
+        root.join("bin").display(),
+        std::env::var("PATH").unwrap()
+    );
+    let mut cmd = Command::cargo_bin("confos").unwrap();
+    cmd.env("PATH", path)
+        .arg("push")
+        .arg(root.join("image"))
+        .args(["--registry", "registry.test/confos", "--tag", "t"]);
+    if cdi {
+        cmd.arg("--cdi");
+    }
+    if let Some(digest_file) = digest_file {
+        cmd.arg("--digest-file").arg(digest_file);
+    }
+    cmd.assert()
+}
+
+fn oras_args(root: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(root.join("args"))
+        .unwrap()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+#[test]
+fn test_push_digest_file_holds_exported_manifest_digest() {
+    use sha2::Digest;
+    let expected = format!(
+        "sha256:{}\n",
+        hex::encode(sha2::Sha256::digest(FAKE_MANIFEST))
+    );
+    for cdi in [false, true] {
+        let root = fake_oras_push(0);
+        confos_push(root.path(), cdi, None).success();
+        let plain = oras_args(root.path());
+
+        let digest_file = root.path().join("digest");
+        confos_push(root.path(), cdi, Some(&digest_file)).success();
+        assert_eq!(std::fs::read_to_string(&digest_file).unwrap(), expected);
+        let exported = oras_args(root.path());
+        assert_eq!(exported[exported.len() - 2], "--export-manifest");
+        if !cdi {
+            // CDI args carry random temp file names; the default ones are fixed.
+            assert_eq!(exported[..exported.len() - 2], plain[..]);
+        }
+    }
+}
+
+#[test]
+fn test_push_without_digest_file_passes_unchanged_oras_args() {
+    let root = fake_oras_push(0);
+    confos_push(root.path(), false, None).success();
+    assert_eq!(
+        oras_args(root.path()),
+        [
+            "push",
+            "registry.test/confos:t",
+            "--artifact-type",
+            "application/vnd.confos.image.v1",
+            "disk.raw",
+            "manifest.json"
+        ]
+    );
+    let root = fake_oras_push(0);
+    confos_push(root.path(), true, None).success();
+    let args = oras_args(root.path());
+    assert_eq!(args.len(), 5, "{args:?}");
+    assert_eq!(args[..3], ["push", "registry.test/confos:t", "--config"]);
+}
+
+#[test]
+fn test_push_failure_leaves_no_digest_file() {
+    for cdi in [false, true] {
+        let root = fake_oras_push(1);
+        let digest_file = root.path().join("digest");
+        confos_push(root.path(), cdi, Some(&digest_file)).failure();
+        assert!(!digest_file.exists());
+    }
+}
+
+#[test]
+fn test_push_unwritable_digest_file_is_an_error() {
+    let root = fake_oras_push(0);
+    let digest_file = root.path().join("missing-dir/digest");
+    confos_push(root.path(), false, Some(&digest_file))
+        .failure()
+        .stderr(predicates::str::contains(digest_file.display().to_string()));
+}
+
 // --- pull command tests ---
 
 #[test]
