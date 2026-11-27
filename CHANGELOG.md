@@ -11,6 +11,14 @@ a warning.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-27
+
+**Changes measurements.** Images built from this release have new
+measurements; the entries below that alter or change measurements say which
+images and why. Rebuild images, publish their manifests and update verifier
+reference values before rollout. See
+[Versioning](https://github.com/confidential-dot-ai/confidential-os-builder/blob/main/docs/VERSIONING.md) for the migration policy.
+
 ### Added
 - `confos push --digest-file <PATH>` writes the digest of the manifest it
   pushed, as `sha256:<hex>`, taken from the push rather than from a tag.
@@ -516,7 +524,8 @@ Initial public release.
 - `steep push` / `steep pull` (OCI via oras)
 - CI publishes base image as `ghcr.io/confidential-dot-ai/steep:base`
 
-[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/confidential-dot-ai/confidential-os-builder/compare/v0.4.3...v0.5.0
