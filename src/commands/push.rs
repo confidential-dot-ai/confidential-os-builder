@@ -41,11 +41,23 @@ pub fn run(args: &PushArgs) -> anyhow::Result<()> {
 
     let image_ref = image_ref(&args.registry, args.tag.as_deref(), &dir)?;
 
+    let export_dir = args
+        .digest_file
+        .is_some()
+        .then(tempfile::tempdir)
+        .transpose()?;
+    let export = export_dir.as_ref().map(|d| d.path().join("manifest.json"));
     if args.cdi {
-        push_cdi(&dir, &files, &image_ref)
+        push_cdi(&dir, &files, &image_ref, export.as_deref())?;
     } else {
-        push_default(&dir, &files, &image_ref)
+        push_default(&dir, &files, &image_ref, export.as_deref())?;
     }
+
+    if let (Some(digest_file), Some(export)) = (&args.digest_file, &export) {
+        let digest = Sha256::digest(fs_err::read(export)?);
+        fs_err::write(digest_file, format!("sha256:{}\n", hex::encode(digest)))?;
+    }
+    Ok(())
 }
 
 /// Build the OCI image reference `<registry>:<tag>`, deriving the tag from the
@@ -63,7 +75,12 @@ fn image_ref(registry: &str, tag: Option<&str>, dir: &Path) -> anyhow::Result<St
     Ok(format!("{registry}:{tag}"))
 }
 
-fn push_default(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<()> {
+fn push_default(
+    dir: &Path,
+    files: &[OsString],
+    image_ref: &str,
+    export: Option<&Path>,
+) -> anyhow::Result<()> {
     println!("Pushing {} files to {}", files.len(), image_ref);
     for f in files {
         println!("  {}", f.to_string_lossy());
@@ -76,6 +93,9 @@ fn push_default(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Resu
         "application/vnd.confos.image.v1".into(),
     ];
     oras_args.extend(files.iter().cloned());
+    if let Some(path) = export {
+        oras_args.extend(["--export-manifest".into(), path.into()]);
+    }
 
     tools::run_command_streaming_in("oras", &oras_args, dir.to_path_buf())?;
 
@@ -83,7 +103,12 @@ fn push_default(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Resu
     Ok(())
 }
 
-fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<()> {
+fn push_cdi(
+    dir: &Path,
+    files: &[OsString],
+    image_ref: &str,
+    export: Option<&Path>,
+) -> anyhow::Result<()> {
     println!(
         "Pushing CDI-compatible single-layer image ({} files) to {}",
         files.len(),
@@ -141,13 +166,16 @@ fn push_cdi(dir: &Path, files: &[OsString], image_ref: &str) -> anyhow::Result<(
         s.push(":application/vnd.oci.image.layer.v1.tar+gzip");
         s
     };
-    let oras_args: Vec<OsString> = vec![
+    let mut oras_args: Vec<OsString> = vec![
         "push".into(),
         image_ref.into(),
         "--config".into(),
         config_arg,
         layer_arg,
     ];
+    if let Some(path) = export {
+        oras_args.extend(["--export-manifest".into(), path.into()]);
+    }
     let push_res = tools::run_command_streaming_in("oras", &oras_args, cwd.clone());
     push_res?;
 

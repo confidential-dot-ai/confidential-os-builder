@@ -353,6 +353,10 @@ pub struct PushArgs {
     /// layer where `disk.raw` lives under `disk/` and other files sit at the tar root.
     #[arg(long, default_value_t = false)]
     pub cdi: bool,
+
+    /// Write the pushed manifest's digest (`sha256:<hex>`) to this file
+    #[arg(long, value_name = "PATH")]
+    pub digest_file: Option<PathBuf>,
 }
 
 #[derive(clap::Args)]

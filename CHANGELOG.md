@@ -11,6 +11,10 @@ a warning.
 
 ## [Unreleased]
 
+### Added
+- `confos push --digest-file <PATH>` writes the digest of the manifest it
+  pushed, as `sha256:<hex>`, taken from the push rather than from a tag.
+
 ### Changed
 - Bump the shared guest kernel from Linux 6.18.62 to 6.18.65 for the base,
   general-purpose CPU and general-purpose GPU images. Linux 6.18.65 carries
