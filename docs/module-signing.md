@@ -6,8 +6,54 @@ refuses to load the out-of-tree NVIDIA modules.
 
 Integrity does **not** rest on these signatures: the
 module bytes live in the dm-verity-measured rootfs, and the boot sequence
-latches `kernel.modules_disabled=1` once they are loaded. The signature is
-lockdown plumbing.
+latches `kernel.modules_disabled=1` once they are loaded. SSH and the
+container runtimes are ordered after that latch, and the guest powers off if
+it cannot be set. The signature is lockdown plumbing.
+
+If the latch command fails, or has not returned after 30 seconds, the guest
+powers off at once, with no retry. No failed unit is left to inspect and SSH
+never starts. If the latch unit is missing or cannot be loaded, nothing
+powers off: the guest stays up, and SSH and the container runtimes do not
+start at boot.
+
+A later `systemctl start` of those units still requires the latch. The
+ordering is systemd policy, though, and does not bind a process that is
+already root, which can override it. Stopping the latch unit does not reopen
+module loading: the kernel setting holds until reboot. It does stop
+`ssh.service`, `containerd.service` and `docker.service`, because they
+require it, along with whatever those units manage. A production image has
+no console login, and
+cloud-init, which is not ordered against the latch, runs only the seed baked
+into the measured image.
+
+After a power-off the journal is lost with the guest, and a production image
+copies it to no console. Reading the cause takes a separate debug build whose
+journal reaches a serial port the host captures from before the boot. The
+[`dev` profile](../mkosi/base/mkosi.profiles/dev/mkosi.conf) is the starting
+point, but no such build of a GPU image is documented or has been exercised.
+That profile gives a passwordless root login on the serial port, so use it
+only for a disposable guest that holds no secrets. The capture is best
+effort: a forced power-off can cut the last lines.
+
+Some services in the GPU images are left off the latch on purpose:
+
+| Unit | Why it does not wait |
+|---|---|
+| `attestation-api.service` | Gives no shell and runs no workload. A verifier may need its GPU evidence before the GPU is marked ready, and the latch waits for `nvidia-cc-ready.service` to finish, whether or not the GPU got there. |
+| `general-purpose-attest.service` | Serves the SSH host keys with a quote. It has no capabilities and sets `ProtectKernelModules=yes`, so it cannot load a module. |
+| `dcgm-exporter.service` | Serves GPU metrics as a `DynamicUser` with no capabilities and `ProtectKernelModules=yes`. No shell, no container. |
+
+Only `ssh.service`, `containerd.service` and `docker.service` have a latch
+drop-in. A login or workload service added to the `gpu` profile needs its own
+`Requires=` and `After=`, unless it already requires and follows one of
+those three.
+
+`general-purpose-oci-workload.service` needs no drop-in of its own: it
+requires `docker.service`, which requires the latch. Two helpers do run
+earlier and start nothing: `general-purpose-ssh-host-keys.service` makes the
+host keys the attest port vouches for, and
+`general-purpose-oci-workload-prepare.service` only sets Docker's data root
+when the launch bundle names a workload.
 
 ## Certificate and key
 

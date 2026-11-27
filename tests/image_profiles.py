@@ -280,6 +280,52 @@ printf '%s %s %s %s\\n' "$NCCL_NVLS_ENABLE" "$NCCL_CUMEM_HOST_ENABLE" "$NCCL_ENV
             self.assertIn("OutputDirectory=mkosi.output", (ROOT / "mkosi" / tree / "mkosi.conf").read_text())
 
 
+class GpuModuleLatchTests(unittest.TestCase):
+    def test_logins_and_workloads_wait_for_the_latch(self):
+        gpu = ROOT / "mkosi/base/mkosi.profiles/gpu/mkosi.extra"
+        preset = (gpu / "usr/lib/systemd/system-preset/10-nvidia.preset").read_text().splitlines()
+        self.assertIn("enable nvidia-modules-latch.service", preset)
+        text = (gpu / "etc/systemd/system/nvidia-modules-latch.service").read_text()
+        unit, service = text.split("[Service]")
+        unit = unit.splitlines()
+        self.assertIn("After=nvidia-cc-ready.service systemd-modules-load.service", unit)
+        before = next(line for line in unit if line.startswith("Before=")).removeprefix("Before=").split()
+        for name in ("ssh.service", "containerd.service", "docker.service"):
+            self.assertIn(name, before)
+        self.assertIn("FailureAction=poweroff-force", unit)
+        self.assertIn("Wants=nvidia-cc-ready.service", unit)
+        for name in ("ssh", "containerd", "docker"):
+            drop_in = (gpu / f"etc/systemd/system/{name}.service.d/10-modules-latch.conf").read_text().splitlines()
+            self.assertEqual("[Unit]", drop_in[0])
+            self.assertIn("Requires=nvidia-modules-latch.service", drop_in)
+            self.assertIn("After=nvidia-modules-latch.service", drop_in)
+        self.assertIn("ExecStart=/sbin/sysctl -w kernel.modules_disabled=1", service.splitlines())
+        self.assertIn("JobRunningTimeoutSec=30", unit)
+        self.assertIn("JobTimeoutAction=poweroff-immediate", unit)
+        # The latch must still run when GPU bring-up was skipped or failed.
+        self.assertFalse([line for line in text.splitlines() if line.startswith(("Requires=", "BindsTo="))])
+
+    def test_attestation_does_not_wait_for_the_latch(self):
+        # A verifier may gate CC-ready on GPU evidence, and the latch waits for
+        # CC-ready, so ordering attestation after the latch could never finish.
+        profiles = ROOT / "mkosi/base/mkosi.profiles"
+        for name in ("nvidia-modules-latch.service", "nvidia-cc-ready.service"):
+            unit = (profiles / "gpu/mkosi.extra/etc/systemd/system" / name).read_text()
+            before = [line for line in unit.splitlines() if line.startswith(("Before=", "RequiredBy=", "WantedBy="))]
+            self.assertFalse([line for line in before if "attestation-api.service" in line], name)
+        # Nor may it wait for a unit that waits for the latch, in its own file
+        # or in a drop-in from any profile. Only dependency lines are read, so
+        # a comment naming one of these units does not trip this. A change
+        # that needs attestation to depend on one has to change this test.
+        held = ("nvidia-modules-latch", "nvidia-cc-ready", "ssh.service", "containerd.service", "docker.service")
+        texts = [profiles / "attest-gpu/mkosi.extra/etc/systemd/system/attestation-api.service"]
+        texts += profiles.glob("*/mkosi.extra/**/attestation-api.service.d/*.conf")
+        for path in texts:
+            waits = [line for line in path.read_text().splitlines()
+                     if line.startswith(("After=", "Requires=", "Wants=", "BindsTo=", "PartOf="))]
+            self.assertFalse([line for line in waits if any(name in line for name in held)], path)
+
+
 class GpuMetricsTests(unittest.TestCase):
     def test_exporter_runs_unprivileged_after_gpu_bring_up(self):
         preset = (EXTRA / "usr/lib/systemd/system-preset/30-general-purpose-gpu.preset").read_text().splitlines()

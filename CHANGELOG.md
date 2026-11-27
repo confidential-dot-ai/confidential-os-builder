@@ -45,6 +45,24 @@ reference values before rollout. See
   `built_at` keep their format. `igvm-tools`' `generated_at` is now whole
   seconds with a `Z` suffix, as its README documents, instead of
   nanoseconds with `+00:00`.
+- GPU images start `ssh.service`, `containerd.service` and `docker.service`
+  only after `nvidia-modules-latch.service` has set
+  `kernel.modules_disabled=1`, and power off if the latch command fails.
+  Before, those services could start while GPU bring-up was still running
+  and module loading was still open. SSH and Docker now become available
+  after the whole bring-up sequence, not alongside it. Its stages time out
+  one after another (device reset 600 s, `nvidia-persistenced` 300 s,
+  CC-ready 300 s), so a hung bring-up delays SSH by up to 20 minutes.
+  A GPU guest that refuses SSH within that time may still be bringing up
+  its GPUs; one that powered off did so because the latch command failed or
+  timed out.
+  The power-off follows a latch command that fails or has not returned
+  after 30 seconds, is immediate and leaves no failed unit to inspect.
+  A missing or unloadable latch unit does not power the guest off: those
+  services stay down, with at most systemd's own unit-load error logged.
+  `attestation-api.service` does not wait for the latch.
+  **Alters measurements** of
+  the `general-purpose-gpu` image and of any image using the `gpu` profile.
 
 ## [0.7.0] — 2026-11-16
 
